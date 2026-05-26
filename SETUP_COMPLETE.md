@@ -205,7 +205,7 @@ Makefile                       ✅ Build/development targets
 |---------|---------|---------|
 | pyautogen | 0.2.0 | Agent framework |
 | langchain | 0.1.0 | LLM integration |
-| langchain-openai | 0.0.7 | OpenAI provider |
+| langchain-groq | 0.1.0 | Groq provider |
 | faiss-cpu | 1.7.4 | Vector search |
 
 ### Backend Service Dependencies

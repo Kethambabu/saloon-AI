@@ -31,7 +31,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-false}
       DATABASE_URL: postgresql://${DB_USER:-salonai_user}:${DB_PASSWORD:-salonai_password}@postgres:5432/${DB_NAME:-salonai_db}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:- }
+      GROQ_API_KEY: ${GROQ_API_KEY:- }
       HOST: 0.0.0.0
       PORT: 8000
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

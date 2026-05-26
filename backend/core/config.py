@@ -1,6 +1,7 @@
 """Application configuration management using environment variables."""
 
 from functools import lru_cache
+import os
 from typing import List, Optional, Union
 
 from pydantic import Field, field_validator
@@ -56,7 +57,7 @@ class Settings(BaseSettings):
         return v
     
     # External Services
-    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
     supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
 
@@ -66,7 +67,10 @@ class Settings(BaseSettings):
 
     class Config:
         """Pydantic configuration."""
-        env_file = ".env"
+        env_file = (
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+            ".env"
+        )
         env_file_encoding = "utf-8"
         case_sensitive = False
         extra = "ignore"

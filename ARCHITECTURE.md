@@ -282,7 +282,7 @@ GET /api/v1/users/:id        - [Ready]
 - `APP_NAME`: Application name
 - `ENVIRONMENT`: dev/staging/production
 - `DATABASE_URL`: PostgreSQL connection string
-- `OPENAI_API_KEY`: OpenAI API key
+- `GROQ_API_KEY`: Groq API key
 - `SECRET_KEY`: JWT secret
 - `CORS_ORIGINS`: Allowed CORS origins
 

@@ -84,7 +84,7 @@ cp .env.example .env
 # Edit .env with your configuration
 # Important variables to configure:
 # - DATABASE_URL: PostgreSQL connection string
-# - OPENAI_API_KEY: OpenAI API key
+# - GROQ_API_KEY: Groq API key
 # - SUPABASE_URL and SUPABASE_KEY: Supabase credentials
 ```
 
@@ -229,7 +229,7 @@ pyautogen==0.2.0              # Agent framework
 sqlalchemy==2.0.23            # ORM
 alembic==1.12.1               # Database migrations
 langchain==0.1.0              # LLM integration
-langchain-openai==0.0.7       # OpenAI integration
+langchain-groq==0.1.0         # Groq integration
 faiss-cpu==1.7.4              # Vector search
 psycopg2-binary==2.9.9        # PostgreSQL driver
 python-dotenv==1.0.0          # Environment variables
@@ -337,7 +337,7 @@ LOG_LEVEL=DEBUG
 LOG_FORMAT=json
 
 # API Keys (Get from services)
-OPENAI_API_KEY=your-key-here
+GROQ_API_KEY=your-key-here
 SUPABASE_URL=your-url-here
 SUPABASE_KEY=your-key-here
 ```

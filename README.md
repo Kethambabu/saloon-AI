@@ -124,7 +124,7 @@ npm run dev
 1. Copy `.env.example` to `.env`
 2. Configure the following:
    - Database connection string
-   - API keys (OpenAI, Supabase)
+   - API keys (Groq, Supabase)
    - Application settings
 
 See `.env.example` for all available options.

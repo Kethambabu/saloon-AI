@@ -6,7 +6,7 @@
 - [ ] Database URL points to production database
 - [ ] SECRET_KEY changed to a secure random value
 - [ ] CORS_ORIGINS updated with production domain
-- [ ] API keys configured (OpenAI, Supabase, etc.)
+- [ ] API keys configured (Groq, Supabase, etc.)
 - [ ] HTTPS/TLS certificates prepared
 - [ ] Database backups configured
 - [ ] Monitoring and logging setup
@@ -34,7 +34,7 @@ VITE_API_URL=https://api.yourdomain.com/api/v1
 CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 
 # External Services
-OPENAI_API_KEY=your-production-key
+GROQ_API_KEY=your-production-key
 SUPABASE_URL=your-production-supabase-url
 SUPABASE_KEY=your-production-supabase-key
 
@@ -97,7 +97,7 @@ type: Opaque
 stringData:
   DATABASE_URL: postgresql://user:password@postgres:5432/salonai_db
   SECRET_KEY: your-secure-key
-  OPENAI_API_KEY: your-openai-key
+  GROQ_API_KEY: your-groq-key
 ```
 
 **`k8s/backend-deployment.yml`**
