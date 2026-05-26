@@ -1,8 +1,9 @@
-"""Application configuration settings using environment variables."""
+"""Application configuration management using environment variables."""
 
 from functools import lru_cache
-from typing import Optional
+from typing import List, Optional, Union
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -10,42 +11,68 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Application
-    app_name: str = "SalonAI Workforce"
-    app_version: str = "0.1.0"
-    debug: bool = False
-    environment: str = "development"  # development, staging, production
+    app_name: str = Field(default="SalonAI Workforce API", alias="APP_NAME")
+    app_version: str = Field(default="0.1.0")
+    debug: bool = Field(default=False, alias="DEBUG")
+    environment: str = Field(default="development", alias="ENVIRONMENT")
 
     # Server
-    server_host: str = "127.0.0.1"
-    server_port: int = 8000
-    api_prefix: str = "/api/v1"
+    host: str = Field(default="0.0.0.0", alias="HOST")
+    port: int = Field(default=8000, alias="PORT")
+    api_prefix: str = Field(default="/api/v1")
 
     # Database
-    database_url: Optional[str] = None
-    database_echo: bool = False
+    database_url: Optional[str] = Field(default=None, alias="DATABASE_URL")
+    database_echo: bool = Field(default=False, alias="DATABASE_ECHO")
 
     # Logging
-    log_level: str = "INFO"
-    log_format: str = "json"  # json or text
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_format: str = Field(default="json", alias="LOG_FORMAT")
 
-    # Security
-    secret_key: str = "your-secret-key-change-in-production"
-    cors_origins: list = ["http://localhost:5173", "http://localhost:3000"]
+    # Security & CORS
+    secret_key: str = Field(
+        default="your-secret-key-change-in-production",
+        alias="SECRET_KEY"
+    )
+    cors_origins: Union[List[str], str] = Field(
+        default=[
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+        ],
+        alias="CORS_ORIGINS",
+    )
+    cors_allow_credentials: bool = Field(default=True)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                return json.loads(v)
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
     
     # External Services
-    openai_api_key: Optional[str] = None
-    supabase_url: Optional[str] = None
-    supabase_key: Optional[str] = None
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
+    supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
+
+    # Features
+    enable_rag: bool = Field(default=True, alias="ENABLE_RAG")
+    enable_agents: bool = Field(default=True, alias="ENABLE_AGENTS")
 
     class Config:
         """Pydantic configuration."""
-
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
-@lru_cache()
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()

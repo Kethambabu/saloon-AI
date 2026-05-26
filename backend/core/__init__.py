@@ -1,6 +1,6 @@
 """Core configuration and utilities for SalonAI Workforce backend."""
 
-from .config import settings
-from .logging import setup_logging
+from .config import Settings, get_settings
+from .logging import setup_logging, get_logger
 
-__all__ = ["settings", "setup_logging"]
+__all__ = ["Settings", "get_settings", "setup_logging", "get_logger"]
