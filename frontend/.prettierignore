@@ -1,0 +1,23 @@
+# Ignore build outputs
+dist
+build
+out
+
+# Ignore node modules
+node_modules
+
+# Ignore Git files
+.git
+
+# Ignore dependencies
+.pnp
+.pnp.js
+
+# Ignore generated files
+coverage
+.next
+.turbo
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
