@@ -192,7 +192,7 @@ class FAISSRetriever:
         return [
             {
                 "content": doc.page_content,
-                "score": round(score, 4),
+                "score": round(float(score), 4),
                 "metadata": doc.metadata,
             }
             for doc, score in results
@@ -318,7 +318,7 @@ class SalonRAGRetriever:
             for doc, score in kb_results:
                 all_results.append({
                     "content": doc.page_content,
-                    "score": round(score * knowledge_weight, 4),
+                    "score": round(float(score) * knowledge_weight, 4),
                     "source_index": "knowledge",
                     "metadata": doc.metadata,
                 })
@@ -331,7 +331,7 @@ class SalonRAGRetriever:
             for doc, score in int_results:
                 all_results.append({
                     "content": doc.page_content,
-                    "score": round(score * interaction_weight, 4),
+                    "score": round(float(score) * interaction_weight, 4),
                     "source_index": "interactions",
                     "metadata": doc.metadata,
                 })

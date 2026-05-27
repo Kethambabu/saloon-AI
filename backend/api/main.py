@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 # Project imports
 from core.config import get_settings
 from api.routes.agent_routes import router as agent_router
+from api.routes.analytics_routes import router as analytics_router
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -44,6 +45,7 @@ async def api_health():
 
 # Aggregate sub-routers
 router.include_router(agent_router)
+router.include_router(analytics_router)
 
 
 # Optional: Helper to build a standalone sub-app if mounted separately

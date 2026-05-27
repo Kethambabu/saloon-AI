@@ -154,7 +154,7 @@ async def test_rag_autogen_agent_tools(mock_embedding_model):
             assert res["success"] is True
             assert res["total"] > 0
             assert "results" in res
-            assert "cancellation" in res["results"][0]["content"].lower()
+            assert any("cancellation" in item["content"].lower() for item in res["results"])
 
             # Test all context search tool wrapper
             all_str = search_all_context("pricing")

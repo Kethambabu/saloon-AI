@@ -6,3 +6,4 @@ export { Layout } from './Layout';
 export { Loading } from './Loading';
 export { Error } from './Error';
 export { AgentChat } from './AgentChat/AgentChat';
+export { AnalyticsDashboard } from './analytics';
