@@ -100,6 +100,22 @@ _tool_registry.register(Tool("get_retention_analytics", "Retrieves customer coho
 _tool_registry.register(Tool("get_service_popularity_analytics", "Retrieves popularity metrics and revenue share statistics per service item.", get_service_popularity_analytics))
 _tool_registry.register(Tool("execute_bi_sql_query", "Executes raw SQL select queries inside a secure read-only sandboxed database session.", execute_bi_sql_query))
 
+# Import reputation tools
+from tools.reputation_tools import (
+    fetch_reviews,
+    get_review_analytics,
+    detect_critical_reviews,
+    generate_review_response,
+    get_reputation_scorecard,
+)
+
+# Register reputation tools in the global registry
+_tool_registry.register(Tool("fetch_reviews", "Fetches customer reviews from the database with optional branch, status, and rating filtering.", fetch_reviews))
+_tool_registry.register(Tool("get_review_analytics", "Generates aggregated review analytics including star distribution, sentiment, and themes.", get_review_analytics))
+_tool_registry.register(Tool("detect_critical_reviews", "Detects negative reviews requiring immediate attention and escalation.", detect_critical_reviews))
+_tool_registry.register(Tool("generate_review_response", "Generates brand-safe professional responses to customer reviews with tone control.", generate_review_response))
+_tool_registry.register(Tool("get_reputation_scorecard", "Generates NPS-style reputation scorecard with branch-level comparisons.", get_reputation_scorecard))
+
 
 __all__ = [
     "Tool",
@@ -123,5 +139,10 @@ __all__ = [
     "get_retention_analytics",
     "get_service_popularity_analytics",
     "execute_bi_sql_query",
+    "fetch_reviews",
+    "get_review_analytics",
+    "detect_critical_reviews",
+    "generate_review_response",
+    "get_reputation_scorecard",
 ]
 

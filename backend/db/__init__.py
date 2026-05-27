@@ -24,9 +24,11 @@ from db.models import (
     Appointment,
     Lead,
     Review,
+    User,
     AppointmentStatus,
     LeadStatus,
     ReviewStatus,
+    UserRole,
 )
 
 # Export all symbols for clean import paths
@@ -47,7 +49,10 @@ __all__ = [
     "Appointment",
     "Lead",
     "Review",
+    "User",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
+    "UserRole",
 ]
+

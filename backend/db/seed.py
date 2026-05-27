@@ -25,10 +25,14 @@ from db import (
     Appointment,
     Lead,
     Review,
+    User,
+    UserRole,
     AppointmentStatus,
     LeadStatus,
     ReviewStatus
 )
+from core.security import hash_password
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -39,6 +43,7 @@ def clean_existing_data(db) -> None:
     """Deletes existing data in order of dependency to respect foreign key constraints."""
     logger.info("Cleaning existing database records...")
     # Order of deletion is critical to avoid violating foreign key constraints
+    db.query(User).delete()
     db.query(Review).delete()
     db.query(Appointment).delete()
     db.query(Lead).delete()
@@ -161,6 +166,48 @@ def seed_database() -> None:
         db.add_all([staff_stylist1, staff_stylist2, staff_therapist, staff_aesthetician])
         db.commit()
         logger.info("Seed staff members created.")
+
+        # 4.5. Seed Users (Authenticated credentials)
+        logger.info("Seeding Users...")
+        default_pwd_hash = hash_password("password123")
+        
+        user_owner = User(
+            email="owner@salonai.com",
+            hashed_password=default_pwd_hash,
+            role=UserRole.OWNER,
+            is_active=True
+        )
+        user_manager = User(
+            email="manager@salonai.com",
+            hashed_password=default_pwd_hash,
+            role=UserRole.MANAGER,
+            is_active=True
+        )
+        user_staff1 = User(
+            email="marcus@salonai.com",
+            hashed_password=default_pwd_hash,
+            role=UserRole.STAFF,
+            staff_id=staff_stylist1.id,
+            is_active=True
+        )
+        user_staff2 = User(
+            email="elena@salonai.com",
+            hashed_password=default_pwd_hash,
+            role=UserRole.STAFF,
+            staff_id=staff_stylist2.id,
+            is_active=True
+        )
+        user_staff3 = User(
+            email="kai@salonai.com",
+            hashed_password=default_pwd_hash,
+            role=UserRole.STAFF,
+            staff_id=staff_therapist.id,
+            is_active=True
+        )
+        db.add_all([user_owner, user_manager, user_staff1, user_staff2, user_staff3])
+        db.commit()
+        logger.info("Seed authenticated users created.")
+
 
         # 5. Seed Customers
         logger.info("Seeding Customers...")

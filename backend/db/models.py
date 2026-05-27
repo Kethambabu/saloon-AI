@@ -54,6 +54,14 @@ class ReviewStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class UserRole(str, enum.Enum):
+    """Security roles for platform access"""
+    OWNER = "Owner"
+    MANAGER = "Manager"
+    STAFF = "Staff"
+
+
+
 class BaseModel(Base):
     """
     Enterprise abstract base model with UUID primary key
@@ -348,6 +356,37 @@ class Review(BaseModel):
         return f"<Review rating={self.rating} status={self.status}>"
 
 
+class User(BaseModel):
+    """
+    Represents an authenticated dashboard user.
+    Handles JWT access credentials and role assignment.
+    """
+    __tablename__ = "users"
+
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(
+        SQLEnum(UserRole, name="user_role"),
+        default=UserRole.STAFF,
+        nullable=False,
+        index=True
+    )
+    is_active = Column(Boolean, default=True, nullable=False)
+    staff_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    refresh_token = Column(String(500), nullable=True)
+
+    # Relationships
+    staff = relationship("Staff", backref="user", uselist=False)
+
+    def __repr__(self) -> str:
+        return f"<User email={self.email} role={self.role}>"
+
+
 # Export all models and enums
 __all__ = [
     "BaseModel",
@@ -358,7 +397,10 @@ __all__ = [
     "Appointment",
     "Lead",
     "Review",
+    "User",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
+    "UserRole",
 ]
+

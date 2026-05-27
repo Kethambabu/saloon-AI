@@ -5,7 +5,7 @@ Exposes BI tool aggregations as REST endpoints for the React frontend.
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 
 from tools.bi_tools import (
     get_revenue_analytics,
@@ -13,10 +13,17 @@ from tools.bi_tools import (
     get_retention_analytics,
     get_service_popularity_analytics,
 )
+from db import UserRole
+from api.deps import RoleChecker
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/analytics", tags=["Analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["Analytics"],
+    dependencies=[Depends(RoleChecker([UserRole.OWNER, UserRole.MANAGER]))]
+)
+
 
 
 @router.get("/revenue", summary="Revenue Analytics")

@@ -6,11 +6,13 @@ Defines the /agent/chat endpoint which connects directly to the ReceptionistAgen
 import logging
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field, ConfigDict
 
 # Project imports
 from agents.receptionist_agent import ReceptionistAgent
+from api.deps import get_current_user
+
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +82,10 @@ class ChatResponse(BaseModel):
     status_code=status.HTTP_200_OK,
     summary="Chat with Clara the AI Receptionist Agent"
 )
-async def chat_with_agent(payload: ChatRequest):
+async def chat_with_agent(
+    payload: ChatRequest,
+    current_user = Depends(get_current_user)
+):
     """
     Endpoint to send queries to Clara, the AI Salon Receptionist.
     Maintains context through history prepending and executes booking operations on the database automatically.

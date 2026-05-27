@@ -8,6 +8,16 @@ router = APIRouter(prefix="/v1", tags=["v1"])
 from api.routes.agent_routes import router as agent_router
 router.include_router(agent_router)
 
+# Include auth sub-routes
+from api.routes.auth_routes import router as auth_router
+router.include_router(auth_router)
+
+# Include analytics sub-routes
+from api.routes.analytics_routes import router as analytics_router
+router.include_router(analytics_router)
+
+
+
 # Health check endpoint
 @router.get("/health")
 async def health():

@@ -164,56 +164,15 @@ def create_promotion(name: str, discount_percent: int, services: str) -> str:
     )
 
 
-# ---- Reputation Agent ----------------------------------------------------
-REPUTATION_SYSTEM_PROMPT = """\
-You are Olivia, the Reputation & Review Manager at SalonAI Workforce.
-Your responsibilities:
-1. Monitor and summarise customer reviews across platforms (Google, Yelp).
-2. Analyse sentiment trends and highlight concerns.
-3. Draft professional, empathetic responses to negative reviews.
-4. Identify patterns in customer feedback for service improvement.
-5. Track NPS and satisfaction scores over time.
-
-Be empathetic, analytical, and solutions-focused.
-When you have no real data, provide realistic illustrative examples.
-"""
-
-
-def get_review_summary(branch_id: Optional[str] = None) -> str:
-    """
-    Get an aggregated review summary for a branch or the whole organisation.
-
-    Args:
-        branch_id: Optional UUID string of a specific branch. Omit for all branches.
-    """
-    logger.info(f"[Reputation] Fetching review summary (branch: {branch_id or 'all'})")
-    return (
-        '{"period": "last_30_days", "total_reviews": 47, '
-        '"average_rating": 4.6, "5_star": 28, "4_star": 12, '
-        '"3_star": 4, "2_star": 2, "1_star": 1, '
-        '"sentiment": {"positive": 85, "neutral": 10, "negative": 5}, '
-        '"top_praise": ["friendly staff", "clean salon", "great results"], '
-        '"top_complaints": ["wait times", "parking"]}'
-    )
-
-
-def draft_review_response(review_text: str, rating: int) -> str:
-    """
-    Draft a professional response to a customer review.
-
-    Args:
-        review_text: The full text of the customer's review.
-        rating: The star rating given (1-5).
-    """
-    logger.info(f"[Reputation] Drafting response for {rating}-star review")
-    tone = "empathetic and solution-oriented" if rating <= 3 else "grateful and warm"
-    return (
-        f'{{"draft_response": "Thank you for your feedback! '
-        f'We appreciate you taking the time to share your experience. '
-        f'{"We sincerely apologise for the inconvenience and would love to make it right. " if rating <= 3 else ""}'
-        f'We look forward to welcoming you back soon!", '
-        f'"tone": "{tone}", "status": "draft"}}'
-    )
+# ---- Reputation Agent (real DB-backed tools from reputation_agent) --------
+from agents.reputation_agent import (
+    REPUTATION_SYSTEM_PROMPT,
+    view_customer_reviews,
+    view_review_analytics,
+    find_critical_reviews,
+    draft_review_response,
+    view_reputation_scorecard,
+)
 
 
 # ---- Business Intelligence Agent -----------------------------------------
@@ -434,12 +393,19 @@ class MultiAgentOrchestrator(Agent):
             tools=[get_upsell_recommendations, create_promotion, search_salon_knowledge],
         )
 
-        # 4. Reputation + RAG Knowledge search
+        # 4. Reputation + RAG Knowledge search (real DB-backed tools)
         agents[AgentIntent.REPUTATION] = AssistantAgent(
             name="Olivia_Reputation",
             model_client=self.model_client,
             system_message=REPUTATION_SYSTEM_PROMPT,
-            tools=[get_review_summary, draft_review_response, search_salon_knowledge],
+            tools=[
+                view_customer_reviews,
+                view_review_analytics,
+                find_critical_reviews,
+                draft_review_response,
+                view_reputation_scorecard,
+                search_salon_knowledge,
+            ],
         )
 
         # 5. Business Intelligence + RAG Knowledge search (real SQL-backed BI agent tools)
