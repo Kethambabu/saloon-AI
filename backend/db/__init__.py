@@ -1,31 +1,53 @@
-"""Database module with SQLAlchemy ORM setup"""
+"""
+Database module initialization for SalonAI Workforce Platform.
+Exposes the database connection engine, session helpers, transaction utilities,
+and all ORM models for clean importing across the application.
+"""
 
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
-
-from core.config import get_settings
-
-settings = get_settings()
-
-# Database setup
-engine = create_engine(
-    settings.database_url or "sqlite:///./test.db",
-    echo=settings.database_echo,
-    connect_args={"check_same_thread": False} if "sqlite" in (settings.database_url or "") else {},
+# Import connection layer components
+from db.database import (
+    engine,
+    SessionLocal,
+    get_db,
+    db_transaction,
+    check_db_health,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Import ORM models
+from db.models import (
+    Base,
+    BaseModel,
+    Branch,
+    Staff,
+    Customer,
+    Service,
+    Appointment,
+    Lead,
+    Review,
+    AppointmentStatus,
+    LeadStatus,
+    ReviewStatus,
+)
 
-
-def get_db() -> Session:
-    """Dependency for getting database session"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-__all__ = ["engine", "SessionLocal", "Base", "get_db"]
+# Export all symbols for clean import paths
+__all__ = [
+    # Engine & Session management
+    "Base",
+    "engine",
+    "SessionLocal",
+    "get_db",
+    "db_transaction",
+    "check_db_health",
+    # Models & Enums
+    "BaseModel",
+    "Branch",
+    "Staff",
+    "Customer",
+    "Service",
+    "Appointment",
+    "Lead",
+    "Review",
+    "AppointmentStatus",
+    "LeadStatus",
+    "ReviewStatus",
+]

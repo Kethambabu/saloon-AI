@@ -46,4 +46,82 @@ def get_tool_registry() -> ToolRegistry:
     return _tool_registry
 
 
-__all__ = ["Tool", "ToolRegistry", "get_tool_registry"]
+# Import booking tools
+from tools.booking_tools import (
+    create_appointment,
+    get_available_slots,
+    cancel_appointment,
+    reschedule_appointment,
+    get_customer_history,
+)
+
+# Register booking tools in the global registry
+_tool_registry.register(Tool("create_appointment", "Creates a new salon appointment with validation and overlap checking.", create_appointment))
+_tool_registry.register(Tool("get_available_slots", "Retrieves all available time slots for a branch, date, stylist, and service.", get_available_slots))
+_tool_registry.register(Tool("cancel_appointment", "Cancels an existing appointment, shifting its status to CANCELLED.", cancel_appointment))
+_tool_registry.register(Tool("reschedule_appointment", "Reschedules an existing appointment to a new date and time, running validations.", reschedule_appointment))
+_tool_registry.register(Tool("get_customer_history", "Gets complete past and upcoming booking history for a specific customer.", get_customer_history))
+
+# Import lead CRM tools
+from tools.lead_tools import (
+    detect_abandoned_bookings,
+    get_all_leads,
+    create_lead,
+    update_lead_status,
+    create_followup_reminder,
+    generate_followup_message,
+    get_lead_conversion_analytics,
+    get_lead_pipeline_summary,
+)
+
+# Register lead tools in the global registry
+_tool_registry.register(Tool("detect_abandoned_bookings", "Detects customers with cancelled/no-show appointments who haven't rebooked.", detect_abandoned_bookings))
+_tool_registry.register(Tool("get_all_leads", "Retrieves leads from the CRM database with optional filtering.", get_all_leads))
+_tool_registry.register(Tool("create_lead", "Creates a new lead entry in the CRM pipeline.", create_lead))
+_tool_registry.register(Tool("update_lead_status", "Advances a lead through the CRM pipeline by updating its status.", update_lead_status))
+_tool_registry.register(Tool("create_followup_reminder", "Schedules a follow-up reminder for a lead via email, SMS, or phone.", create_followup_reminder))
+_tool_registry.register(Tool("generate_followup_message", "Generates a personalised follow-up message based on customer/lead history.", generate_followup_message))
+_tool_registry.register(Tool("get_lead_conversion_analytics", "Generates lead conversion analytics with pipeline distribution and rates.", get_lead_conversion_analytics))
+_tool_registry.register(Tool("get_lead_pipeline_summary", "Returns a quick snapshot of the current lead pipeline counts.", get_lead_pipeline_summary))
+
+# Import BI tools
+from tools.bi_tools import (
+    get_revenue_analytics,
+    get_staff_performance_analytics,
+    get_retention_analytics,
+    get_service_popularity_analytics,
+    execute_bi_sql_query,
+)
+
+# Register BI tools in the global registry
+_tool_registry.register(Tool("get_revenue_analytics", "Retrieves complete revenue report metrics and line chart daily datasets.", get_revenue_analytics))
+_tool_registry.register(Tool("get_staff_performance_analytics", "Retrieves performance benchmarks, utilization rates, and ratings per staff member.", get_staff_performance_analytics))
+_tool_registry.register(Tool("get_retention_analytics", "Retrieves customer cohorts, repeat visitor rates, and lifetime value lists.", get_retention_analytics))
+_tool_registry.register(Tool("get_service_popularity_analytics", "Retrieves popularity metrics and revenue share statistics per service item.", get_service_popularity_analytics))
+_tool_registry.register(Tool("execute_bi_sql_query", "Executes raw SQL select queries inside a secure read-only sandboxed database session.", execute_bi_sql_query))
+
+
+__all__ = [
+    "Tool",
+    "ToolRegistry",
+    "get_tool_registry",
+    "create_appointment",
+    "get_available_slots",
+    "cancel_appointment",
+    "reschedule_appointment",
+    "get_customer_history",
+    "detect_abandoned_bookings",
+    "get_all_leads",
+    "create_lead",
+    "update_lead_status",
+    "create_followup_reminder",
+    "generate_followup_message",
+    "get_lead_conversion_analytics",
+    "get_lead_pipeline_summary",
+    "get_revenue_analytics",
+    "get_staff_performance_analytics",
+    "get_retention_analytics",
+    "get_service_popularity_analytics",
+    "execute_bi_sql_query",
+]
+

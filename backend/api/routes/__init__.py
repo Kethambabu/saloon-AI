@@ -4,6 +4,10 @@ from fastapi import APIRouter
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
+# Include agent sub-routes
+from api.routes.agent_routes import router as agent_router
+router.include_router(agent_router)
+
 # Health check endpoint
 @router.get("/health")
 async def health():

@@ -34,4 +34,8 @@ class AgentOrchestrator:
         return await self.agents[agent_name].process(input_data)
 
 
-__all__ = ["Agent", "AgentOrchestrator"]
+from agents.receptionist_agent import ReceptionistAgent
+from agents.lead_followup_agent import LeadFollowupAgent
+from agents.orchestrator import MultiAgentOrchestrator
+
+__all__ = ["Agent", "AgentOrchestrator", "ReceptionistAgent", "LeadFollowupAgent", "MultiAgentOrchestrator"]
