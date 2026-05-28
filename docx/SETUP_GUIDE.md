@@ -121,17 +121,6 @@ Supabase provides PostgreSQL database and authentication services.
 
 **Note**: For local development, you can use a local PostgreSQL instance with Docker Compose instead.
 
-### 3. Optional: OpenAI API Key (Alternative LLM)
-
-If you want to use OpenAI instead of Groq:
-
-1. Visit: https://platform.openai.com/api-keys
-2. Sign up for an account
-3. Create a new API key
-4. Copy and save it
-
-**Environment Variable**: `OPENAI_API_KEY`
-
 ---
 
 ## Local Development Setup
@@ -327,15 +316,12 @@ SECRET_KEY=your-super-secret-key-change-in-production
 CORS_ORIGINS=["http://localhost:5173","http://localhost:3000","http://127.0.0.1:5173"]
 
 # External Services - REQUIRED
-# Groq API Key (get from https://console.groq.com)
+# Groq API Key (free, open-source LLM - get from https://console.groq.com)
 GROQ_API_KEY=your-groq-api-key-here
 
 # Supabase (optional - only if using Supabase)
 # SUPABASE_URL=https://your-project.supabase.co
 # SUPABASE_KEY=your-anon-public-key-here
-
-# OpenAI (optional - if using OpenAI instead of Groq)
-# OPENAI_API_KEY=your-openai-api-key-here
 
 # Feature Flags
 ENABLE_RAG=true
@@ -351,7 +337,7 @@ ENABLE_AGENTS=true
 
 1. **Open .env file** in your text editor
 2. **Fill in API Keys**:
-   - Replace `your-groq-api-key-here` with your actual Groq API key
+   - Replace `your-groq-api-key-here` with your actual Groq API key (free)
    - Add any other external service keys
 3. **Set DATABASE_URL**:
    - For Docker Compose: Keep default or match docker-compose.yml

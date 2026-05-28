@@ -1,10 +1,9 @@
 """
 Embedding Pipeline for SalonAI Workforce RAG System.
 
-Provides a configurable, multi-provider embedding layer supporting:
-    - HuggingFace sentence-transformers (free, local, no API key)
-    - OpenAI text-embedding-ada-002 / text-embedding-3-small (cloud)
-    - Groq-compatible OpenAI embeddings via custom base_url
+Provides a configurable, open-source embedding layer supporting:
+    - HuggingFace sentence-transformers (free, local, no API key required)
+    - Fully offline and privacy-preserving embeddings
 
 Architecture:
     EmbeddingProvider (enum)  →  selects provider
@@ -36,7 +35,6 @@ settings = get_settings()
 class EmbeddingProvider(str, Enum):
     """Supported embedding model providers."""
     HUGGINGFACE = "huggingface"
-    OPENAI = "openai"
 
 
 @dataclass
@@ -44,15 +42,10 @@ class EmbeddingConfig:
     """Configuration for the embedding pipeline."""
     provider: EmbeddingProvider = EmbeddingProvider.HUGGINGFACE
 
-    # HuggingFace settings
+    # HuggingFace settings (open-source)
     hf_model_name: str = "all-MiniLM-L6-v2"
     hf_device: str = "cpu"
     hf_normalize: bool = True
-
-    # OpenAI settings
-    openai_model: str = "text-embedding-3-small"
-    openai_api_key: Optional[str] = None
-    openai_base_url: Optional[str] = None
 
     # Batch processing
     batch_size: int = 64
@@ -65,10 +58,7 @@ class EmbeddingConfig:
 def get_embedding_model(config: Optional[EmbeddingConfig] = None) -> Embeddings:
     """
     Factory function that returns a configured LangChain Embeddings instance.
-
-    Priority logic (if no explicit config is provided):
-        1. If OPENAI_API_KEY is set → use OpenAI embeddings
-        2. Otherwise → use free local HuggingFace sentence-transformers
+    Uses local HuggingFace sentence-transformers (free, offline, open-source).
 
     Args:
         config: Optional EmbeddingConfig. If None, auto-detects from environment.
@@ -80,42 +70,15 @@ def get_embedding_model(config: Optional[EmbeddingConfig] = None) -> Embeddings:
         config = _auto_detect_config()
 
     logger.info(f"[Embeddings] Initializing {config.provider.value} embedding model...")
-
-    if config.provider == EmbeddingProvider.OPENAI:
-        return _build_openai_embeddings(config)
-    else:
-        return _build_huggingface_embeddings(config)
+    return _build_huggingface_embeddings(config)
 
 
 def _auto_detect_config() -> EmbeddingConfig:
     """Auto-detect the best embedding provider from environment variables."""
-    openai_key = os.environ.get("OPENAI_API_KEY")
-
-    if openai_key:
-        logger.info("[Embeddings] Auto-detected OpenAI API key → using OpenAI embeddings")
-        return EmbeddingConfig(
-            provider=EmbeddingProvider.OPENAI,
-            openai_api_key=openai_key,
-        )
-
-    logger.info("[Embeddings] No cloud API keys found → using local HuggingFace embeddings (free)")
+    # Using local HuggingFace embeddings (open-source, free, offline)
+    logger.info("[Embeddings] Using local HuggingFace embeddings (free, open-source, offline)")
     return EmbeddingConfig(provider=EmbeddingProvider.HUGGINGFACE)
 
-
-def _build_openai_embeddings(config: EmbeddingConfig) -> Embeddings:
-    """Build OpenAI embeddings client."""
-    from langchain_openai import OpenAIEmbeddings
-
-    kwargs = {
-        "model": config.openai_model,
-        "openai_api_key": config.openai_api_key or os.environ.get("OPENAI_API_KEY"),
-    }
-    if config.openai_base_url:
-        kwargs["openai_api_base"] = config.openai_base_url
-
-    model = OpenAIEmbeddings(**kwargs)
-    logger.info(f"[Embeddings] OpenAI embeddings ready (model={config.openai_model})")
-    return model
 
 
 def _build_huggingface_embeddings(config: EmbeddingConfig) -> Embeddings:
@@ -203,11 +166,7 @@ class EmbeddingPipeline:
         """Return metadata about the current embedding configuration."""
         return {
             "provider": self.config.provider.value,
-            "model": (
-                self.config.openai_model
-                if self.config.provider == EmbeddingProvider.OPENAI
-                else self.config.hf_model_name
-            ),
-            "device": self.config.hf_device if self.config.provider == EmbeddingProvider.HUGGINGFACE else "cloud",
+            "model": self.config.hf_model_name,
+            "device": self.config.hf_device,
             "batch_size": self.config.batch_size,
         }

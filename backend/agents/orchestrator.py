@@ -250,9 +250,8 @@ def get_booking_trends(period: str = "last_30_days") -> str:
 # Model Client Factory
 # ---------------------------------------------------------------------------
 def _create_model_client() -> OpenAIChatCompletionClient:
-    """Create an LLM model client from environment configuration."""
+    """Create an LLM model client from environment configuration - Groq (free, open-source)."""
     groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
 
     if groq_key and groq_key != "your-groq-key-here":
         logger.info("[Orchestrator] Using Groq LLM endpoint")
@@ -261,17 +260,12 @@ def _create_model_client() -> OpenAIChatCompletionClient:
             api_key=groq_key,
             base_url="https://api.groq.com/openai/v1",
         )
-    elif openai_key:
-        logger.info("[Orchestrator] Using OpenAI LLM endpoint")
-        return OpenAIChatCompletionClient(
-            model="gpt-4o",
-            api_key=openai_key,
-        )
     else:
-        logger.warning("[Orchestrator] No LLM keys found – using mock client")
+        logger.warning("[Orchestrator] No Groq API key found – using mock client for testing")
         return OpenAIChatCompletionClient(
-            model="gpt-4o",
-            api_key="mock-api-key-for-testing",
+            model="llama-3.3-70b-specdec",
+            api_key="mock-groq-key-for-testing",
+            base_url="https://api.groq.com/openai/v1",
         )
 
 

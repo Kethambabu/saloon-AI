@@ -193,7 +193,7 @@ generation, and immediate escalation of critical negative feedback.
 # ---------------------------------------------------------------------------
 class ReputationAgent(Agent):
     """
-    Reputation & Review Management AI Agent powered by Microsoft AutoGen v0.4+.
+    Reputation & Review Management AI Agent powered by Microsoft AutoGen v0.4+ and Groq LLM.
     Provides comprehensive review monitoring, sentiment analysis, response generation,
     critical review detection, and brand reputation scoring.
     """
@@ -212,9 +212,8 @@ class ReputationAgent(Agent):
             "scorecard_views": 0,
         }
 
-        # 1. Configure model client
+        # 1. Configure model client - Groq (free, open-source alternative to OpenAI)
         groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
-        openai_key = os.environ.get("OPENAI_API_KEY")
 
         if groq_key and groq_key != "your-groq-key-here":
             logger.info("Configuring ReputationAgent with Groq endpoint...")
@@ -223,17 +222,12 @@ class ReputationAgent(Agent):
                 api_key=groq_key,
                 base_url="https://api.groq.com/openai/v1",
             )
-        elif openai_key:
-            logger.info("Configuring ReputationAgent with OpenAI endpoint...")
-            self.model_client = OpenAIChatCompletionClient(
-                model="gpt-4o",
-                api_key=openai_key,
-            )
         else:
-            logger.warning("No LLM keys found – ReputationAgent using mock client.")
+            logger.warning("No Groq API key found – ReputationAgent using mock client for testing.")
             self.model_client = OpenAIChatCompletionClient(
-                model="gpt-4o",
-                api_key="mock-api-key-for-testing",
+                model="llama-3.3-70b-specdec",
+                api_key="mock-groq-key-for-testing",
+                base_url="https://api.groq.com/openai/v1",
             )
 
         # 2. Build AutoGen AssistantAgent with full tool suite
