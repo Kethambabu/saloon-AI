@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { AxiosError, AxiosRequestConfig } from 'axios';
+import type { AxiosError, AxiosRequestConfig } from 'axios';
 import { apiClient } from '../api/client';
 import { useAppStore } from '../store/appStore';
 
