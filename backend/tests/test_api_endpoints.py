@@ -26,6 +26,19 @@ def app_client():
         debug=True,
     )
     app = create_app(settings=test_settings)
+    
+    # Bypass authentication for API endpoint tests
+    from api.deps import get_current_user
+    from db import User, UserRole
+    
+    mock_user = User(
+        email="test_user@salonai.com",
+        role=UserRole.MANAGER,
+        is_active=True
+    )
+    
+    app.dependency_overrides[get_current_user] = lambda: mock_user
+    
     return TestClient(app)
 
 

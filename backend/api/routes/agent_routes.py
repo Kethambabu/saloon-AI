@@ -114,19 +114,25 @@ async def chat_with_agent(
             detail=f"Agent service is currently initializing or unavailable: {str(e)}"
         )
 
-    # 3. Process query through AutoGen asynchronously
+    # 3. Process query through AutoGen asynchronously with robust error handling
     try:
+        logger.debug(f"Sending query to agent: {full_query[:100]}...")
         agent_response = await agent.process({"query": full_query})
         
         if not agent_response.get("success"):
             error_msg = agent_response.get("error", "Unknown agent processing error.")
-            logger.error(f"Agent failed to process query: {error_msg}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Agent failed to process query: {error_msg}"
+            logger.error(f"Agent returned failure response: {error_msg}")
+            
+            # Return structured error response (don't crash API)
+            return ChatResponse(
+                success=False,
+                session_id=payload.session_id,
+                response=f"I encountered an issue processing your request: {error_msg}. Please try again.",
+                agent_name=agent_response.get("agent_name", "Clara")
             )
 
         # 4. Construct structured response mapping back aliases
+        logger.info(f"Agent successfully processed query for session {payload.session_id}")
         return ChatResponse(
             success=True,
             session_id=payload.session_id,
@@ -137,8 +143,20 @@ async def chat_with_agent(
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.error(f"Unexpected error in /chat endpoint: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred during agent execution: {str(e)}"
+        logger.error(
+            f"Unexpected error in /chat endpoint: {str(e)}",
+            exc_info=True,
+            extra={
+                "session_id": payload.session_id,
+                "message_preview": payload.message[:50],
+                "error_type": type(e).__name__,
+            }
+        )
+        
+        # Return graceful error response without crashing API
+        return ChatResponse(
+            success=False,
+            session_id=payload.session_id,
+            response="An unexpected error occurred. Our team has been notified. Please try again later.",
+            agent_name="Clara"
         )

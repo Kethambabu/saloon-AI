@@ -19,6 +19,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 # Project imports
 from agents import Agent
 from core.config import get_settings
+from core.llm_config import get_llm_config
 from tools.reputation_tools import (
     fetch_reviews,
     get_review_analytics,
@@ -215,22 +216,29 @@ class ReputationAgent(Agent):
         # 1. Configure model client - Groq (free, open-source alternative to OpenAI)
         groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
 
-        if groq_key and groq_key != "your-groq-key-here":
-            logger.info("Configuring ReputationAgent with Groq endpoint...")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",
-                api_key=groq_key,
-                base_url="https://api.groq.com/openai/v1",
-            )
-        else:
-            logger.warning("No Groq API key found – ReputationAgent using mock client for testing.")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",
-                api_key="mock-groq-key-for-testing",
-                base_url="https://api.groq.com/openai/v1",
-            )
+        model_info_dict = {
+            "vision": False,
+            "function_calling": True,
+            "json_output": True,
+            "family": "llama-3.3-70b",
+            "structured_output": False,
+        }
 
-        # 2. Build AutoGen AssistantAgent with full tool suite
+        # 1. Get centralized LLM configuration
+        llm_config = get_llm_config()
+        config = llm_config.get_config()
+        
+        logger.info(f"Using model: {config['model']}")
+
+        # 2. Instantiate AutoGen AssistantAgent with system prompt and tools
+        self.model_client = OpenAIChatCompletionClient(
+            model=config["model"],
+            api_key=config["api_key"],
+            base_url=config["base_url"],
+            model_info=config["model_info"],
+        )
+
+        # 3. Build AutoGen AssistantAgent with full tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,

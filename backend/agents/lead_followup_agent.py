@@ -30,13 +30,14 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 # Project imports
 from agents import Agent
 from core.config import get_settings
+from core.llm_config import get_llm_config
 from tools.lead_tools import (
     detect_abandoned_bookings,
     get_all_leads,
     create_lead,
     update_lead_status,
     create_followup_reminder,
-    generate_followup_message,
+    generate_followup_message,\
     get_lead_conversion_analytics,
     get_lead_pipeline_summary,
 )
@@ -293,25 +294,21 @@ class LeadFollowupAgent(Agent):
             "analytics_viewed": 0,
         }
 
-        # 1. Configure model client - Groq (free, open-source alternative to OpenAI)
-        groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
+        # 1. Get centralized LLM configuration
+        llm_config = get_llm_config()
+        config = llm_config.get_config()
+        
+        logger.info(f"Using model: {config['model']}")
 
-        if groq_key and groq_key != "your-groq-key-here":
-            logger.info("Configuring LeadFollowupAgent with Groq endpoint...")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",
-                api_key=groq_key,
-                base_url="https://api.groq.com/openai/v1",
-            )
-        else:
-            logger.warning("No Groq API key found – LeadFollowupAgent using mock client for testing.")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",
-                api_key="mock-groq-key-for-testing",
-                base_url="https://api.groq.com/openai/v1",
-            )
+        # 2. Instantiate AutoGen AssistantAgent with system prompt and tools
+        self.model_client = OpenAIChatCompletionClient(
+            model=config["model"],
+            api_key=config["api_key"],
+            base_url=config["base_url"],
+            model_info=config["model_info"],
+        )
 
-        # 2. Build AutoGen AssistantAgent with full tool suite
+        # 3. Build AutoGen AssistantAgent with full tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,

@@ -55,14 +55,61 @@ def _parse_datetime(dt_input: Any) -> datetime:
     return dt
 
 
-def _parse_uuid(uuid_input: Any, name: str = "id") -> uuid.UUID:
-    """Helper to validate and parse UUIDs."""
+def _parse_uuid(uuid_input: Any, name: str = "id", db: Optional[Session] = None) -> uuid.UUID:
+    """
+    Helper to validate and parse UUIDs.
+    Tries UUID parsing first, then falls back to name/code lookup if needed.
+    """
     if isinstance(uuid_input, uuid.UUID):
         return uuid_input
+    
+    # Try to parse as UUID string
+    str_input = str(uuid_input).strip()
     try:
-        return uuid.UUID(str(uuid_input))
-    except ValueError as e:
-        raise ValueError(f"Invalid UUID format for {name}: '{uuid_input}'") from e
+        return uuid.UUID(str_input)
+    except ValueError:
+        pass
+    
+    # If UUID parsing fails and we have a DB session, try to look up by name/code
+    if db:
+        # Map field names to lookup strategies
+        if name == "branch_id":
+            # Look up by branch name or code
+            branch = db.query(Branch).filter(
+                or_(Branch.name.ilike(str_input), Branch.code.ilike(str_input))
+            ).first()
+            if branch:
+                logger.info(f"Resolved branch_id '{str_input}' to UUID: {branch.id}")
+                return branch.id
+        
+        elif name == "customer_id":
+            # Look up by customer name or email
+            customer = db.query(Customer).filter(
+                or_(
+                    Customer.full_name.ilike(f"%{str_input}%"),
+                    Customer.email.ilike(str_input)
+                )
+            ).first()
+            if customer:
+                logger.info(f"Resolved customer_id '{str_input}' to UUID: {customer.id}")
+                return customer.id
+        
+        elif name == "service_id":
+            # Look up by service name
+            service = db.query(Service).filter(Service.name.ilike(f"%{str_input}%")).first()
+            if service:
+                logger.info(f"Resolved service_id '{str_input}' to UUID: {service.id}")
+                return service.id
+        
+        elif name == "staff_id":
+            # Look up by staff name
+            staff = db.query(Staff).filter(Staff.full_name.ilike(f"%{str_input}%")).first()
+            if staff:
+                logger.info(f"Resolved staff_id '{str_input}' to UUID: {staff.id}")
+                return staff.id
+    
+    # If all lookups fail, raise error
+    raise ValueError(f"Invalid UUID format or unknown identifier for {name}: '{uuid_input}'")
 
 
 def _is_within_business_hours(start: datetime, end: datetime) -> bool:
@@ -87,15 +134,16 @@ def get_available_slots(
     """
     logger.info(f"Checking available slots for branch {branch_id} on date {date_str} (Staff: {staff_id}, Service: {service_id})")
     
+    # Open connection if no session is injected
+    session = db or SessionLocal()
+    
     try:
-        b_id = _parse_uuid(branch_id, "branch_id")
+        b_id = _parse_uuid(branch_id, "branch_id", session)
         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
     except ValueError as e:
         logger.warning(f"Validation failed in get_available_slots: {str(e)}")
         return {"success": False, "error": str(e)}
 
-    # Open connection if no session is injected
-    session = db or SessionLocal()
     try:
         # 1. Validate Branch exists
         branch = session.query(Branch).filter(Branch.id == b_id, Branch.is_active == True).first()
@@ -106,7 +154,7 @@ def get_available_slots(
         duration = SLOT_INTERVAL_MINUTES
         if service_id:
             try:
-                s_id = _parse_uuid(service_id, "service_id")
+                s_id = _parse_uuid(service_id, "service_id", session)
                 service = session.query(Service).filter(Service.id == s_id, Service.is_active == True).first()
                 if not service:
                     return {"success": False, "error": f"Active Service with ID {s_id} not found"}
@@ -118,7 +166,7 @@ def get_available_slots(
         staff_list = []
         if staff_id:
             try:
-                st_id = _parse_uuid(staff_id, "staff_id")
+                st_id = _parse_uuid(staff_id, "staff_id", session)
                 st = session.query(Staff).filter(Staff.id == st_id, Staff.branch_id == b_id, Staff.is_active == True).first()
                 if not st:
                     return {"success": False, "error": f"Active Staff member {st_id} not found at branch {b_id}"}
@@ -215,12 +263,15 @@ def create_appointment(
     """
     logger.info(f"Creating appointment for Customer: {customer_id}, Branch: {branch_id}, Service: {service_id}, Start: {start_time}")
     
+    # Open connection if no session is injected
+    session = db or SessionLocal()
+    
     try:
-        c_id = _parse_uuid(customer_id, "customer_id")
-        b_id = _parse_uuid(branch_id, "branch_id")
-        s_id = _parse_uuid(service_id, "service_id")
+        c_id = _parse_uuid(customer_id, "customer_id", session)
+        b_id = _parse_uuid(branch_id, "branch_id", session)
+        s_id = _parse_uuid(service_id, "service_id", session)
         st_start = _parse_datetime(start_time)
-        st_id = _parse_uuid(staff_id, "staff_id") if staff_id else None
+        st_id = _parse_uuid(staff_id, "staff_id", session) if staff_id else None
     except ValueError as e:
         logger.warning(f"Validation failed in create_appointment: {str(e)}")
         return {"success": False, "error": str(e)}
@@ -229,7 +280,6 @@ def create_appointment(
     if st_start < datetime.now(timezone.utc):
         return {"success": False, "error": "Appointment start time must be in the future."}
 
-    session = db or SessionLocal()
     try:
         # 1. Validate Customer
         customer = session.query(Customer).filter(Customer.id == c_id, Customer.is_active == True).first()
@@ -365,12 +415,13 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
     """
     logger.info(f"Request to cancel appointment ID: {appointment_id}")
     
+    session = db or SessionLocal()
+    
     try:
-        appt_id = _parse_uuid(appointment_id, "appointment_id")
+        appt_id = _parse_uuid(appointment_id, "appointment_id", session)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    session = db or SessionLocal()
     try:
         appointment = session.query(Appointment).filter(Appointment.id == appt_id).first()
         if not appointment:
@@ -418,8 +469,10 @@ def reschedule_appointment(
     """
     logger.info(f"Rescheduling appointment ID {appointment_id} to new start: {new_start_time}")
     
+    session = db or SessionLocal()
+    
     try:
-        appt_id = _parse_uuid(appointment_id, "appointment_id")
+        appt_id = _parse_uuid(appointment_id, "appointment_id", session)
         new_start = _parse_datetime(new_start_time)
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -427,7 +480,6 @@ def reschedule_appointment(
     if new_start < datetime.now(timezone.utc):
         return {"success": False, "error": "New appointment start time must be in the future."}
 
-    session = db or SessionLocal()
     try:
         # 1. Fetch appointment
         appointment = session.query(Appointment).filter(Appointment.id == appt_id).first()
@@ -523,12 +575,13 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
     """
     logger.info(f"Fetching customer history for: {customer_id}")
     
+    session = db or SessionLocal()
+    
     try:
-        c_id = _parse_uuid(customer_id, "customer_id")
+        c_id = _parse_uuid(customer_id, "customer_id", session)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    session = db or SessionLocal()
     try:
         # Check Customer exists
         customer = session.query(Customer).filter(Customer.id == c_id).first()

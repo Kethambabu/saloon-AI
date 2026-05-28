@@ -3,6 +3,7 @@ SalonAI Workforce - FastAPI Application Entry Point
 Production-ready enterprise application for salon workforce management
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import Settings, get_settings
 from core.logging import setup_logging
+from core.llm_config import validate_llm_startup
 from api.routes import router as api_router
 
 # Setup logging
 setup_logging()
+logger = logging.getLogger(__name__)
 
 # App instance
 app: FastAPI | None = None
@@ -23,10 +26,27 @@ app: FastAPI | None = None
 async def lifespan(application: FastAPI):
     """Application startup and shutdown events"""
     # Startup
+    logger.info("=" * 70)
+    logger.info("🚀 SalonAI Workforce API Starting Up")
+    logger.info("=" * 70)
+    
     settings = get_settings()
     application.state.settings = settings
+    
+    # Validate LLM configuration
+    logger.info("🔍 Validating LLM configuration at startup...")
+    llm_valid = validate_llm_startup()
+    if not llm_valid:
+        logger.error("❌ LLM configuration validation failed - some agents may not function correctly")
+    else:
+        logger.info("✅ LLM configuration validated successfully")
+    
+    logger.info("=" * 70)
+    
     yield
+    
     # Shutdown
+    logger.info("🛑 SalonAI Workforce API Shutting Down")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

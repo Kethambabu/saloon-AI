@@ -15,6 +15,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 # Project imports
 from agents import Agent
 from core.config import get_settings
+from core.llm_config import get_llm_config
 from tools.booking_tools import (
     create_appointment,
     get_available_slots,
@@ -145,26 +146,20 @@ class ReceptionistAgent(Agent):
         super().__init__(name=name, role=role)
         logger.info(f"Initializing AI Receptionist Agent '{name}'...")
 
-        # 1. Determine model configuration dynamically - Groq (free, open-source)
-        groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
-
-        if groq_key and groq_key != "your-groq-key-here":
-            logger.info("Configuring model client using Groq endpoint...")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",  # Groq's high-speed reasoning model
-                api_key=groq_key,
-                base_url="https://api.groq.com/openai/v1"
-            )
-        else:
-            # Fallback configuration for dry-run testing / local mocking
-            logger.warning("No Groq API key found. Initializing with mock client settings for testing...")
-            self.model_client = OpenAIChatCompletionClient(
-                model="llama-3.3-70b-specdec",
-                api_key="mock-groq-key-for-testing",
-                base_url="https://api.groq.com/openai/v1"
-            )
+        # 1. Get centralized LLM configuration
+        llm_config = get_llm_config()
+        config = llm_config.get_config()
+        
+        logger.info(f"Using model: {config['model']}")
 
         # 2. Instantiate AutoGen AssistantAgent with system prompt and tools
+        self.model_client = OpenAIChatCompletionClient(
+            model=config["model"],
+            api_key=config["api_key"],
+            base_url=config["base_url"],
+            model_info=config["model_info"],
+        )
+
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,

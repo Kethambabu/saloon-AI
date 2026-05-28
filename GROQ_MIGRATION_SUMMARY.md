@@ -23,31 +23,31 @@
 #### a. `backend/agents/reputation_agent.py`
 - ❌ Removed: OpenAI fallback logic
 - ✅ Added: Groq-only configuration
-- 📌 Model: `llama-3.3-70b-specdec`
+- 📌 Model: `llama-3.1-405b`
 - **Changes**: Lines 217-235
 
 #### b. `backend/agents/receptionist_agent.py`
 - ❌ Removed: OpenAI endpoint fallback
 - ✅ Added: Groq-only configuration with mock fallback
-- 📌 Model: `llama-3.3-70b-specdec`
+- 📌 Model: `llama-3.1-405b`
 - **Changes**: Lines 150-168
 
 #### c. `backend/agents/bi_agent.py`
 - ❌ Removed: OpenAI fallback logic
 - ✅ Added: Groq-only configuration
-- 📌 Model: `llama-3.3-70b-specdec`
+- 📌 Model: `llama-3.1-405b`
 - **Changes**: Lines 177-195
 
 #### d. `backend/agents/lead_followup_agent.py`
 - ❌ Removed: OpenAI fallback logic
 - ✅ Added: Groq-only configuration
-- 📌 Model: `llama-3.3-70b-specdec`
+- 📌 Model: `llama-3.1-405b`
 - **Changes**: Lines 298-316
 
 #### e. `backend/agents/orchestrator.py`
 - ❌ Removed: OpenAI endpoint from `_create_model_client()` function
 - ✅ Added: Groq-only model client factory
-- 📌 Model: `llama-3.3-70b-specdec`
+- 📌 Model: `llama-3.1-405b`
 - **Changes**: Lines 252-268
 
 ### 2. **RAG/Embeddings** (`backend/rag/embeddings.py`)
@@ -109,7 +109,7 @@ if openai_key:
     )
 elif groq_key:
     model_client = OpenAIChatCompletionClient(
-        model="llama-3.3-70b-specdec",
+        model="llama-3.1-405b",
         api_key=groq_key,
         base_url="https://api.groq.com/openai/v1",
     )
@@ -122,14 +122,14 @@ groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
 
 if groq_key and groq_key != "your-groq-key-here":
     model_client = OpenAIChatCompletionClient(
-        model="llama-3.3-70b-specdec",
+        model="llama-3.1-405b",
         api_key=groq_key,
         base_url="https://api.groq.com/openai/v1",
     )
 else:
     # Fallback for testing
     model_client = OpenAIChatCompletionClient(
-        model="llama-3.3-70b-specdec",
+        model="llama-3.1-405b",
         api_key="mock-groq-key-for-testing",
         base_url="https://api.groq.com/openai/v1",
     )
@@ -168,7 +168,7 @@ return _build_huggingface_embeddings(config)
 | Aspect | OpenAI | Groq |
 |--------|--------|------|
 | **Cost** | $$ (Paid) | ✅ **Free** |
-| **Model** | gpt-4o | llama-3.3-70b-specdec |
+| **Model** | gpt-4o | llama-3.1-405b |
 | **Speed** | Moderate | ✅ **Very Fast** |
 | **Subscription** | Required | ✅ **Not needed** |
 | **Open Source** | ❌ Proprietary | ✅ **Yes** |
@@ -229,7 +229,7 @@ pytest tests/ -v
 - ✅ Environment configuration updated
 - ✅ Mock fallbacks configured for testing
 - ✅ No breaking changes to agent functionality
-- ✅ All agent models point to `llama-3.3-70b-specdec`
+- ✅ All agent models point to `llama-3.1-405b`
 
 ---
 

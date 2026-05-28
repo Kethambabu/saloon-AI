@@ -27,6 +27,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 # Project imports
 from agents import Agent
 from core.config import get_settings
+from core.llm_config import get_llm_config
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -250,23 +251,17 @@ def get_booking_trends(period: str = "last_30_days") -> str:
 # Model Client Factory
 # ---------------------------------------------------------------------------
 def _create_model_client() -> OpenAIChatCompletionClient:
-    """Create an LLM model client from environment configuration - Groq (free, open-source)."""
-    groq_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
-
-    if groq_key and groq_key != "your-groq-key-here":
-        logger.info("[Orchestrator] Using Groq LLM endpoint")
-        return OpenAIChatCompletionClient(
-            model="llama-3.3-70b-specdec",
-            api_key=groq_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
-    else:
-        logger.warning("[Orchestrator] No Groq API key found – using mock client for testing")
-        return OpenAIChatCompletionClient(
-            model="llama-3.3-70b-specdec",
-            api_key="mock-groq-key-for-testing",
-            base_url="https://api.groq.com/openai/v1",
-        )
+    """Create an LLM model client from centralized configuration."""
+    llm_config = get_llm_config()
+    config = llm_config.get_config()
+    
+    logger.info(f"[Orchestrator] Using model: {config['model']}")
+    return OpenAIChatCompletionClient(
+        model=config["model"],
+        api_key=config["api_key"],
+        base_url=config["base_url"],
+        model_info=config["model_info"],
+    )
 
 
 # ---------------------------------------------------------------------------
