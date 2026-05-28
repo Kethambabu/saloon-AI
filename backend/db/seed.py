@@ -1,7 +1,13 @@
 """
-Database Seeder Script for SalonAI Workforce Platform.
-Populates the database with realistic, high-quality sample data for development and testing.
-Runnable directly from CLI.
+Database Seed Script for SalonAI Workforce Platform.
+Creates realistic sample data for branches, staff, customers, services, and appointments.
+Run this after migrations to populate the database with test data.
+
+Usage:
+    python backend/db/seed.py
+    or from Python:
+    from backend.db.seed import seed_database
+    seed_database()
 """
 
 import os
@@ -9,348 +15,435 @@ import sys
 import uuid
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sqlalchemy.sql import text
-from db import (
-    engine,
-    db_transaction,
+from sqlalchemy.orm import Session
+from db.database import SessionLocal, engine
+from db.models import (
     Base,
     Branch,
     Staff,
     Customer,
     Service,
     Appointment,
-    Lead,
-    Review,
-    User,
-    UserRole,
     AppointmentStatus,
+    Lead,
     LeadStatus,
-    ReviewStatus
 )
-from core.security import hash_password
-
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def clean_existing_data(db) -> None:
-    """Deletes existing data in order of dependency to respect foreign key constraints."""
-    logger.info("Cleaning existing database records...")
-    # Order of deletion is critical to avoid violating foreign key constraints
-    db.query(User).delete()
-    db.query(Review).delete()
-    db.query(Appointment).delete()
-    db.query(Lead).delete()
-    db.query(Staff).delete()
-    db.query(Branch).delete()
-    db.query(Customer).delete()
-    db.query(Service).delete()
-    db.commit()
-    logger.info("Cleaned existing data.")
-
-
-def seed_database() -> None:
-    """Main seeder logic executing inside a single database transaction."""
-    logger.info("Starting database seeding process...")
-
-    # Automatically create tables if they do not exist
+def seed_database():
+    """
+    Seed the database with realistic sample data.
+    Creates tables and populates with demo content.
+    """
+    # Create tables
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables verified/created.")
-
-    with db_transaction() as db:
-        # 1. Clean existing records for a fresh state
-        clean_existing_data(db)
-
-        # 2. Seed Branches (Locations)
-        logger.info("Seeding Branches...")
-        branch_downtown = Branch(
-            name="SalonAI Downtown Elite",
-            code="BR-DWTN-01",
-            address="100 Enterprise Way, Suite A",
-            city="Metropolis",
-            phone="555-0100",
-            email="downtown@salonai.com",
-            is_active=True
-        )
-        branch_uptown = Branch(
-            name="SalonAI Uptown Oasis",
-            code="BR-UPTN-02",
-            address="450 Serenity Lane, Building 3",
-            city="Metropolis",
-            phone="555-0200",
-            email="uptown@salonai.com",
-            is_active=True
-        )
-        db.add_all([branch_downtown, branch_uptown])
-        db.commit()  # Commit to populate UUIDs
-        logger.info(f"Seed branches created: {branch_downtown.name}, {branch_uptown.name}")
-
-        # 3. Seed Services
-        logger.info("Seeding Services...")
-        srv_haircut = Service(
-            name="Signature Precision Haircut",
-            description="Premium tailored wash, cut, scalp massage, and style blowout.",
-            price=85.00,
-            duration_minutes=60,
-            is_active=True
-        )
-        srv_color = Service(
-            name="Balayage & Creative Color",
-            description="Custom artistic coloring and toning with high-end premium bond protectors.",
-            price=220.00,
-            duration_minutes=150,
-            is_active=True
-        )
-        srv_facial = Service(
-            name="Hydrating Deep-Cleansing Facial",
-            description="Organic advanced botanical exfoliation, extraction, and antioxidant hydration treatment.",
-            price=120.00,
-            duration_minutes=75,
-            is_active=True
-        )
-        srv_massage = Service(
-            name="Himalayan Hot Stone Massage",
-            description="Deep tissue somatic therapy utilizing warm mineral-rich salt rocks.",
-            price=150.00,
-            duration_minutes=90,
-            is_active=True
-        )
-        db.add_all([srv_haircut, srv_color, srv_facial, srv_massage])
-        db.commit()
-        logger.info("Seed services created successfully.")
-
-        # 4. Seed Staff members
-        logger.info("Seeding Staff...")
-        staff_stylist1 = Staff(
-            branch_id=branch_downtown.id,
-            first_name="Marcus",
-            last_name="Vance",
-            email="marcus@salonai.com",
-            phone="555-1111",
-            role="Senior Stylist",
-            is_active=True
-        )
-        staff_stylist2 = Staff(
-            branch_id=branch_uptown.id,
-            first_name="Elena",
-            last_name="Rostova",
-            email="elena@salonai.com",
-            phone="555-2222",
-            role="Color Specialist",
-            is_active=True
-        )
-        staff_therapist = Staff(
-            branch_id=branch_uptown.id,
-            first_name="Kai",
-            last_name="Chen",
-            email="kai@salonai.com",
-            phone="555-3333",
-            role="Licensed Massage Therapist",
-            is_active=True
-        )
-        staff_aesthetician = Staff(
-            branch_id=branch_downtown.id,
-            first_name="Sarah",
-            last_name="Jenkins",
-            email="sarah@salonai.com",
-            phone="555-4444",
-            role="Master Esthetician",
-            is_active=True
-        )
-        db.add_all([staff_stylist1, staff_stylist2, staff_therapist, staff_aesthetician])
-        db.commit()
-        logger.info("Seed staff members created.")
-
-        # 4.5. Seed Users (Authenticated credentials)
-        logger.info("Seeding Users...")
-        default_pwd_hash = hash_password("password123")
+    logger.info("✓ Database tables verified/created")
+    
+    db = SessionLocal()
+    
+    try:
+        # Check if data already exists
+        existing_branches = db.query(Branch).count()
+        if existing_branches > 0:
+            logger.info("ℹ️  Database already seeded. Skipping...")
+            db.close()
+            return
         
-        user_owner = User(
-            email="owner@salonai.com",
-            hashed_password=default_pwd_hash,
-            role=UserRole.OWNER,
-            is_active=True
-        )
-        user_manager = User(
-            email="manager@salonai.com",
-            hashed_password=default_pwd_hash,
-            role=UserRole.MANAGER,
-            is_active=True
-        )
-        user_staff1 = User(
-            email="marcus@salonai.com",
-            hashed_password=default_pwd_hash,
-            role=UserRole.STAFF,
-            staff_id=staff_stylist1.id,
-            is_active=True
-        )
-        user_staff2 = User(
-            email="elena@salonai.com",
-            hashed_password=default_pwd_hash,
-            role=UserRole.STAFF,
-            staff_id=staff_stylist2.id,
-            is_active=True
-        )
-        user_staff3 = User(
-            email="kai@salonai.com",
-            hashed_password=default_pwd_hash,
-            role=UserRole.STAFF,
-            staff_id=staff_therapist.id,
-            is_active=True
-        )
-        db.add_all([user_owner, user_manager, user_staff1, user_staff2, user_staff3])
-        db.commit()
-        logger.info("Seed authenticated users created.")
-
-
-        # 5. Seed Customers
-        logger.info("Seeding Customers...")
-        cust1 = Customer(
-            first_name="Alice",
-            last_name="Smith",
-            email="alice.smith@gmail.com",
-            phone="555-9001",
-            is_active=True
-        )
-        cust2 = Customer(
-            first_name="Bob",
-            last_name="Miller",
-            email="bob.miller@yahoo.com",
-            phone="555-9002",
-            is_active=True
-        )
-        cust3 = Customer(
-            first_name="Diana",
-            last_name="Prince",
-            email="diana.prince@outlook.com",
-            phone="555-9003",
-            is_active=True
-        )
-        db.add_all([cust1, cust2, cust3])
-        db.commit()
-        logger.info("Seed customers created.")
-
-        # 6. Seed Appointments (Historically completed, upcoming pending, upcoming confirmed)
-        logger.info("Seeding Appointments...")
+        logger.info("🌱 Seeding SalonAI Workforce database...")
+        
+        # ====================================================================
+        # 1. CREATE BRANCHES
+        # ====================================================================
+        logger.info("Creating branches...")
+        
+        branches = [
+            Branch(
+                id=uuid.uuid4(),
+                name="Downtown Elite",
+                code="DTE",
+                address="123 Main Street",
+                city="New York",
+                phone="+1-212-555-0100",
+                email="downtown@salonai.com",
+                is_active=True
+            ),
+            Branch(
+                id=uuid.uuid4(),
+                name="Westside Boutique",
+                code="WSB",
+                address="456 Park Avenue",
+                city="Los Angeles",
+                phone="+1-310-555-0200",
+                email="westside@salonai.com",
+                is_active=True
+            ),
+            Branch(
+                id=uuid.uuid4(),
+                name="Midtown Luxe",
+                code="MTL",
+                address="789 Michigan Avenue",
+                city="Chicago",
+                phone="+1-312-555-0300",
+                email="midtown@salonai.com",
+                is_active=True
+            ),
+            Branch(
+                id=uuid.uuid4(),
+                name="Riverside Premium",
+                code="RSP",
+                address="321 River Road",
+                city="San Francisco",
+                phone="+1-415-555-0400",
+                email="riverside@salonai.com",
+                is_active=True
+            ),
+        ]
+        
+        for branch in branches:
+            db.add(branch)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(branches)} branches")
+        
+        # ====================================================================
+        # 2. CREATE SERVICES
+        # ====================================================================
+        logger.info("Creating services...")
+        
+        services = [
+            Service(
+                id=uuid.uuid4(),
+                name="Signature Precision Haircut",
+                description="Professional haircut with detailed styling consultation",
+                price=Decimal("85.00"),
+                duration_minutes=60,
+                is_active=True
+            ),
+            Service(
+                id=uuid.uuid4(),
+                name="Balayage & Creative Color",
+                description="Hand-painted highlighting technique with custom color blending",
+                price=Decimal("220.00"),
+                duration_minutes=150,
+                is_active=True
+            ),
+            Service(
+                id=uuid.uuid4(),
+                name="Hydrating Deep-Cleansing Facial",
+                description="Luxurious 75-minute facial with premium skincare products",
+                price=Decimal("120.00"),
+                duration_minutes=75,
+                is_active=True
+            ),
+            Service(
+                id=uuid.uuid4(),
+                name="Himalayan Hot Stone Massage",
+                description="Soothing massage with warm stone therapy and aromatherapy",
+                price=Decimal("150.00"),
+                duration_minutes=90,
+                is_active=True
+            ),
+            Service(
+                id=uuid.uuid4(),
+                name="Blowout & Styling",
+                description="Professional blowout with premium styling products",
+                price=Decimal("65.00"),
+                duration_minutes=45,
+                is_active=True
+            ),
+            Service(
+                id=uuid.uuid4(),
+                name="Manicure Deluxe",
+                description="Extended manicure with gel polish and nail art",
+                price=Decimal("55.00"),
+                duration_minutes=60,
+                is_active=True
+            ),
+        ]
+        
+        for service in services:
+            db.add(service)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(services)} services")
+        
+        # ====================================================================
+        # 3. CREATE STAFF
+        # ====================================================================
+        logger.info("Creating staff members...")
+        
+        staff_data = [
+            # Downtown Elite branch
+            (branches[0].id, "Alexandra", "Chen", "alex.chen@salonai.com", "+1-212-555-1001", "Senior Stylist"),
+            (branches[0].id, "Marcus", "Johnson", "marcus.johnson@salonai.com", "+1-212-555-1002", "Color Specialist"),
+            (branches[0].id, "Sofia", "Rodriguez", "sofia.rodriguez@salonai.com", "+1-212-555-1003", "Esthetician"),
+            (branches[0].id, "James", "Williams", "james.williams@salonai.com", "+1-212-555-1004", "Massage Therapist"),
+            # Westside Boutique branch
+            (branches[1].id, "Isabella", "Martinez", "isabella.martinez@salonai.com", "+1-310-555-2001", "Senior Stylist"),
+            (branches[1].id, "David", "Lee", "david.lee@salonai.com", "+1-310-555-2002", "Color Specialist"),
+            (branches[1].id, "Emma", "Thompson", "emma.thompson@salonai.com", "+1-310-555-2003", "Esthetician"),
+            # Midtown Luxe branch
+            (branches[2].id, "Daniel", "Brown", "daniel.brown@salonai.com", "+1-312-555-3001", "Senior Stylist"),
+            (branches[2].id, "Jessica", "Garcia", "jessica.garcia@salonai.com", "+1-312-555-3002", "Color Specialist"),
+            # Riverside Premium branch
+            (branches[3].id, "Michael", "Anderson", "michael.anderson@salonai.com", "+1-415-555-4001", "Senior Stylist"),
+            (branches[3].id, "Rachel", "White", "rachel.white@salonai.com", "+1-415-555-4002", "Esthetician"),
+        ]
+        
+        staff_members = []
+        for branch_id, first, last, email, phone, role in staff_data:
+            staff = Staff(
+                id=uuid.uuid4(),
+                branch_id=branch_id,
+                first_name=first,
+                last_name=last,
+                email=email,
+                phone=phone,
+                role=role,
+                is_active=True
+            )
+            staff_members.append(staff)
+            db.add(staff)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(staff_members)} staff members")
+        
+        # ====================================================================
+        # 4. CREATE CUSTOMERS
+        # ====================================================================
+        logger.info("Creating customers...")
+        
+        customers = [
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Alice",
+                last_name="Smith",
+                email="alice.smith@example.com",
+                phone="+1-212-555-5001",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Robert",
+                last_name="Johnson",
+                email="robert.johnson@example.com",
+                phone="+1-212-555-5002",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Carol",
+                last_name="Williams",
+                email="carol.williams@example.com",
+                phone="+1-310-555-5003",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="David",
+                last_name="Brown",
+                email="david.brown@example.com",
+                phone="+1-312-555-5004",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Elizabeth",
+                last_name="Davis",
+                email="elizabeth.davis@example.com",
+                phone="+1-415-555-5005",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Frank",
+                last_name="Miller",
+                email="frank.miller@example.com",
+                phone="+1-212-555-5006",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Grace",
+                last_name="Wilson",
+                email="grace.wilson@example.com",
+                phone="+1-310-555-5007",
+                is_active=True
+            ),
+            Customer(
+                id=uuid.uuid4(),
+                first_name="Henry",
+                last_name="Moore",
+                email="henry.moore@example.com",
+                phone="+1-312-555-5008",
+                is_active=True
+            ),
+        ]
+        
+        for customer in customers:
+            db.add(customer)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(customers)} customers")
+        
+        # ====================================================================
+        # 5. CREATE SAMPLE APPOINTMENTS
+        # ====================================================================
+        logger.info("Creating sample appointments...")
+        
         now = datetime.now(timezone.utc)
-
-        # Completed past appointment
-        appt1 = Appointment(
-            customer_id=cust1.id,
-            branch_id=branch_downtown.id,
-            staff_id=staff_stylist1.id,
-            service_id=srv_haircut.id,
-            start_time=now - timedelta(days=2, hours=4),
-            end_time=now - timedelta(days=2, hours=3),
-            status=AppointmentStatus.COMPLETED,
-            notes="Client wanted to keep length but add layers. Highly satisfied."
-        )
-
-        # Completed past appointment with therapist
-        appt2 = Appointment(
-            customer_id=cust2.id,
-            branch_id=branch_uptown.id,
-            staff_id=staff_therapist.id,
-            service_id=srv_massage.id,
-            start_time=now - timedelta(days=1, hours=2),
-            end_time=now - timedelta(days=1, hours=0.5),
-            status=AppointmentStatus.COMPLETED,
-            notes="Prefers medium to firm pressure on back shoulders."
-        )
-
-        # Confirmed upcoming appointment
-        appt3 = Appointment(
-            customer_id=cust3.id,
-            branch_id=branch_downtown.id,
-            staff_id=staff_aesthetician.id,
-            service_id=srv_facial.id,
-            start_time=now + timedelta(days=1, hours=3),
-            end_time=now + timedelta(days=1, hours=4.25),
-            status=AppointmentStatus.CONFIRMED,
-            notes="First time customer. Focus on hydration and gentle botanical extracts."
-        )
-
-        # Pending upcoming appointment
-        appt4 = Appointment(
-            customer_id=cust1.id,
-            branch_id=branch_uptown.id,
-            staff_id=staff_stylist2.id,
-            service_id=srv_color.id,
-            start_time=now + timedelta(days=3, hours=1),
-            end_time=now + timedelta(days=3, hours=3.5),
-            status=AppointmentStatus.PENDING,
-            notes="Client requested rose gold tones. Stylist needs to review current base color."
-        )
-
-        db.add_all([appt1, appt2, appt3, appt4])
+        tomorrow = now + timedelta(days=1)
+        next_week = now + timedelta(days=7)
+        
+        appointments = [
+            # Near-future appointments
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[0].id,
+                branch_id=branches[0].id,
+                staff_id=staff_members[0].id,
+                service_id=services[0].id,  # Haircut
+                start_time=tomorrow.replace(hour=10, minute=0, second=0, microsecond=0),
+                end_time=tomorrow.replace(hour=11, minute=0, second=0, microsecond=0),
+                status=AppointmentStatus.CONFIRMED,
+                notes="Client prefers layered cut"
+            ),
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[1].id,
+                branch_id=branches[0].id,
+                staff_id=staff_members[1].id,
+                service_id=services[1].id,  # Color
+                start_time=tomorrow.replace(hour=14, minute=0, second=0, microsecond=0),
+                end_time=tomorrow.replace(hour=16, minute=30, second=0, microsecond=0),
+                status=AppointmentStatus.CONFIRMED,
+                notes="Full balayage, warm tones"
+            ),
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[2].id,
+                branch_id=branches[1].id,
+                staff_id=staff_members[4].id,
+                service_id=services[0].id,  # Haircut
+                start_time=next_week.replace(hour=11, minute=0, second=0, microsecond=0),
+                end_time=next_week.replace(hour=12, minute=0, second=0, microsecond=0),
+                status=AppointmentStatus.CONFIRMED,
+                notes="Regular maintenance cut"
+            ),
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[3].id,
+                branch_id=branches[2].id,
+                staff_id=staff_members[8].id,
+                service_id=services[3].id,  # Massage
+                start_time=next_week.replace(hour=15, minute=0, second=0, microsecond=0),
+                end_time=next_week.replace(hour=16, minute=30, second=0, microsecond=0),
+                status=AppointmentStatus.PENDING,
+                notes="First time massage client, prefer lighter pressure"
+            ),
+            # Past completed appointments
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[0].id,
+                branch_id=branches[0].id,
+                staff_id=staff_members[0].id,
+                service_id=services[0].id,
+                start_time=now - timedelta(days=14),
+                end_time=now - timedelta(days=14) + timedelta(hours=1),
+                status=AppointmentStatus.COMPLETED,
+                notes="Regular client"
+            ),
+            Appointment(
+                id=uuid.uuid4(),
+                customer_id=customers[4].id,
+                branch_id=branches[3].id,
+                staff_id=staff_members[10].id,
+                service_id=services[2].id,  # Facial
+                start_time=now - timedelta(days=7),
+                end_time=now - timedelta(days=7) + timedelta(minutes=75),
+                status=AppointmentStatus.COMPLETED,
+                notes="Spring renewal facial"
+            ),
+        ]
+        
+        for appointment in appointments:
+            db.add(appointment)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(appointments)} appointments")
+        
+        # ====================================================================
+        # 6. CREATE SAMPLE LEADS
+        # ====================================================================
+        logger.info("Creating sample leads...")
+        
+        leads = [
+            Lead(
+                id=uuid.uuid4(),
+                branch_id=branches[0].id,
+                first_name="Jennifer",
+                last_name="Taylor",
+                email="jennifer.taylor@example.com",
+                phone="+1-212-555-6001",
+                source="Website",
+                status=LeadStatus.NEW,
+                notes="Interested in hair color service"
+            ),
+            Lead(
+                id=uuid.uuid4(),
+                branch_id=branches[1].id,
+                first_name="Christopher",
+                last_name="Harris",
+                email="chris.harris@example.com",
+                phone="+1-310-555-6002",
+                source="Google",
+                status=LeadStatus.CONTACTED,
+                notes="Inquiry about membership plans"
+            ),
+            Lead(
+                id=uuid.uuid4(),
+                branch_id=branches[2].id,
+                first_name="Michelle",
+                last_name="Clark",
+                email="michelle.clark@example.com",
+                phone="+1-312-555-6003",
+                source="Referral",
+                status=LeadStatus.CONVERTED,
+                notes="Converted to customer, first appointment scheduled"
+            ),
+        ]
+        
+        for lead in leads:
+            db.add(lead)
+        db.flush()
+        
+        logger.info(f"✓ Created {len(leads)} leads")
+        
+        # Commit all changes
         db.commit()
-        logger.info("Seed appointments created.")
-
-        # 7. Seed Reviews for completed appointments
-        logger.info("Seeding Reviews...")
-        rev1 = Review(
-            customer_id=cust1.id,
-            branch_id=branch_downtown.id,
-            appointment_id=appt1.id,
-            rating=5,
-            comment="Marcus was fantastic! The precision haircut was exactly what I wanted. Beautiful layering!",
-            status=ReviewStatus.APPROVED
-        )
-        rev2 = Review(
-            customer_id=cust2.id,
-            branch_id=branch_uptown.id,
-            appointment_id=appt2.id,
-            rating=4,
-            comment="Excellent hot stone treatment. Kai was highly skilled. Left feeling super relaxed.",
-            status=ReviewStatus.APPROVED
-        )
-        db.add_all([rev1, rev2])
-        db.commit()
-        logger.info("Seed reviews created.")
-
-        # 8. Seed Leads
-        logger.info("Seeding Leads...")
-        lead1 = Lead(
-            branch_id=branch_downtown.id,
-            first_name="Jane",
-            last_name="Doe",
-            email="jane.doe@gmail.com",
-            phone="555-8001",
-            source="website",
-            status=LeadStatus.NEW,
-            notes="Requested information about wedding package pricing."
-        )
-        lead2 = Lead(
-            branch_id=branch_uptown.id,
-            first_name="Robert",
-            last_name="Glover",
-            email="rob.g@outlook.com",
-            phone="555-8002",
-            source="social_media",
-            status=LeadStatus.CONTACTED,
-            notes="Called back to discuss monthly massage subscriptions. Very interested."
-        )
-        lead3 = Lead(
-            branch_id=branch_downtown.id,
-            first_name="Sarah",
-            last_name="Connor",
-            email="sconnor@cyberdyne.net",
-            phone="555-1984",
-            source="referral",
-            status=LeadStatus.CONVERTED,
-            notes="Referred by Alice Smith. Converted directly to Customer (cust3)."
-        )
-        db.add_all([lead1, lead2, lead3])
-        db.commit()
-        logger.info("Seed leads created.")
-
-    logger.info("Database seeding successfully completed!")
+        
+        logger.info("✅ Database seeding completed successfully!")
+        logger.info(f"   - {len(branches)} branches")
+        logger.info(f"   - {len(services)} services")
+        logger.info(f"   - {len(staff_members)} staff members")
+        logger.info(f"   - {len(customers)} customers")
+        logger.info(f"   - {len(appointments)} appointments")
+        logger.info(f"   - {len(leads)} leads")
+except Exception as e:
+        logger.error(f"❌ Error seeding database: {str(e)}", exc_info=True)
+        db.rollback()
+        raise e
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

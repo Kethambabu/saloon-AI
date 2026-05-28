@@ -1,7 +1,7 @@
 """
 AI Receptionist Agent for SalonAI Workforce Platform.
 Built using Microsoft AutoGen (agentchat v0.4+ / v0.10+).
-Wraps the booking business tools and exposes an AssistantAgent driven by settings configuration.
+Provides professional booking automation with discovery tools and intelligent entity resolution.
 """
 
 import os
@@ -23,12 +23,67 @@ from tools.booking_tools import (
     reschedule_appointment,
     get_customer_history,
 )
+from tools.discovery_tools import (
+    list_available_branches,
+    list_available_services,
+    list_available_staff,
+    search_for_customers,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-# Define clean wrapper tools to decouple DB session handling from LLM function schemas
+# ============================================================================
+# WRAPPER TOOLS - Decouple DB session handling from LLM function schemas
+# ============================================================================
+
+def get_available_branches() -> str:
+    """
+    Discover all available branches at SalonAI before booking.
+    Use this to learn which branches exist and their names/codes.
+    
+    Returns list of branches with IDs, names, codes, locations, and phone numbers.
+    """
+    return list_available_branches()
+
+
+def get_available_services() -> str:
+    """
+    Discover all available services at SalonAI before booking.
+    Use this to learn service options, pricing, and duration.
+    
+    Returns list of services with IDs, names, prices, and durations.
+    """
+    return list_available_services()
+
+
+def get_available_staff(branch_id: str = None) -> str:
+    """
+    Discover all available stylists/staff members.
+    Optionally filter by a specific branch.
+    
+    Args:
+        branch_id: Optional UUID of a branch to filter staff members
+    
+    Returns list of staff with IDs, names, roles, and contact info.
+    """
+    return list_available_staff(branch_id)
+
+
+def search_customers(customer_query: str) -> str:
+    """
+    Search for existing customers in the system before booking.
+    Use this to find and verify customer identity by name, email, or phone.
+    
+    Args:
+        customer_query: Customer name, email, or phone number to search for
+    
+    Returns list of matching customers with IDs, names, emails, and phones.
+    """
+    return search_for_customers(customer_query)
+
+
 def check_stylist_availability(
     branch_id: str,
     date: str,
@@ -36,13 +91,15 @@ def check_stylist_availability(
     service_id: Optional[str] = None
 ) -> str:
     """
-    Checks and suggests available salon time slots for a branch location on a given date.
+    Check available time slots for salon appointments.
     
     Args:
-        branch_id: The UUID string of the physical branch location.
-        date: The target date in ISO format YYYY-MM-DD (e.g., '2026-05-28').
-        staff_id: Optional UUID string of a specific stylist to filter availability.
-        service_id: Optional UUID string of a service to check slot duration fit.
+        branch_id: Branch name or UUID (e.g., "Downtown Elite" or UUID)
+        date: Target date in ISO format YYYY-MM-DD (e.g., '2026-05-28')
+        staff_id: Optional stylist name or UUID
+        service_id: Optional service name or UUID to check slot duration
+    
+    Returns JSON with available time slots and available staff IDs for each slot.
     """
     result = get_available_slots(branch_id=branch_id, date_str=date, staff_id=staff_id, service_id=service_id)
     return str(result)
@@ -57,15 +114,17 @@ def book_new_appointment(
     notes: Optional[str] = None
 ) -> str:
     """
-    Creates, validates, and confirms a new salon booking appointment.
+    Create and confirm a new salon booking appointment.
     
     Args:
-        customer_id: The UUID string of the customer booking the appointment.
-        branch_id: The UUID string of the physical salon branch.
-        service_id: The UUID string of the service catalog item.
-        start_time: The ISO format start date-time (e.g., '2026-05-28T14:30:00Z').
-        staff_id: Optional UUID string of the preferred stylist. If omitted, a free stylist will be auto-assigned.
-        notes: Optional customer requests or stylist comments.
+        customer_id: Customer name, email, or UUID
+        branch_id: Branch name, code, or UUID (e.g., "Downtown Elite")
+        service_id: Service name or UUID (e.g., "Signature Precision Haircut")
+        start_time: ISO format start date-time (e.g., '2026-05-28T14:30:00Z')
+        staff_id: Optional preferred stylist name or UUID. If omitted, auto-assigns.
+        notes: Optional customer requests or special instructions
+    
+    Returns confirmation with appointment ID, start time, assigned stylist, and status.
     """
     result = create_appointment(
         customer_id=customer_id,
@@ -80,10 +139,12 @@ def book_new_appointment(
 
 def cancel_existing_appointment(appointment_id: str) -> str:
     """
-    Cancels an existing salon booking.
+    Cancel an existing salon booking.
     
     Args:
-        appointment_id: The UUID string of the appointment to cancel.
+        appointment_id: Appointment UUID or identifier
+    
+    Returns confirmation of cancellation.
     """
     result = cancel_appointment(appointment_id=appointment_id)
     return str(result)
@@ -91,11 +152,13 @@ def cancel_existing_appointment(appointment_id: str) -> str:
 
 def reschedule_existing_appointment(appointment_id: str, new_start_time: str) -> str:
     """
-    Moves an existing booking slot to a new start date-time.
+    Reschedule an existing booking to a new date/time.
     
     Args:
-        appointment_id: The UUID string of the appointment to reschedule.
-        new_start_time: The new ISO format start date-time (e.g., '2026-05-28T16:00:00Z').
+        appointment_id: Appointment UUID or identifier
+        new_start_time: New ISO format start date-time (e.g., '2026-05-28T16:00:00Z')
+    
+    Returns confirmation with new appointment time and status.
     """
     result = reschedule_appointment(appointment_id=appointment_id, new_start_time=new_start_time)
     return str(result)
@@ -103,56 +166,130 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
 
 def check_customer_booking_history(customer_id: str) -> str:
     """
-    Gets full booking history for a specific customer, including past appointments, branches, and ratings.
+    Retrieve complete booking history for a specific customer.
+    Use this to understand past appointments, preferred services, and ratings.
     
     Args:
-        customer_id: The UUID string of the customer.
+        customer_id: Customer name, email, or UUID
+    
+    Returns comprehensive history including all past appointments with details.
     """
     result = get_customer_history(customer_id=customer_id)
     return str(result)
 
 
-# Elegant and conversational salon receptionist system prompt
-RECEPTIONIST_SYSTEM_PROMPT = """
-You are Clara, the elegant, professional, and warm AI Receptionist at SalonAI Workforce Platform.
-Your goal is to assist clients with their booking and schedule management requests smoothly, including:
-1. Booking new appointments
-2. Rescheduling existing appointments
-3. Canceling appointments
-4. Checking stylists' availability or suggesting free slots
-5. Reviewing customer history
+# ============================================================================
+# ELEGANT RECEPTIONIST SYSTEM PROMPT
+# ============================================================================
 
-Business Rules & Standards:
-1. Salon business hours are from 9:00 AM to 8:00 PM UTC daily.
-2. We offer 4 signature high-value services:
-   - Signature Precision Haircut ($85.00, 60 mins)
-   - Balayage & Creative Color ($220.00, 150 mins)
-   - Hydrating Deep-Cleansing Facial ($120.00, 75 mins)
-   - Himalayan Hot Stone Massage ($150.00, 90 mins)
-3. You MUST use the provided booking tools whenever a user requests an operation (availability check, booking, cancellation, rescheduling, history lookup). Do not make up confirmations, slot listings, or history entries.
-4. When suggesting available slots, present them clearly, grouped logically.
-5. If a booking tool returns a validation or conflict error (e.g., overlap conflicts, out of business hours), explain the reason politely and offer appropriate alternatives.
-6. Keep your responses concise, warm, helpful, and highly professional. Avoid unnecessarily long preambles.
+RECEPTIONIST_SYSTEM_PROMPT = """
+You are Clara, the elegant, professional, and exceptionally warm AI Receptionist at SalonAI Workforce Platform.
+
+Your role is to provide exceptional customer service and flawless booking management. You assist clients with:
+1. Discovering available branches, services, and stylists
+2. Checking stylist availability and booking slots
+3. Creating new appointments with perfect precision
+4. Rescheduling or canceling existing bookings
+5. Reviewing customer booking history and preferences
+
+═══════════════════════════════════════════════════════════════════════════════
+
+OPERATIONAL GUIDELINES (MANDATORY):
+
+1. DISCOVERY FIRST - NEVER INVENT
+   ✓ Always use get_available_branches() to learn actual branch names and codes
+   ✓ Always use get_available_services() to learn actual service names and pricing
+   ✓ Always use search_customers() BEFORE booking to find/verify customer identity
+   ✓ Always use get_available_staff() to learn actual stylist names
+   ✗ NEVER invent branch names like "default_branch" or "Downtown_Elite"
+   ✗ NEVER invent service names or prices
+   ✗ NEVER invent customer names or emails
+   ✗ NEVER invent stylist names
+
+2. BOOKING WORKFLOW - FOLLOW PRECISELY
+   a) Search for customer by name/email/phone using search_customers()
+   b) Get available branches using get_available_branches()
+   c) Get available services using get_available_services()
+   d) Get available staff using get_available_staff() if preferred
+   e) Check stylist availability with check_stylist_availability()
+   f) Confirm customer selection before booking
+   g) Create appointment with book_new_appointment()
+   h) Always confirm booking with specific time, stylist, service name, and branch name
+
+3. CUSTOMER INTERACTION
+   ✓ Ask clarifying questions when customer needs are ambiguous
+   ✓ Present options clearly (branch names, service options, time slots)
+   ✓ Request customer email or phone for verification
+   ✓ Confirm all details before final booking
+   ✗ NEVER proceed with booking if customer details are unclear
+   ✗ NEVER assume customer preferences
+
+4. ERROR HANDLING & ALTERNATIVES
+   • If a customer is not found: Ask for more details, offer to create new record
+   • If a time slot is unavailable: Suggest nearby time slots from available options
+   • If a preferred stylist is busy: Offer alternative stylists or different times
+   • If a branch is unavailable: Suggest alternative branches
+   • Always explain booking errors politely and offer solutions
+
+5. PROFESSIONAL COMMUNICATION
+   ✓ Keep responses concise and focused (2-3 sentences for most responses)
+   ✓ Use customer's name throughout conversation
+   ✓ Present information in clear, formatted lists when showing options
+   ✓ Use warm, professional language reflecting salon hospitality industry standards
+   ✗ NEVER use overly technical language or raw JSON
+   ✗ NEVER overwhelm with too much information at once
+
+═══════════════════════════════════════════════════════════════════════════════
+
+BUSINESS CONTEXT:
+
+Salon Hours: 9:00 AM - 8:00 PM UTC Daily
+
+Core Services:
+• Signature Precision Haircut: $85.00 (60 minutes)
+• Balayage & Creative Color: $220.00 (150 minutes)
+• Hydrating Deep-Cleansing Facial: $120.00 (75 minutes)
+• Himalayan Hot Stone Massage: $150.00 (90 minutes)
+
+Always reference actual service data retrieved from get_available_services() rather than this list.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+TONE & PERSONALITY:
+• Professional yet warm and approachable
+• Attentive to customer needs without being obsequious
+• Confident and efficient in managing bookings
+• Always solutions-oriented when issues arise
+• Celebrates customer milestones (return visits, special occasions, etc.)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+REMEMBER: You are the guardian of booking accuracy. Every piece of data must be verified through
+available tools. No assumptions. No invented data. Perfect precision in every interaction.
 """
 
+
+# ============================================================================
+# RECEPTIONIST AGENT CLASS
+# ============================================================================
 
 class ReceptionistAgent(Agent):
     """
     Salon Receptionist Agent powered by Microsoft AutoGen v0.4+ and Groq LLM.
-    Provides complete booking business automation.
+    Provides exceptional, error-free booking automation with discovery and entity resolution.
     """
 
     def __init__(self, name: str = "Clara", role: str = "AI Salon Receptionist"):
         super().__init__(name=name, role=role)
         logger.info(f"Initializing AI Receptionist Agent '{name}'...")
 
-        # 1. Get centralized LLM configuration
+        # Get centralized LLM configuration
         llm_config = get_llm_config()
         config = llm_config.get_config()
         
-        logger.info(f"Using model: {config['model']}")
+        logger.info(f"LLM Configuration: model={config['model']}, provider=Groq")
 
-        # 2. Instantiate AutoGen AssistantAgent with system prompt and tools
+        # Instantiate AutoGen AssistantAgent with system prompt and comprehensive tools
         self.model_client = OpenAIChatCompletionClient(
             model=config["model"],
             api_key=config["api_key"],
@@ -165,14 +302,20 @@ class ReceptionistAgent(Agent):
             model_client=self.model_client,
             system_message=RECEPTIONIST_SYSTEM_PROMPT,
             tools=[
+                # Discovery tools (for learning about branches, services, staff, customers)
+                get_available_branches,
+                get_available_services,
+                get_available_staff,
+                search_customers,
+                # Booking tools (for managing appointments)
                 check_stylist_availability,
                 book_new_appointment,
                 cancel_existing_appointment,
                 reschedule_existing_appointment,
-                check_customer_booking_history
+                check_customer_booking_history,
             ]
         )
-        logger.info("AI Receptionist Agent initialized successfully.")
+        logger.info("AI Receptionist Agent initialized successfully with discovery and booking tools.")
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -180,33 +323,43 @@ class ReceptionistAgent(Agent):
         
         Args:
             input_data: Dictionary containing:
-                - "query": The user conversational message (e.g. "I want to book a haircut tomorrow at 10 AM")
+                - "query": The user conversational message (e.g., "I want to book a haircut tomorrow")
                 
         Returns:
             Dictionary containing:
                 - "success": True/False
                 - "response": Conversational response text from the agent
+                - "error": Error message if success=False
         """
-        query = input_data.get("query")
+        query = input_data.get("query", "").strip()
         if not query:
-            return {"success": False, "error": "Input data must contain a 'query' key."}
+            logger.warning("Empty query received")
+            return {
+                "success": False,
+                "error": "Please provide a booking request or question."
+            }
 
-        logger.info(f"Receptionist agent processing query: '{query}'")
+        logger.info(f"Processing query: {query[:100]}...")
+        
         try:
             # Execute agent run task asynchronously
             result = await self.assistant.run(task=query)
             
             # Extract final message from assistant
-            response_text = result.messages[-1].content
+            if result.messages and len(result.messages) > 0:
+                response_text = result.messages[-1].content
+            else:
+                response_text = "I was unable to process your request. Please try again."
             
+            logger.info(f"Query processed successfully")
             return {
                 "success": True,
                 "agent_name": self.name,
                 "response": response_text
             }
         except Exception as e:
-            logger.error(f"Error executing ReceptionistAgent task: {str(e)}", exc_info=True)
+            logger.error(f"Error in ReceptionistAgent: {str(e)}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Agent processing failed: {str(e)}"
+                "error": f"I encountered a technical issue. Please try again. (Error: {str(e)[:100]})"
             }
