@@ -1,10 +1,11 @@
 """
 Reusable database connection layer for SalonAI Workforce Platform.
 Supports connection pooling, dynamic configuration, health checks,
-and transaction context management.
+and transaction context management with production-safe retry logic.
 """
 
 import logging
+import time
 from contextlib import contextmanager
 from typing import Generator
 
@@ -16,51 +17,28 @@ from core.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Define default database URL fallback (SQLite) for testing and development
-db_url = settings.database_url or "sqlite:///./test.db"
-is_sqlite = "sqlite" in db_url
+db_url = settings.database_url
 
-# If configured to use PostgreSQL, test connection availability
-if not is_sqlite:
-    from sqlalchemy import create_engine as test_create_engine
-    try:
-        # Quick probe to see if Postgres is up
-        probe_engine = test_create_engine(db_url)
-        with probe_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info("Successfully connected to PostgreSQL database.")
-    except Exception as e:
-        logger.warning(
-            f"PostgreSQL is configured but unreachable at {db_url} (Error: {e}). "
-            "Automatically falling back to local SQLite database 'sqlite:///./test.db' for development/testing."
-        )
-        db_url = "sqlite:///./test.db"
-        is_sqlite = True
+if not db_url:
+    raise ValueError("DATABASE_URL setting is missing! Supabase connection URL must be specified.")
 
-connect_args = {}
-pool_kwargs = {}
+# PostgreSQL enterprise-grade connection pool tuning tailored for Supabase
+# Supabase connections can occasionally drop, hence pool_pre_ping and recycle are vital.
+pool_kwargs = {
+    "pool_size": 20,
+    "max_overflow": 10,
+    "pool_recycle": 1800,  # Recycle connections after 30 minutes
+    "pool_pre_ping": True,  # Enable health check ping on connection checkout
+}
 
-if is_sqlite:
-    # SQLite-specific thread safety configuration
-    connect_args = {"check_same_thread": False}
-else:
-    # PostgreSQL enterprise-grade connection pool tuning
-    pool_kwargs = {
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_recycle": 1800,  # Recycle connections after 30 minutes
-        "pool_pre_ping": True,  # Enable health check ping on connection checkout
-    }
-
-# Create standard SQLAlchemy engine
+# Create standard SQLAlchemy engine (no network connections are made yet)
 try:
     engine = create_engine(
         db_url,
         echo=settings.database_echo,
-        connect_args=connect_args,
         **pool_kwargs
     )
-    logger.info(f"SQLAlchemy engine initialized successfully using URL: {db_url}")
+    logger.info("SQLAlchemy engine initialized successfully.")
 except Exception as e:
     logger.error(f"Failed to initialize SQLAlchemy engine: {str(e)}")
     raise e
@@ -110,14 +88,23 @@ def db_transaction() -> Generator[Session, None, None]:
 def check_db_health() -> bool:
     """
     Verifies the database connection is healthy by executing a lightweight query.
+    Supports connection retries with exponential backoff on startup.
     Returns True if healthy, False otherwise.
     """
-    db = SessionLocal()
-    try:
-        db.execute(text("SELECT 1"))
-        return True
-    except Exception as e:
-        logger.error(f"Database connection health check failed: {str(e)}")
-        return False
-    finally:
-        db.close()
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(1, max_retries + 1):
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            db.close()
+            return True
+        except Exception as e:
+            logger.warning(f"Database connection health check attempt {attempt} failed: {str(e)}")
+            db.close()
+            if attempt < max_retries:
+                time.sleep(retry_delay * attempt)
+                
+    logger.error("Database connection health check failed after maximum retries.")
+    return False

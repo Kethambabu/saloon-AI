@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 # Project imports
 from db.database import SessionLocal, db_transaction
 from db.models import (
+    Branch,
     Staff,
     Customer,
     Service,
@@ -107,7 +108,7 @@ def get_available_slots(
             return {"success": False, "error": f"Invalid date format. Use YYYY-MM-DD format."}
 
         # Get branch (already validated by resolver)
-        branch = session.query(Service.__table__.select().where(Service.id == b_id).first()).__getattribute__('first')()  # Simplified check
+        branch = session.query(Branch).filter(Branch.id == b_id).first()
         
         # Determine service duration
         duration = SLOT_INTERVAL_MINUTES

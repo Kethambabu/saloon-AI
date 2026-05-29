@@ -1,261 +1,101 @@
-# SalonAI Workforce
+# SalonAI Workforce Platform - Windows-Native Local Setup
 
-An enterprise-grade AI-powered workforce management system for salons.
+SalonAI is a production-grade, multi-agent enterprise hub designed for salon workforce orchestration. It integrates a **FastAPI backend** (running in a local Python virtual environment), a **React/Vite frontend** (running in Node.js), and a **Supabase Cloud Database** as its sole data and storage layer.
 
-## Project Structure
-
-```
-saloon/
-├── backend/                    # Python FastAPI backend
-│   ├── core/                   # Core configuration and utilities
-│   │   ├── __init__.py
-│   │   ├── config.py          # Application settings
-│   │   └── logging.py         # Logging configuration
-│   ├── venv/                   # Python virtual environment (created on setup)
-│   ├── requirements.txt        # Python dependencies
-│   ├── pyproject.toml          # Python project configuration
-│   └── .flake8                 # Flake8 linting config
-│
-├── frontend/                   # React + TypeScript + Vite frontend
-│   ├── src/                    # Source code
-│   ├── public/                 # Static assets
-│   ├── package.json            # Node dependencies and scripts
-│   ├── tsconfig.json           # TypeScript configuration
-│   ├── vite.config.ts          # Vite configuration
-│   ├── tailwind.config.js      # Tailwind CSS configuration
-│   ├── eslint.config.js        # ESLint configuration
-│   ├── .prettierrc             # Prettier code formatting
-│   └── .prettierignore
-│
-├── .env.example                # Environment variables template
-├── .env                        # Environment variables (not in git)
-├── .gitignore                  # Git ignore rules
-├── .vscode/settings.json       # VS Code workspace settings
-├── setup.md                    # Complete setup guide
-├── start.ps1                   # Windows startup script
-├── start.sh                    # macOS/Linux startup script
-└── README.md                   # This file
-```
-
-## Quick Start
-
-### 1. Clone and Setup
-
-```bash
-# Clone repository
-git clone <repository>
-cd saloon
-
-# Run setup script
-# Windows
-.\start.ps1
-
-# macOS/Linux
-chmod +x start.sh
-./start.sh
-```
-
-### 2. Access Applications
-
-- **Frontend:** http://localhost:5173
-- **Backend API:** http://127.0.0.1:8000
-- **API Docs:** http://127.0.0.1:8000/docs
-
-## Technology Stack
-
-### Backend
-
-- **Framework:** FastAPI 0.104.1
-- **Server:** Uvicorn 0.24.0
-- **Language:** Python 3.11
-- **ORM:** SQLAlchemy 2.0.23
-- **Migrations:** Alembic 1.12.1
-- **AI Integration:** LangChain, PyAutoGen
-- **Vector Search:** FAISS
-- **Database:** PostgreSQL (psycopg2)
-- **Environment:** python-dotenv
-- **Validation:** Pydantic 2.5.0
-- **Testing:** pytest 7.4.3
-- **API Client:** httpx 0.25.1
-- **Backend Services:** Supabase
-
-### Frontend
-
-- **Framework:** React 18.2
-- **Language:** TypeScript 5.2
-- **Build Tool:** Vite 5.2
-- **Styling:** Tailwind CSS 3.4
-- **Linting:** ESLint 8.57
-- **Formatting:** Prettier 3.1
-- **Package Manager:** npm
-
-## Development Setup
-
-For detailed setup instructions, see [setup.md](setup.md).
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- npm 9+
-- VS Code (recommended)
-
-### Quick Commands
-
-**Backend:**
-```bash
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1  # Windows
-source venv/bin/activate     # macOS/Linux
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Environment Configuration
-
-1. Copy `.env.example` to `.env`
-2. Configure the following:
-   - Database connection string
-   - API keys (Groq, Supabase)
-   - Application settings
-
-See `.env.example` for all available options.
-
-## Available Scripts
-
-### Backend
-
-```bash
-cd backend
-.\venv\Scripts\Activate.ps1
-
-# Development
-uvicorn main:app --reload
-
-# Linting
-pylint core/
-
-# Testing
-pytest tests/
-
-# Update dependencies
-pip freeze > requirements.txt
-```
-
-### Frontend
-
-```bash
-cd frontend
-
-# Development
-npm run dev
-
-# Build
-npm run build
-
-# Linting
-npm run lint
-
-# Fix linting issues
-npm run lint:fix
-
-# Format code
-npm run format
-
-# Type checking
-npm run type-check
-```
-
-## Adding Dependencies
-
-### Python Backend
-
-**IMPORTANT:** Always update requirements.txt after installing packages.
-
-```bash
-cd backend
-.\venv\Scripts\Activate.ps1
-pip install <package_name>
-pip freeze > requirements.txt
-```
-
-### Node Frontend
-
-```bash
-cd frontend
-npm install <package_name>
-# or dev dependency
-npm install -D <package_name>
-```
-
-## Code Quality
-
-### Linting and Formatting
-
-The project uses:
-
-- **Backend:** Black (formatter), Pylint, Flake8
-- **Frontend:** ESLint, Prettier
-
-Auto-formatting is enabled in VS Code on file save.
-
-### Type Checking
-
-- **Backend:** MyPy integration
-- **Frontend:** TypeScript strict mode
-
-## Testing
-
-```bash
-# Backend tests
-cd backend
-pytest tests/ -v
-
-# Frontend tests
-cd frontend
-npm test
-```
-
-## Project Status
-
-**Version:** 0.1.0  
-**Status:** Initial Setup Phase  
-**Last Updated:** May 24, 2026
-
-## Contributing
-
-1. Follow the code style guidelines (enforced by linters)
-2. Add tests for new features
-3. Update dependencies properly (see section above)
-4. Ensure all tests pass before committing
-5. Update documentation as needed
-
-## Documentation
-
-- [Setup Guide](setup.md) - Complete installation and configuration
-- Backend API docs: http://127.0.0.1:8000/docs (when running)
-- Code comments and docstrings for implementation details
-
-## Troubleshooting
-
-See [setup.md - Troubleshooting Section](setup.md#troubleshooting) for common issues and solutions.
-
-## License
-
-[Your License Here]
-
-## Support
-
-For issues and questions, please refer to the [setup guide](setup.md) or contact the development team.
+**This project has been completely optimized for Windows-native local execution.**
+- ❌ **NO Docker Desktop required.**
+- ❌ **NO WSL / Linux dependencies.**
+- ❌ **NO Local PostgreSQL installation required.**
 
 ---
 
-**SalonAI Workforce** | Enterprise AI-Powered Salon Management System
+## 1. System Prerequisites
+
+Before starting, ensure your Windows machine has the following tools installed:
+1. **Python 3.10+**: Download and install from [python.org](https://www.python.org/downloads/).
+   - *Important:* Check the box **"Add Python to PATH"** during installation.
+2. **Node.js 18+**: Download and install from [nodejs.org](https://nodejs.org/).
+   - *Important:* Ensure `npm` is added to your environment variables PATH.
+3. **Supabase Account**: Register a free cloud database at [supabase.com](https://supabase.com).
+
+---
+
+## 2. Platform Architecture
+
+```
+                 +-----------------------------------------+
+                 |            React/Vite Frontend          |
+                 |          (natively run via npm)         |
+                 +-----------------------------------------+
+                                      │
+                                      ▼ [HTTP / REST RESTful calls]
+                 +-----------------------------------------+
+                 |            FastAPI Backend              |
+                 |          (local Python venv)            |
+                 +-----------------------------------------+
+                                      │
+                   ┌──────────────────┴──────────────────┐
+                   ▼                                     ▼
+      +─────────────────────────+           +─────────────────────────+
+      |  Supabase Database URL  |           |     Supabase Storage    |
+      |   (PostgreSQL Cloud)    |           |   (profile-images bucket)
+      +─────────────────────────+           +─────────────────────────+
+```
+
+---
+
+## 3. Quick Start Guide (Windows One-Click)
+
+We provide optimized Windows Batch automation scripts (`.bat`) in the root directory to make setup and execution effortless.
+
+### Step 1: Initialize Project dependencies
+Double-click [setup.bat](file:///c:/Users/N%20Balu/Documents/saloon/setup.bat) in your root directory, or execute it in your terminal:
+```cmd
+setup.bat
+```
+This automatically:
+- Verifies system Python and Node.js path settings.
+- Creates a Python virtual environment (`venv`) inside the `backend` folder.
+- Installs all Python dependencies from `requirements.txt`.
+- Installs all React package dependencies in the `frontend` folder.
+- Creates your local `.env` configuration file from `.env.example`.
+
+### Step 2: Configure Supabase credentials
+Open the newly created `.env` file in the root directory and update it with your Supabase credentials:
+```ini
+# Supabase pooled database connection string
+DATABASE_URL=postgresql://postgres.[project-id]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require
+
+# External Supabase keys
+SUPABASE_URL=https://[project-id].supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+### Step 3: Initialize Supabase DB tables & seed
+1. Log in to your [Supabase Console](https://database.supabase.com) and navigate to the **SQL Editor** tab.
+2. Click **New Query**, copy the contents of the [supabase_init.sql](file:///c:/Users/N%20Balu/Documents/saloon/supabase_init.sql) file located in the project root, paste it into the editor, and click **Run**.
+3. *Note:* Make sure to also create three storage buckets (`profile-images`, `documents`, `salon-assets`) in your Supabase **Storage** tab!
+
+### Step 4: Run the servers
+Once the database is set up and `.env` is configured, you can launch the servers:
+- **To Start Backend FastAPI Server:** Double-click [run_backend.bat](file:///c:/Users/N%20Balu/Documents/saloon/run_backend.bat) or run `run_backend.bat`.
+- **To Start Frontend Vite Server:** Double-click [run_frontend.bat](file:///c:/Users/N%20Balu/Documents/saloon/run_frontend.bat) or run `run_frontend.bat`.
+
+---
+
+## 4. Test Roster login credentials
+
+The database seeding query automatically registers the following testing credentials (all passwords are set to `password123`):
+
+- 👑 **Admin Console:** `owner@salonai.com`
+- 💼 **Branch Manager Dashboard:** `manager@salonai.com`
+- 💇 **Staff Stylist workspace:** `marcus@salonai.com`
+- 👤 **Salon Customer:** `customer@example.com`
+
+---
+
+## 5. Development Utilities
+
+- **install_requirements.bat**: Run this script to update/reinstall all backend Python packages and frontend Node modules.
+- **start.ps1**: A native PowerShell script that starts both backend and frontend servers concurrently.

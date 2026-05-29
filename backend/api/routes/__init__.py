@@ -16,6 +16,10 @@ router.include_router(auth_router)
 from api.routes.analytics_routes import router as analytics_router
 router.include_router(analytics_router)
 
+# Include storage sub-routes
+from api.routes.storage_routes import router as storage_router
+router.include_router(storage_router)
+
 
 
 # Health check endpoint

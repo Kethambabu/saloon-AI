@@ -40,6 +40,31 @@ async def lifespan(application: FastAPI):
         logger.error("❌ LLM configuration validation failed - some agents may not function correctly")
     else:
         logger.info("✅ LLM configuration validated successfully")
+        
+    # Automatic Supabase database schema creation and seeding
+    logger.info("🔍 Initializing Supabase database connection and schemas...")
+    from db.database import check_db_health, SessionLocal, engine
+    from db.models import Base, Branch
+    from db.seed import seed_database
+    
+    if check_db_health():
+        logger.info("✅ Database connection to Supabase is healthy.")
+        try:
+            logger.info("🔄 Checking and creating database schemas...")
+            Base.metadata.create_all(bind=engine)
+            
+            db = SessionLocal()
+            branch_count = db.query(Branch).count()
+            if branch_count == 0:
+                logger.info("🌱 Supabase database is empty. Performing automatic database seeding...")
+                seed_database()
+            else:
+                logger.info(f"✅ Supabase database verified with {branch_count} branches.")
+            db.close()
+        except Exception as e:
+            logger.error(f"❌ Error during database schema initialization/seeding: {e}", exc_info=True)
+    else:
+        logger.error("❌ Supabase database connection failed during startup health check!")
     
     logger.info("=" * 70)
     

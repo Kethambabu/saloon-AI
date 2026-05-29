@@ -22,17 +22,9 @@ from db.models import (
 logger = logging.getLogger(__name__)
 
 
-def _is_sqlite() -> bool:
-    """Helper to detect if SQLite is being used."""
-    return engine.dialect.name == "sqlite"
-
-
 def _format_date_expr(col):
-    """Helper to format datetime field to YYYY-MM-DD dynamically based on DB driver."""
-    if _is_sqlite():
-        return func.strftime("%Y-%m-%d", col)
-    else:
-        return func.to_char(col, "YYYY-MM-DD")
+    """Helper to format datetime field to YYYY-MM-DD based on PostgreSQL dialect."""
+    return func.to_char(col, "YYYY-MM-DD")
 
 
 # ---------------------------------------------------------------------------

@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     # External Services
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
-    supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
+    supabase_anon_key: Optional[str] = Field(default=None, alias="SUPABASE_ANON_KEY")
+    supabase_service_role_key: Optional[str] = Field(default=None, alias="SUPABASE_SERVICE_ROLE_KEY")
 
     # Features
     enable_rag: bool = Field(default=True, alias="ENABLE_RAG")

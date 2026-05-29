@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiClient } from '../api/client';
 
-export type UserRole = 'Owner' | 'Manager' | 'Staff';
+export type UserRole = 'Owner' | 'Admin' | 'Manager' | 'Staff' | 'Customer';
 
 export interface UserProfile {
   id: string;
@@ -9,6 +9,7 @@ export interface UserProfile {
   role: UserRole;
   is_active: boolean;
   staff_id: string | null;
+  customer_id: string | null;
 }
 
 interface AuthContextType {
@@ -17,6 +18,17 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
+  signup: (
+    email: string,
+    password: string,
+    role: string,
+    firstName: string,
+    lastName: string,
+    phone?: string,
+    branchId?: string
+  ) => Promise<void>;
+  forgotPassword: (email: string) => Promise<string>;
+  resetPassword: (email: string, token: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -63,12 +75,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLoading(true);
     try {
       const response = await apiClient.post('/auth/login', { email, password });
-      const { access_token, refresh_token, role, email: userEmail } = response.data;
+      const { access_token, refresh_token } = response.data;
 
       localStorage.setItem('auth_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
 
-      // Immediately query for full /me details to get staff_id and populate provider
+      // Immediately query for full /me details to populate provider
       const meResponse = await apiClient.get<UserProfile>('/auth/me');
       setUser(meResponse.data);
       return meResponse.data;
@@ -95,6 +107,60 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const signup = async (
+    email: string,
+    password: string,
+    role: string,
+    firstName: string,
+    lastName: string,
+    phone?: string,
+    branchId?: string
+  ): Promise<void> => {
+    setLoading(true);
+    try {
+      await apiClient.post('/auth/signup', {
+        email,
+        password,
+        role,
+        first_name: firstName,
+        last_name: lastName,
+        phone: phone || null,
+        branch_id: branchId || null,
+      });
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const forgotPassword = async (email: string): Promise<string> => {
+    setLoading(true);
+    try {
+      const response = await apiClient.post('/auth/forgot-password', { email });
+      return response.data.token || '';
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetPassword = async (email: string, token: string, newPassword: string): Promise<void> => {
+    setLoading(true);
+    try {
+      await apiClient.post('/auth/reset-password', {
+        email,
+        token,
+        new_password: newPassword,
+      });
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -103,6 +169,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         loading,
         login,
         logout,
+        signup,
+        forgotPassword,
+        resetPassword,
       }}
     >
       {children}

@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
-export const Login: React.FC = () => {
+interface LoginProps {
+  onNavigateToSignup?: () => void;
+  onNavigateToForgotPassword?: () => void;
+}
+
+export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToForgotPassword }) => {
   const { login } = useAuth();
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -143,6 +148,23 @@ export const Login: React.FC = () => {
                 ) : (
                   <span>Access Platform</span>
                 )}
+              </button>
+            </div>
+            
+            <div className="flex items-center justify-between text-xs font-bold mt-4">
+              <button
+                type="button"
+                onClick={onNavigateToForgotPassword}
+                className="text-blue-400 hover:text-blue-300 cursor-pointer focus:outline-none"
+              >
+                Forgot Password?
+              </button>
+              <button
+                type="button"
+                onClick={onNavigateToSignup}
+                className="text-blue-400 hover:text-blue-300 cursor-pointer focus:outline-none"
+              >
+                Create Account
               </button>
             </div>
           </form>

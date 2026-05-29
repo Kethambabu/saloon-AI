@@ -56,9 +56,11 @@ class ReviewStatus(str, enum.Enum):
 
 class UserRole(str, enum.Enum):
     """Security roles for platform access"""
+    ADMIN = "Admin"
     OWNER = "Owner"
     MANAGER = "Manager"
     STAFF = "Staff"
+    CUSTOMER = "Customer"
 
 
 
@@ -378,13 +380,118 @@ class User(BaseModel):
         nullable=True,
         index=True
     )
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
     refresh_token = Column(String(500), nullable=True)
 
     # Relationships
     staff = relationship("Staff", backref="user", uselist=False)
+    customer = relationship("Customer", backref="user", uselist=False)
 
     def __repr__(self) -> str:
         return f"<User email={self.email} role={self.role}>"
+
+
+class Admin(BaseModel):
+    """Represents an administrator user profile."""
+    __tablename__ = "admins"
+
+    user_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+    first_name = Column(String(50), nullable=False)
+    last_name = Column(String(50), nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    phone = Column(String(20), nullable=True)
+
+    # Relationships
+    user = relationship("User", backref="admin_profile", uselist=False)
+
+
+class Manager(BaseModel):
+    """Represents a salon manager profile."""
+    __tablename__ = "managers"
+
+    user_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+    branch_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    first_name = Column(String(50), nullable=False)
+    last_name = Column(String(50), nullable=False)
+    email = Column(String(100), unique=True, index=True, nullable=False)
+    phone = Column(String(20), nullable=True)
+
+    # Relationships
+    user = relationship("User", backref="manager_profile", uselist=False)
+    branch = relationship("Branch", backref="managers")
+
+
+class ChatLog(BaseModel):
+    """Stores customer or staff interaction logs with AI agents."""
+    __tablename__ = "chat_logs"
+
+    session_id = Column(String(100), nullable=False, index=True)
+    user_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    sender = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+
+    # Relationships
+    user = relationship("User", backref="chat_logs")
+
+
+class Notification(BaseModel):
+    """Stores notifications for authenticated dashboard users."""
+    __tablename__ = "notifications"
+
+    user_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    title = Column(String(150), nullable=False)
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    user = relationship("User", backref="notifications")
+
+
+class AnalyticsRecord(BaseModel):
+    """Stores operational, business, and performance analytics records."""
+    __tablename__ = "analytics_records"
+
+    metric_name = Column(String(100), nullable=False, index=True)
+    metric_value = Column(Float, nullable=False)
+    timestamp = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True
+    )
+    dimensions = Column(Text, nullable=True)  # JSON-formatted string for flexible dimensions
 
 
 # Export all models and enums
@@ -398,6 +505,11 @@ __all__ = [
     "Lead",
     "Review",
     "User",
+    "Admin",
+    "Manager",
+    "ChatLog",
+    "Notification",
+    "AnalyticsRecord",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
