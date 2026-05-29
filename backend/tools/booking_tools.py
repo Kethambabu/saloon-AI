@@ -593,7 +593,15 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
                 "service_name": service.name if service else None,
                 "service_price": float(service.price) if service else None,
                 "service_duration": service.duration_minutes if service else None,
+                "service": {
+                    "name": service.name if service else None,
+                    "price": float(service.price) if service else None,
+                    "duration_minutes": service.duration_minutes if service else None,
+                },
                 "staff_name": staff.full_name if staff else None,
+                "staff": {
+                    "name": staff.full_name if staff else None,
+                },
                 "start_time": appt.start_time.isoformat(),
                 "end_time": appt.end_time.isoformat(),
                 "status": appt.status.value,

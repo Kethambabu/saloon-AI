@@ -37,7 +37,7 @@ def test_password_security():
 def test_jwt_lifecycle():
     """Verify token generation, contents decoding, and validation rules."""
     user_id = uuid.uuid4()
-    role = UserRole.OWNER.value
+    role = UserRole.ADMIN.value
     
     # 1. Access Token
     access_token = create_access_token(subject=user_id, role=role)
@@ -87,7 +87,7 @@ def test_api_login_success(client: TestClient):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
-    assert data["role"] == UserRole.OWNER.value
+    assert data["role"] == UserRole.ADMIN.value
     assert data["email"] == "owner@salonai.com"
 
 
@@ -107,7 +107,7 @@ def test_api_me_authorized(client: TestClient):
     """Verify authenticated user can fetch their own profile details successfully."""
     # 1. Login to get token
     login_payload = {
-        "email": "manager@salonai.com",
+        "email": "owner@salonai.com",
         "password": "password123"
     }
     login_resp = client.post("/api/v1/auth/login", json=login_payload)
@@ -119,8 +119,8 @@ def test_api_me_authorized(client: TestClient):
     
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
-    assert data["email"] == "manager@salonai.com"
-    assert data["role"] == UserRole.MANAGER.value
+    assert data["email"] == "owner@salonai.com"
+    assert data["role"] == UserRole.ADMIN.value
     assert data["is_active"] is True
 
 

@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 DROP TABLE IF EXISTS analytics_records CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
 DROP TABLE IF EXISTS chat_logs CASCADE;
-DROP TABLE IF EXISTS managers CASCADE;
+
 DROP TABLE IF EXISTS admins CASCADE;
 DROP TABLE IF EXISTS reviews CASCADE;
 DROP TABLE IF EXISTS leads CASCADE;
@@ -134,17 +134,7 @@ CREATE TABLE admins (
     phone VARCHAR(20)
 );
 
-CREATE TABLE managers (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE NOT NULL,
-    branch_id UUID REFERENCES branches(id) ON DELETE SET NULL,
-    first_name VARCHAR(50) NOT NULL,
-    last_name VARCHAR(50) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    phone VARCHAR(20)
-);
+
 
 CREATE TABLE chat_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -197,7 +187,7 @@ ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
-ALTER TABLE managers ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE chat_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analytics_records ENABLE ROW LEVEL SECURITY;
@@ -235,9 +225,7 @@ CREATE POLICY "Allow authenticated manage notifications" ON notifications TO aut
 -- 5.9 Analytics RLS Policies
 CREATE POLICY "Allow authenticated manage analytics" ON analytics_records TO authenticated USING (true) WITH CHECK (true);
 
--- 5.10 Admins & Managers RLS Policies
 CREATE POLICY "Allow authenticated read admins" ON admins FOR SELECT USING (true);
-CREATE POLICY "Allow authenticated read managers" ON managers FOR SELECT USING (true);
 
 -- ============================================================================
 -- 6. Insert Seed Data
@@ -270,17 +258,13 @@ INSERT INTO customers (id, first_name, last_name, email, phone, is_active) VALUE
 -- 6.5 Insert Authenticated Users
 -- Default Hashed password matches "password123" under standard bcrypt passlib hash context
 INSERT INTO users (id, email, hashed_password, role, is_active, staff_id, customer_id) VALUES
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'owner@salonai.com', '$2b$12$yA3W8jP74Z.0xRmWq3v2Eu.QY9m.H1JtA2qXlVz8w2f6Q2jXwT2S.', 'Admin', TRUE, NULL, NULL),
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df2', 'manager@salonai.com', '$2b$12$yA3W8jP74Z.0xRmWq3v2Eu.QY9m.H1JtA2qXlVz8w2f6Q2jXwT2S.', 'Manager', TRUE, NULL, NULL),
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df3', 'marcus@salonai.com', '$2b$12$yA3W8jP74Z.0xRmWq3v2Eu.QY9m.H1JtA2qXlVz8w2f6Q2jXwT2S.', 'Staff', TRUE, '6a3e2b64-004c-4c6e-c342-8c0d985c6df2', NULL),
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df4', 'customer@example.com', '$2b$12$yA3W8jP74Z.0xRmWq3v2Eu.QY9m.H1JtA2qXlVz8w2f6Q2jXwT2S.', 'Customer', TRUE, NULL, '7b3f1b64-114c-4c6e-d342-9d0e985c7df1');
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'owner@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'Admin', TRUE, NULL, NULL),
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df3', 'marcus@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'Staff', TRUE, '6a3e2b64-004c-4c6e-c342-8c0d985c6df2', NULL),
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df4', 'customer@example.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'User', TRUE, NULL, '7b3f1b64-114c-4c6e-d342-9d0e985c7df1');
 
 -- 6.6 Insert Role Tables Profile Records
 INSERT INTO admins (id, user_id, first_name, last_name, email, phone) VALUES
-('9d3f1b64-334c-4c6e-f342-bf0e985c9df1', '8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'Balu', 'Owner', 'owner@salonai.com', '+1-212-555-9000');
-
-INSERT INTO managers (id, user_id, branch_id, first_name, last_name, email, phone) VALUES
-('9d3f1b64-334c-4c6e-f342-bf0e985c9df2', '8c3f1b64-224c-4c6e-e342-ae0e985c8df2', '4f3d1b64-884c-4c6e-a342-6a0b985c4bf1', 'Kethambabu', 'Manager', 'manager@salonai.com', '+1-212-555-8000');
+('9d3f1b64-334c-4c6e-f342-bf0e985c9df1', '8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'Balu', 'Admin', 'owner@salonai.com', '+1-212-555-9000');
 
 -- 6.7 Insert Sample Appointments
 INSERT INTO appointments (id, customer_id, branch_id, staff_id, service_id, start_time, end_time, status, notes) VALUES

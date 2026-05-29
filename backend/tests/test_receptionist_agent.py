@@ -36,7 +36,7 @@ def test_receptionist_agent_initialization():
 
     # 4. Verify that the 5 custom booking tools wrapper functions are bound to the agent
     bound_tools = receptionist.assistant._tools
-    assert len(bound_tools) == 5
+    assert len(bound_tools) == 9
 
     tool_names = [tool.name for tool in bound_tools]
     assert "check_stylist_availability" in tool_names

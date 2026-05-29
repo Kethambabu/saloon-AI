@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/analytics",
     tags=["Analytics"],
-    dependencies=[Depends(RoleChecker([UserRole.OWNER, UserRole.MANAGER]))]
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN]))]
 )
 
 

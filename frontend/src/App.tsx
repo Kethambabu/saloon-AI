@@ -1,25 +1,128 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
+import { HashRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import {
   Layout,
-  AgentChat,
   Login,
   Signup,
   ForgotPassword,
+  ResetPassword,
   AdminDashboard,
-  ManagerDashboard,
   StaffDashboard,
+  UserDashboard,
+  LandingPage,
+  Unauthorized,
   Loading
 } from './components';
 
-function AppContent() {
+// Protected Route Guard wrapper
+const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User')[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
   const { user, isAuthenticated, loading } = useAuth();
-  
-  // Local state to toggle between Login, Signup, and ForgotPassword
-  const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'forgot-password'>('login');
-  
-  // Toggle for Staff to open the live Clara Chat receptionist view
-  const [viewClaraChat, setViewClaraChat] = useState<boolean>(false);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
+        <Loading />
+        <span className="mt-4 text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">
+          Verifying security privileges...
+        </span>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const isAuthorized = allowedRoles.includes(user.role);
+  if (!isAuthorized) {
+    return <Navigate to="/unauthorized" replace />;
+  }
+
+  return <Layout>{children}</Layout>;
+};
+
+// Landing Page route with automatic redirect
+const LandingPageRoute: React.FC = () => {
+  const { user, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      if (user.role === 'Admin') navigate('/admin', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff', { replace: true });
+      else navigate('/user', { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  return <LandingPage onNavigateToLogin={() => navigate('/login')} />;
+};
+
+// Login Route with automatic redirect if already logged in
+const LoginRoute: React.FC = () => {
+  const { user, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      if (user.role === 'Admin') navigate('/admin', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff', { replace: true });
+      else navigate('/user', { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  return (
+    <Login
+      onNavigateToSignup={() => navigate('/signup')}
+      onNavigateToForgotPassword={() => navigate('/forgot-password')}
+    />
+  );
+};
+
+// Signup Route with redirect if logged in
+const SignupRoute: React.FC = () => {
+  const { user, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      if (user.role === 'Admin') navigate('/admin', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff', { replace: true });
+      else navigate('/user', { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  return <Signup onBackToLogin={() => navigate('/login')} />;
+};
+
+// Forgot Password Route
+const ForgotPasswordRoute: React.FC = () => {
+  const navigate = useNavigate();
+  return (
+    <ForgotPassword
+      onBackToLogin={() => navigate('/login')}
+    />
+  );
+};
+
+// Reset Password Route
+const ResetPasswordRoute: React.FC = () => {
+  const navigate = useNavigate();
+  return (
+    <ResetPassword
+      onBackToLogin={() => navigate('/login')}
+    />
+  );
+};
+
+// Unauthorized Access Block Route
+const UnauthorizedRoute: React.FC = () => {
+  const navigate = useNavigate();
+  return <Unauthorized onBackToHome={() => navigate('/')} />;
+};
+
+function AppContent() {
+  const { loading } = useAuth();
 
   if (loading) {
     return (
@@ -32,71 +135,58 @@ function AppContent() {
     );
   }
 
-  // Render authentication screens if not logged in
-  if (!isAuthenticated || !user) {
-    if (authScreen === 'signup') {
-      return <Signup onBackToLogin={() => setAuthScreen('login')} />;
-    }
-    if (authScreen === 'forgot-password') {
-      return <ForgotPassword onBackToLogin={() => setAuthScreen('login')} />;
-    }
-    return (
-      <Login
-        onNavigateToSignup={() => setAuthScreen('signup')}
-        onNavigateToForgotPassword={() => setAuthScreen('forgot-password')}
-      />
-    );
-  }
-
-  // Render role-specific dashboards
   return (
-    <Layout>
-      <div className="animate-fade-in space-y-6">
-        
-        {/* Admin or Owner dashboard */}
-        {(user.role === 'Admin' || user.role === 'Owner') && (
-          <AdminDashboard />
-        )}
+    <Routes>
+      {/* Public Pages */}
+      <Route path="/" element={<LandingPageRoute />} />
+      <Route path="/login" element={<LoginRoute />} />
+      <Route path="/signup" element={<SignupRoute />} />
+      <Route path="/forgot-password" element={<ForgotPasswordRoute />} />
+      <Route path="/reset-password" element={<ResetPasswordRoute />} />
+      <Route path="/unauthorized" element={<UnauthorizedRoute />} />
 
-        {/* Manager dashboard */}
-        {user.role === 'Manager' && (
-          <ManagerDashboard />
-        )}
+      {/* Role Protected Admin Routes */}
+      <Route
+        path="/admin/*"
+        element={
+          <ProtectedRouteWrapper allowedRoles={['Admin']}>
+            <AdminDashboard />
+          </ProtectedRouteWrapper>
+        }
+      />
 
-        {/* Staff / Stylist dashboard */}
-        {user.role === 'Staff' && (
-          <>
-            {viewClaraChat ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-200/80 pb-4">
-                  <div className="text-left">
-                    <h2 className="text-xl font-bold text-slate-800">Receptionist Console</h2>
-                    <p className="text-xs text-slate-500 font-medium">Interact with Clara in real-time to book services or check branch slots.</p>
-                  </div>
-                  <button
-                    onClick={() => setViewClaraChat(false)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-250 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer border border-slate-200 shadow-sm"
-                  >
-                    ⬅️ Back to Stylist Roster
-                  </button>
-                </div>
-                <AgentChat />
-              </div>
-            ) : (
-              <StaffDashboard onToggleChat={() => setViewClaraChat(true)} />
-            )}
-          </>
-        )}
+      {/* Role Protected Staff Routes */}
+      <Route
+        path="/staff/*"
+        element={
+          <ProtectedRouteWrapper allowedRoles={['Staff']}>
+            <StaffDashboard />
+          </ProtectedRouteWrapper>
+        }
+      />
 
-      </div>
-    </Layout>
+      {/* Role Protected User Routes */}
+      <Route
+        path="/user/*"
+        element={
+          <ProtectedRouteWrapper allowedRoles={['User']}>
+            <UserDashboard />
+          </ProtectedRouteWrapper>
+        }
+      />
+
+      {/* Catch-all Fallback */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <Router>
+        <AppContent />
+      </Router>
     </AuthProvider>
   );
 }

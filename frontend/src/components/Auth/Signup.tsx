@@ -21,7 +21,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
   const [firstName, setFirstName] = useState<string>('');
   const [lastName, setLastName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
-  const [role, setRole] = useState<string>('Staff');
+  const [role, setRole] = useState<string>('User');
   const [branchId, setBranchId] = useState<string>('');
   
   const [branches, setBranches] = useState<BranchOption[]>([]);
@@ -29,7 +29,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Fetch branches for staff/manager assignment
+  // Fetch branches for staff assignment
   useEffect(() => {
     const fetchBranches = async () => {
       try {
@@ -79,7 +79,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
         firstName,
         lastName,
         phone || undefined,
-        (role === 'Staff' || role === 'Manager') ? branchId : undefined
+        role === 'Staff' ? branchId : undefined
       );
       setSuccess('Account registered successfully! Redirecting to login in 3 seconds...');
       setTimeout(() => {
@@ -208,15 +208,13 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                   onChange={(e) => setRole(e.target.value)}
                   className="mt-1 block w-full px-3 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm cursor-pointer"
                 >
+                  <option value="User" className="bg-slate-950 text-white">👤 Salon Customer (User)</option>
                   <option value="Staff" className="bg-slate-950 text-white">💇 Stylist (Staff)</option>
-                  <option value="Manager" className="bg-slate-950 text-white">💼 Branch Manager</option>
-                  <option value="Admin" className="bg-slate-950 text-white">👑 Platform Admin</option>
-                  <option value="Customer" className="bg-slate-950 text-white">👤 Salon Customer</option>
                 </select>
               </div>
             </div>
 
-            {(role === 'Staff' || role === 'Manager') && branches.length > 0 && (
+            {role === 'Staff' && branches.length > 0 && (
               <div className="animate-fade-in">
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
                   Assign Branch Location *

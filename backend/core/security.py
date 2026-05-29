@@ -40,7 +40,7 @@ def create_access_token(
     
     Args:
         subject: The subject of the token (typically user UUID or email)
-        role: The security role of the user (Owner, Manager, Staff)
+        role: The security role of the user (Admin, Staff, User)
         expires_delta: Optional custom expiration time delta
     """
     if expires_delta:

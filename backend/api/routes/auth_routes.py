@@ -3,12 +3,13 @@ Authentication Endpoints for SalonAI Workforce Platform.
 Implements credentials validation, JWT issuance, token refresh, logout, and self profile query.
 """
 
+import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from db import get_db, User, UserRole, Admin, Manager, Staff, Customer, Branch
+from db import get_db, User, UserRole, Admin, Staff, Customer, Branch
 from core.security import (
     hash_password,
     verify_password,
@@ -18,6 +19,8 @@ from core.security import (
 )
 from api.deps import get_current_user
 import jwt
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -188,7 +191,7 @@ class SignupRequest(BaseModel):
     first_name: str = Field(..., min_length=1, example="Jane")
     last_name: str = Field(..., min_length=1, example="Doe")
     phone: Optional[str] = Field(default=None, example="+1-555-0199")
-    branch_id: Optional[str] = Field(default=None, description="Applicable for Managers and Staff")
+    branch_id: Optional[str] = Field(default=None, description="Applicable for Staff")
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -211,12 +214,35 @@ class ResetPasswordRequest(BaseModel):
 )
 def signup(
     payload: SignupRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Sign up and create role records."""
     email_clean = payload.email.lower().strip()
     
-    # 1. Check if email already registered
+    # 1. Block unauthorized admin signup
+    if payload.role == UserRole.ADMIN:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to create Admin accounts."
+            )
+        token = auth_header.split(" ")[1]
+        try:
+            current_user = get_current_user(db=db, token=token)
+            if current_user.role != UserRole.ADMIN:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only Admin users can create Admin accounts."
+                )
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only Admin users can create Admin accounts."
+            )
+
+    # 2. Check if email already registered
     existing_user = db.query(User).filter(User.email == email_clean).first()
     if existing_user:
         raise HTTPException(
@@ -224,7 +250,7 @@ def signup(
             detail="Email is already registered."
         )
         
-    # 2. Hash password and build user
+    # 3. Hash password and build user
     hashed = hash_password(payload.password)
     new_user = User(
         email=email_clean,
@@ -236,7 +262,7 @@ def signup(
     db.add(new_user)
     db.flush()  # Get user.id
     
-    # 3. Create role-specific records
+    # 4. Create role-specific records
     try:
         import uuid as _uuid
         
@@ -251,7 +277,7 @@ def signup(
                 if branch_obj:
                     resolved_branch_id = branch_obj.id
         
-        if not resolved_branch_id and (payload.role == UserRole.STAFF or payload.role == UserRole.MANAGER):
+        if not resolved_branch_id and payload.role == UserRole.STAFF:
             # Fallback to first branch if empty
             first_branch = db.query(Branch).first()
             if first_branch:
@@ -270,7 +296,7 @@ def signup(
                 db.flush()
                 resolved_branch_id = default_branch.id
                 
-        if payload.role in [UserRole.ADMIN, UserRole.OWNER]:
+        if payload.role == UserRole.ADMIN:
             admin_record = Admin(
                 id=_uuid.uuid4(),
                 user_id=new_user.id,
@@ -280,18 +306,6 @@ def signup(
                 phone=payload.phone
             )
             db.add(admin_record)
-            
-        elif payload.role == UserRole.MANAGER:
-            manager_record = Manager(
-                id=_uuid.uuid4(),
-                user_id=new_user.id,
-                branch_id=resolved_branch_id,
-                first_name=payload.first_name,
-                last_name=payload.last_name,
-                email=email_clean,
-                phone=payload.phone
-            )
-            db.add(manager_record)
             
         elif payload.role == UserRole.STAFF:
             staff_record = Staff(
@@ -308,7 +322,7 @@ def signup(
             db.flush()
             new_user.staff_id = staff_record.id
             
-        elif payload.role == UserRole.CUSTOMER:
+        elif payload.role == UserRole.USER:
             customer_record = Customer(
                 id=_uuid.uuid4(),
                 first_name=payload.first_name,

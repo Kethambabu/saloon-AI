@@ -243,7 +243,7 @@ OPERATIONAL GUIDELINES (MANDATORY):
 
 BUSINESS CONTEXT:
 
-Salon Hours: 9:00 AM - 8:00 PM UTC Daily
+Business Hours / Salon Hours: 9:00 AM - 8:00 PM UTC Daily
 
 Core Services:
 • Signature Precision Haircut: $85.00 (60 minutes)

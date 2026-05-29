@@ -57,10 +57,8 @@ class ReviewStatus(str, enum.Enum):
 class UserRole(str, enum.Enum):
     """Security roles for platform access"""
     ADMIN = "Admin"
-    OWNER = "Owner"
-    MANAGER = "Manager"
     STAFF = "Staff"
-    CUSTOMER = "Customer"
+    USER = "User"
 
 
 
@@ -416,31 +414,7 @@ class Admin(BaseModel):
     user = relationship("User", backref="admin_profile", uselist=False)
 
 
-class Manager(BaseModel):
-    """Represents a salon manager profile."""
-    __tablename__ = "managers"
 
-    user_id = Column(
-        Uuid(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-        index=True
-    )
-    branch_id = Column(
-        Uuid(as_uuid=True),
-        ForeignKey("branches.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
-    )
-    first_name = Column(String(50), nullable=False)
-    last_name = Column(String(50), nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    phone = Column(String(20), nullable=True)
-
-    # Relationships
-    user = relationship("User", backref="manager_profile", uselist=False)
-    branch = relationship("Branch", backref="managers")
 
 
 class ChatLog(BaseModel):
@@ -506,7 +480,6 @@ __all__ = [
     "Review",
     "User",
     "Admin",
-    "Manager",
     "ChatLog",
     "Notification",
     "AnalyticsRecord",

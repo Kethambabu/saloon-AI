@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def _format_date_expr(col):
-    """Helper to format datetime field to YYYY-MM-DD based on PostgreSQL dialect."""
+    """Helper to format datetime field to YYYY-MM-DD based on dialect (PostgreSQL vs SQLite)."""
+    from db.database import engine
+    if engine.dialect.name == "sqlite":
+        return func.strftime("%Y-%m-%d", col)
     return func.to_char(col, "YYYY-MM-DD")
 
 

@@ -33,7 +33,7 @@ def app_client():
     
     mock_user = User(
         email="test_user@salonai.com",
-        role=UserRole.MANAGER,
+        role=UserRole.STAFF,
         is_active=True
     )
     

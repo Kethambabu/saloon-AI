@@ -38,16 +38,16 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
     }
   };
 
-  const handleQuickFill = (role: 'Owner' | 'Manager' | 'Staff') => {
+  const handleQuickFill = (role: 'Admin' | 'Staff' | 'User') => {
     setError(null);
-    if (role === 'Owner') {
+    if (role === 'Admin') {
       setEmail('owner@salonai.com');
       setPassword('password123');
-    } else if (role === 'Manager') {
-      setEmail('manager@salonai.com');
+    } else if (role === 'Staff') {
+      setEmail('marcus@salonai.com');
       setPassword('password123');
     } else {
-      setEmail('marcus@salonai.com');
+      setEmail('customer@example.com');
       setPassword('password123');
     }
   };
@@ -177,17 +177,10 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => handleQuickFill('Owner')}
+                onClick={() => handleQuickFill('Admin')}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-900/30 text-blue-300 border border-blue-800/50 hover:bg-blue-900/50 transition-all duration-200 cursor-pointer"
               >
-                👑 Owner Fill
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('Manager')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-900/30 text-indigo-300 border border-indigo-800/50 hover:bg-indigo-900/50 transition-all duration-200 cursor-pointer"
-              >
-                💼 Manager Fill
+                👑 Admin Fill
               </button>
               <button
                 type="button"
@@ -195,6 +188,13 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-900/30 text-emerald-300 border border-emerald-800/50 hover:bg-emerald-900/50 transition-all duration-200 cursor-pointer"
               >
                 💇 Stylist Staff Fill
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickFill('User')}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-900/30 text-purple-300 border border-purple-800/50 hover:bg-purple-900/50 transition-all duration-200 cursor-pointer"
+              >
+                👤 Customer User Fill
               </button>
             </div>
           </div>

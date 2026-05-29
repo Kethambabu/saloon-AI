@@ -32,7 +32,6 @@ from db.models import (
     User,
     UserRole,
     Admin,
-    Manager,
     AnalyticsRecord,
 )
 
@@ -229,7 +228,7 @@ def seed_database():
         logger.info("Creating authenticated users and role profiles...")
         
         # password123 hashed with standard passlib context
-        hashed_password = "$2b$12$yA3W8jP74Z.0xRmWq3v2Eu.QY9m.H1JtA2qXlVz8w2f6Q2jXwT2S."
+        hashed_password = "$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW"
         
         # 5.1 Admin/Owner User
         owner_user = User(
@@ -252,27 +251,7 @@ def seed_database():
         )
         db.add(owner_profile)
         
-        # 5.2 Manager User
-        manager_user = User(
-            id=uuid.uuid4(),
-            email="manager@salonai.com",
-            hashed_password=hashed_password,
-            role=UserRole.MANAGER,
-            is_active=True
-        )
-        db.add(manager_user)
-        db.flush()
-        
-        manager_profile = Manager(
-            id=uuid.uuid4(),
-            user_id=manager_user.id,
-            branch_id=branches[0].id,
-            first_name="Kethambabu",
-            last_name="Manager",
-            email="manager@salonai.com",
-            phone="+1-212-555-8000"
-        )
-        db.add(manager_profile)
+
         
         # 5.3 Staff User (linked to Marcus Stylist)
         staff_user = User(
@@ -290,14 +269,14 @@ def seed_database():
             id=uuid.uuid4(),
             email="customer@example.com",
             hashed_password=hashed_password,
-            role=UserRole.CUSTOMER,
+            role=UserRole.USER,
             is_active=True,
             customer_id=customers[0].id
         )
         db.add(customer_user)
         
         db.flush()
-        logger.info("✓ Created users for Owner, Manager, Staff, and Customer profiles")
+        logger.info("✓ Created users for Admin, Staff, and Customer profiles")
         
         # ====================================================================
         # 6. CREATE SAMPLE APPOINTMENTS
