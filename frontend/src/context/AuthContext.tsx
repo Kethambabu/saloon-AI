@@ -26,12 +26,20 @@ interface AuthContextType {
     lastName: string,
     phone?: string,
     branchId?: string
-  ) => Promise<void>;
+  ) => Promise<UserProfile>;
   forgotPassword: (email: string) => Promise<string>;
   resetPassword: (email: string, token: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const normalizeRole = (role: string): UserRole => {
+  if (!role) return 'User';
+  const upper = role.toUpperCase();
+  if (upper === 'ADMIN') return 'Admin';
+  if (upper === 'STAFF') return 'Staff';
+  return 'User';
+};
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -40,9 +48,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Retrieve user info using token
   const fetchCurrentUser = async () => {
     try {
+      console.log('[DEBUG] [AuthContext] Restoring session: querying /auth/me');
       const response = await apiClient.get<UserProfile>('/auth/me');
-      setUser(response.data);
+      console.log('[DEBUG] [AuthContext] Session restored successfully. Profile:', response.data);
+      const normalizedUser = {
+        ...response.data,
+        role: normalizeRole(response.data.role),
+      };
+      setUser(normalizedUser);
     } catch (error) {
+      console.error('[DEBUG] [AuthContext] fetchCurrentUser failed:', error);
       // Clear tokens if getting /me fails on startup
       localStorage.removeItem('auth_token');
       localStorage.removeItem('refresh_token');
@@ -54,6 +69,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
+    console.log('[DEBUG] [AuthContext] Startup check: token is', token ? 'PRESENT' : 'MISSING');
     if (token) {
       fetchCurrentUser();
     } else {
@@ -72,19 +88,52 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = async (email: string, password: string): Promise<UserProfile> => {
+    console.log('[DEBUG] [AuthContext] Login request initiated for:', email);
     setLoading(true);
     try {
       const response = await apiClient.post('/auth/login', { email, password });
+      console.log('[DEBUG] [AuthContext] Login response received:', response.data);
+      
+      // Validate response structure
+      if (!response.data || !response.data.access_token || !response.data.refresh_token) {
+        console.error('[DEBUG] [AuthContext] Invalid login response structure:', response.data);
+        throw new Error('Invalid login response: missing tokens');
+      }
+      
       const { access_token, refresh_token } = response.data;
-
+      console.log('[DEBUG] [AuthContext] Tokens received. Access token length:', access_token?.length, 'Refresh token length:', refresh_token?.length);
+      
+      if (!access_token || !refresh_token) {
+        console.error('[DEBUG] [AuthContext] Tokens are empty or null');
+        throw new Error('Received empty tokens from server');
+      }
+      
+      console.log('[DEBUG] [AuthContext] Storing JWT tokens in localStorage');
       localStorage.setItem('auth_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
 
-      // Immediately query for full /me details to populate provider
+      console.log('[DEBUG] [AuthContext] Fetching user profile details via /auth/me');
       const meResponse = await apiClient.get<UserProfile>('/auth/me');
-      setUser(meResponse.data);
-      return meResponse.data;
+      console.log('[DEBUG] [AuthContext] User profile received:', meResponse.data);
+      
+      // Validate profile data
+      if (!meResponse.data || !meResponse.data.id || !meResponse.data.role) {
+        console.error('[DEBUG] [AuthContext] Invalid profile data received:', meResponse.data);
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('refresh_token');
+        throw new Error('Invalid user profile data received');
+      }
+      
+      const normalizedUser = {
+        ...meResponse.data,
+        role: normalizeRole(meResponse.data.role),
+      };
+      setUser(normalizedUser);
+      return normalizedUser;
     } catch (error) {
+      console.error('[DEBUG] [AuthContext] Login failed:', error);
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('refresh_token');
       setUser(null);
       throw error;
     } finally {
@@ -115,10 +164,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     lastName: string,
     phone?: string,
     branchId?: string
-  ): Promise<void> => {
+  ): Promise<UserProfile> => {
+    console.log('[DEBUG] [AuthContext] Signup request initiated for:', email);
     setLoading(true);
     try {
-      await apiClient.post('/auth/signup', {
+      const response = await apiClient.post('/auth/signup', {
         email,
         password,
         role,
@@ -127,7 +177,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         phone: phone || null,
         branch_id: branchId || null,
       });
+      
+      console.log('[DEBUG] [AuthContext] Signup response received:', response.data);
+      
+      // Extract tokens from response
+      const { access_token, refresh_token } = response.data;
+      
+      if (access_token && refresh_token) {
+        console.log('[DEBUG] [AuthContext] Storing JWT tokens in localStorage');
+        localStorage.setItem('auth_token', access_token);
+        localStorage.setItem('refresh_token', refresh_token);
+        
+        console.log('[DEBUG] [AuthContext] Fetching user profile details via /auth/me');
+        const meResponse = await apiClient.get<UserProfile>('/auth/me');
+        console.log('[DEBUG] [AuthContext] User profile received:', meResponse.data);
+        const normalizedUser = {
+          ...meResponse.data,
+          role: normalizeRole(meResponse.data.role),
+        };
+        setUser(normalizedUser);
+        return normalizedUser;
+      } else {
+        throw new Error('No tokens received from signup');
+      }
     } catch (error) {
+      console.error('[DEBUG] [AuthContext] Signup failed:', error);
+      setUser(null);
       throw error;
     } finally {
       setLoading(false);

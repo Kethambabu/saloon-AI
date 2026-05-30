@@ -56,9 +56,11 @@ class ReviewStatus(str, enum.Enum):
 
 class UserRole(str, enum.Enum):
     """Security roles for platform access"""
-    ADMIN = "Admin"
-    STAFF = "Staff"
-    USER = "User"
+    ADMIN = "ADMIN"
+    STAFF = "STAFF"
+    CUSTOMER = "CUSTOMER"
+    MANAGER = "MANAGER"
+    OWNER = "OWNER"
 
 
 

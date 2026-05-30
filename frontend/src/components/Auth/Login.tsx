@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 interface LoginProps {
@@ -8,6 +9,7 @@ interface LoginProps {
 
 export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToForgotPassword }) => {
   const { login } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -15,8 +17,11 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('[DEBUG] [Login] Submit handler clicked.');
+    
     if (!email || !password) {
-      setError('Please enter both email and password.');
+      console.warn('[DEBUG] [Login] Validation failed: missing fields.');
+      setError('Please enter all required fields');
       return;
     }
 
@@ -24,15 +29,71 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
     setIsSubmitting(true);
 
     try {
-      await login(email, password);
+      console.log('[DEBUG] [Login] Dispatching login call for:', email);
+      const userProfile = await login(email, password);
+      console.log('[DEBUG] [Login] Login successful. Profile:', userProfile);
+      
+      // Validate profile data
+      if (!userProfile || !userProfile.role) {
+        console.error('[DEBUG] [Login] Invalid profile data received:', userProfile);
+        setError('Invalid user data received. Please try again.');
+        setIsSubmitting(false);
+        return;
+      }
+      
+      console.log('[DEBUG] [Login] Initiating route navigation for role:', userProfile.role);
+      
+      // Use setTimeout to ensure state updates complete before navigation
+      setTimeout(() => {
+        const role = userProfile.role;
+        if (role === 'Admin' || role === 'ADMIN') {
+          console.log('[DEBUG] [Login] Navigating to /admin');
+          navigate('/admin', { replace: true });
+        } else if (role === 'Staff' || role === 'STAFF') {
+          console.log('[DEBUG] [Login] Navigating to /staff');
+          navigate('/staff', { replace: true });
+        } else if (role === 'User' || role === 'CUSTOMER' || role === 'USER') {
+          console.log('[DEBUG] [Login] Navigating to /user');
+          navigate('/user', { replace: true });
+        } else {
+          console.error('[DEBUG] [Login] Unknown user role:', userProfile.role);
+          setError('Unknown user role. Please contact support.');
+        }
+      }, 0);
     } catch (err: any) {
-      console.error('Login error:', err);
-      const detail = err.response?.data?.detail;
-      setError(
-        typeof detail === 'string'
-          ? detail
-          : 'Invalid credentials. Please verify your email and password.'
-      );
+      console.error('[DEBUG] [Login] Caught error in submit:', err);
+      
+      let errorMessage = 'Something went wrong. Please try again.';
+      
+      if (!err.response) {
+        // Network error or no response
+        if (err.message === 'Network Error' || err.code === 'ECONNABORTED') {
+          errorMessage = 'Unable to connect to server. Please check your connection.';
+        } else {
+          errorMessage = 'Unable to connect to server';
+        }
+        console.error('[DEBUG] [Login] Network error:', err.message);
+      } else if (err.response.status === 401 || err.response.status === 400) {
+        // Invalid credentials
+        errorMessage = 'Incorrect username or password. Please try again.';
+        console.warn('[DEBUG] [Login] Authentication failed with status:', err.response.status);
+      } else if (err.response.status === 403) {
+        // Account suspended or inactive
+        const detail = err.response.data?.detail;
+        errorMessage = detail || 'Your account is suspended or inactive';
+        console.warn('[DEBUG] [Login] Access forbidden:', detail);
+      } else if (err.response.status === 500) {
+        errorMessage = 'Server error. Please try again later.';
+        console.error('[DEBUG] [Login] Server error:', err.response.data);
+      } else {
+        // Generic error response
+        const message = err.response.data?.message;
+        const detail = err.response.data?.detail;
+        errorMessage = message || detail || 'Something went wrong. Please try again.';
+        console.warn('[DEBUG] [Login] Error status', err.response.status, ':', errorMessage);
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
@@ -77,25 +138,19 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 px-4 sm:px-0">
         {/* Glassmorphic Panel Container */}
         <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-8 px-6 shadow-2xl rounded-3xl sm:px-10">
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-left animate-fade-in">
-                <div className="flex">
-                  <div className="flex-shrink-0">
-                    <svg className="h-5 h-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <div className="ml-3">
-                    <p className="text-xs font-bold text-red-300">{error}</p>
-                  </div>
-                </div>
-              </div>
-            )}
+          <form className="space-y-5" onSubmit={handleSubmit}>
+            <div className="text-left space-y-1">
+              <h3 className="text-sm font-bold text-slate-300">Or Sign in with Email</h3>
+              {error && (
+                <p className="text-sm font-bold text-red-500 animate-fade-in">
+                  {error}
+                </p>
+              )}
+            </div>
 
             <div>
               <label htmlFor="email" className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
-                Email address
+                Email Address
               </label>
               <div className="mt-1">
                 <input
@@ -104,7 +159,10 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                   type="email"
                   autoComplete="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) setError(null); // Clear error when user starts typing
+                  }}
                   required
                   placeholder="name@salonai.com"
                   className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
@@ -123,7 +181,10 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                   type="password"
                   autoComplete="current-password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (error) setError(null); // Clear error when user starts typing
+                  }}
                   required
                   placeholder="••••••••"
                   className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
@@ -143,10 +204,10 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    <span>Verifying session...</span>
+                    <span>Signing In...</span>
                   </span>
                 ) : (
-                  <span>Access Platform</span>
+                  <span>Sign In</span>
                 )}
               </button>
             </div>

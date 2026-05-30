@@ -38,6 +38,11 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: UserRole
     email: str
+    success: Optional[bool] = True
+    token: Optional[str] = None
+    refreshToken: Optional[str] = None
+    user: Optional[dict] = None
+    message: Optional[str] = None
 
 
 class RefreshRequest(BaseModel):
@@ -68,17 +73,22 @@ def login(
     """Authenticate and issue JWT tokens."""
     user = db.query(User).filter(User.email == payload.email.lower().strip()).first()
     
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Incorrect email or password"
+        )
+        
+    if not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
         )
         
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is suspended or inactive"
+            detail="Account is suspended or inactive. Please contact support."
         )
         
     # Generate tokens
@@ -89,11 +99,25 @@ def login(
     user.refresh_token = refresh_token
     db.commit()
     
+    user_data = {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role.value,
+        "is_active": user.is_active,
+        "staff_id": str(user.staff_id) if user.staff_id else None,
+        "customer_id": str(user.customer_id) if user.customer_id else None
+    }
+    
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         role=user.role,
-        email=user.email
+        email=user.email,
+        success=True,
+        token=access_token,
+        refreshToken=refresh_token,
+        user=user_data,
+        message="Login successful"
     )
 
 
@@ -322,7 +346,7 @@ def signup(
             db.flush()
             new_user.staff_id = staff_record.id
             
-        elif payload.role == UserRole.USER:
+        elif payload.role == UserRole.CUSTOMER:
             customer_record = Customer(
                 id=_uuid.uuid4(),
                 first_name=payload.first_name,
@@ -336,7 +360,35 @@ def signup(
             new_user.customer_id = customer_record.id
             
         db.commit()
-        return {"success": True, "message": "User registered successfully.", "user_id": str(new_user.id)}
+        
+        # Auto-issue tokens for immediate login after signup
+        access_token = create_access_token(subject=new_user.id, role=new_user.role.value)
+        refresh_token = create_refresh_token(subject=new_user.id)
+        
+        # Store refresh token for session tracking
+        new_user.refresh_token = refresh_token
+        db.commit()
+        
+        user_data = {
+            "id": str(new_user.id),
+            "email": new_user.email,
+            "role": new_user.role.value,
+            "is_active": new_user.is_active,
+            "staff_id": str(new_user.staff_id) if new_user.staff_id else None,
+            "customer_id": str(new_user.customer_id) if new_user.customer_id else None
+        }
+        
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            role=new_user.role,
+            email=new_user.email,
+            success=True,
+            token=access_token,
+            refreshToken=refresh_token,
+            user=user_data,
+            message="User registered successfully."
+        )
         
     except Exception as e:
         db.rollback()

@@ -5,8 +5,9 @@ from fastapi import APIRouter
 router = APIRouter(prefix="/v1", tags=["v1"])
 
 # Include agent sub-routes
-from api.routes.agent_routes import router as agent_router
-router.include_router(agent_router)
+# TODO: Fix autogen_ext import error
+# from api.routes.agent_routes import router as agent_router
+# router.include_router(agent_router)
 
 # Include auth sub-routes
 from api.routes.auth_routes import router as auth_router

@@ -19,7 +19,17 @@ import {
 const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User')[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
   const { user, isAuthenticated, loading } = useAuth();
 
+  useEffect(() => {
+    console.log('[DEBUG] [ProtectedRouteWrapper] Evaluating security guard:', {
+      isAuthenticated,
+      userRole: user?.role,
+      allowedRoles,
+      userEmail: user?.email
+    });
+  }, [user, isAuthenticated, allowedRoles]);
+
   if (loading) {
+    console.log('[DEBUG] [ProtectedRouteWrapper] Authentication state is loading. Rendering spinner...');
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
         <Loading />
@@ -31,14 +41,17 @@ const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User
   }
 
   if (!isAuthenticated || !user) {
+    console.warn('[DEBUG] [ProtectedRouteWrapper] Guard failed: unauthenticated session. Redirecting to /login');
     return <Navigate to="/login" replace />;
   }
 
   const isAuthorized = allowedRoles.includes(user.role);
   if (!isAuthorized) {
+    console.warn('[DEBUG] [ProtectedRouteWrapper] Guard failed: unauthorized role privilege. Redirecting to /unauthorized');
     return <Navigate to="/unauthorized" replace />;
   }
 
+  console.log('[DEBUG] [ProtectedRouteWrapper] Guard passed. Rendering layout container shell.');
   return <Layout>{children}</Layout>;
 };
 
@@ -49,9 +62,10 @@ const LandingPageRoute: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (user.role === 'Admin') navigate('/admin', { replace: true });
-      else if (user.role === 'Staff') navigate('/staff', { replace: true });
-      else navigate('/user', { replace: true });
+      console.log('[DEBUG] [LandingPage] Authenticated session detected. Routing to dashboard for:', user.role);
+      if (user.role === 'Admin') navigate('/admin/dashboard', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff/dashboard', { replace: true });
+      else navigate('/user/dashboard', { replace: true });
     }
   }, [isAuthenticated, user, navigate]);
 
@@ -65,9 +79,10 @@ const LoginRoute: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (user.role === 'Admin') navigate('/admin', { replace: true });
-      else if (user.role === 'Staff') navigate('/staff', { replace: true });
-      else navigate('/user', { replace: true });
+      console.log('[DEBUG] [LoginRoute] Authenticated session detected. Routing to dashboard for:', user.role);
+      if (user.role === 'Admin') navigate('/admin/dashboard', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff/dashboard', { replace: true });
+      else navigate('/user/dashboard', { replace: true });
     }
   }, [isAuthenticated, user, navigate]);
 
@@ -86,9 +101,10 @@ const SignupRoute: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (user.role === 'Admin') navigate('/admin', { replace: true });
-      else if (user.role === 'Staff') navigate('/staff', { replace: true });
-      else navigate('/user', { replace: true });
+      console.log('[DEBUG] [SignupRoute] Authenticated session detected. Routing to dashboard for:', user.role);
+      if (user.role === 'Admin') navigate('/admin/dashboard', { replace: true });
+      else if (user.role === 'Staff') navigate('/staff/dashboard', { replace: true });
+      else navigate('/user/dashboard', { replace: true });
     }
   }, [isAuthenticated, user, navigate]);
 
@@ -124,7 +140,12 @@ const UnauthorizedRoute: React.FC = () => {
 function AppContent() {
   const { loading } = useAuth();
 
+  useEffect(() => {
+    console.log('[DEBUG] [AppContent] Component mounted. Loading state:', loading);
+  }, [loading]);
+
   if (loading) {
+    console.log('[DEBUG] [AppContent] Main session state is loading. Rendering startup loading page...');
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
         <Loading />

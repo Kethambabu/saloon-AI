@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../api/client';
 
@@ -15,6 +16,7 @@ interface SignupProps {
 
 export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
   const { signup } = useAuth();
+  const navigate = useNavigate();
   
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -72,7 +74,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
     setIsSubmitting(true);
 
     try {
-      await signup(
+      const userProfile = await signup(
         email,
         password,
         role,
@@ -81,14 +83,44 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
         phone || undefined,
         role === 'Staff' ? branchId : undefined
       );
-      setSuccess('Account registered successfully! Redirecting to login in 3 seconds...');
+      
+      setSuccess('Account registered successfully! Redirecting to dashboard...');
+      
+      // Auto-navigate to dashboard based on role
       setTimeout(() => {
-        onBackToLogin();
-      }, 3000);
+        if (userProfile.role === 'Admin') {
+          navigate('/admin', { replace: true });
+        } else if (userProfile.role === 'Staff') {
+          navigate('/staff', { replace: true });
+        } else {
+          navigate('/user', { replace: true });
+        }
+      }, 1500);
     } catch (err: any) {
       console.error('Registration failed:', err);
-      const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Registration failed. Please check your details.');
+      
+      let errorMessage = 'Registration failed. Please check your details.';
+      
+      if (!err.response) {
+        errorMessage = 'Unable to connect to server. Please check your connection.';
+        console.error('Network error:', err.message);
+      } else if (err.response.status === 400) {
+        // Validation error or user already exists
+        const detail = err.response.data?.detail;
+        const message = err.response.data?.message;
+        errorMessage = detail || message || 'Email already exists or invalid data. Please check and try again.';
+      } else if (err.response.status === 409) {
+        // Conflict - user already exists
+        errorMessage = 'Email already registered. Please use a different email or login instead.';
+      } else if (err.response.status === 500) {
+        errorMessage = 'Server error. Please try again later.';
+      } else {
+        const detail = err.response.data?.detail;
+        const message = err.response.data?.message;
+        errorMessage = message || detail || 'Registration failed. Please try again.';
+      }
+      
+      setError(errorMessage);
       setIsSubmitting(false);
     }
   };
@@ -137,7 +169,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 <input
                   type="text"
                   value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
+                  onChange={(e) => {
+                    setFirstName(e.target.value);
+                    if (error) setError(null);
+                  }}
                   required
                   placeholder="Jane"
                   className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
@@ -150,7 +185,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 <input
                   type="text"
                   value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
+                  onChange={(e) => {
+                    setLastName(e.target.value);
+                    if (error) setError(null);
+                  }}
                   required
                   placeholder="Doe"
                   className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
@@ -165,7 +203,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (error) setError(null);
+                }}
                 required
                 placeholder="name@example.com"
                 className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
@@ -179,7 +220,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (error) setError(null);
+                }}
                 required
                 placeholder="••••••••"
                 className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
@@ -194,7 +238,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 <input
                   type="text"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (error) setError(null);
+                  }}
                   placeholder="+1 (555) 0100"
                   className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
                 />
@@ -205,7 +252,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 </label>
                 <select
                   value={role}
-                  onChange={(e) => setRole(e.target.value)}
+                  onChange={(e) => {
+                    setRole(e.target.value);
+                    if (error) setError(null);
+                  }}
                   className="mt-1 block w-full px-3 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm cursor-pointer"
                 >
                   <option value="User" className="bg-slate-950 text-white">👤 Salon Customer (User)</option>
@@ -221,7 +271,10 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 </label>
                 <select
                   value={branchId}
-                  onChange={(e) => setBranchId(e.target.value)}
+                  onChange={(e) => {
+                    setBranchId(e.target.value);
+                    if (error) setError(null);
+                  }}
                   className="mt-1 block w-full px-3 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm cursor-pointer"
                 >
                   {branches.map((b) => (
