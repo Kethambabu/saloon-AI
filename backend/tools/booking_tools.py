@@ -38,6 +38,50 @@ BUSINESS_START_HOUR = 9  # 9:00 AM
 BUSINESS_END_HOUR = 20   # 8:00 PM
 SLOT_INTERVAL_MINUTES = 30
 
+# Common placeholder values that should never be used (LLM hallucination detection)
+_PLACEHOLDER_VALUES = {
+    "first_branch_id", "first_service_id", "first_staff_id", "first_customer_id",
+    "second_branch_id", "second_service_id", "second_staff_id", 
+    "default_branch_id", "default_service_id", "default_staff_id",
+    "placeholder", "first", "second", "default", "example", "test",
+    "branch_id", "service_id", "staff_id", "customer_id", "appointment_id",
+    "your_branch", "your_service", "your_staff", "your_customer",
+    "select_branch", "select_service", "select_staff",
+    "none_specified", "not_specified", "unspecified",
+}
+
+
+def _is_placeholder_value(value: Any) -> bool:
+    """
+    Detect if an identifier is a placeholder/hallucinated value from LLM.
+    Prevents invalid tool calls with made-up identifiers.
+    
+    Returns True if value appears to be a placeholder rather than real data.
+    """
+    if value is None or value == "":
+        return False
+    
+    value_str = str(value).strip().lower()
+    
+    # Direct placeholder match
+    if value_str in _PLACEHOLDER_VALUES:
+        return True
+    
+    # Check for common patterns
+    if any(pattern in value_str for pattern in [
+        "first_", "second_", "default_", "select_", "example_",
+        "your_", "placeholder", "xxxx", "1111", "0000"
+    ]):
+        return True
+    
+    # Check if it's just text without hyphens (UUIDs have hyphens)
+    # and contains these patterns (likely placeholder)
+    if "_" in value_str and "-" not in value_str:
+        if "id" in value_str or "staff" in value_str or "branch" in value_str:
+            return True
+    
+    return False
+
 
 def _parse_datetime(dt_input: Any) -> datetime:
     """Helper to convert string or datetime inputs to UTC timezone-aware datetime."""
@@ -91,6 +135,31 @@ def get_available_slots(
         Dict with success status, list of available slots, or error message
     """
     logger.info(f"Checking available slots for branch {branch_id} on date {date_str}")
+    
+    # VALIDATION: Reject placeholder/hallucinated values from LLM
+    if _is_placeholder_value(branch_id):
+        error_msg = (
+            f"Invalid branch identifier '{branch_id}'. "
+            "Please discover available branches first using get_available_branches() and provide a valid branch UUID or name."
+        )
+        logger.warning(f"Placeholder branch_id detected: {branch_id}")
+        return {"success": False, "error": error_msg}
+    
+    if staff_id and _is_placeholder_value(staff_id):
+        error_msg = (
+            f"Invalid staff identifier '{staff_id}'. "
+            "Please discover available staff first using get_available_staff() and provide a valid staff UUID or name."
+        )
+        logger.warning(f"Placeholder staff_id detected: {staff_id}")
+        return {"success": False, "error": error_msg}
+    
+    if service_id and _is_placeholder_value(service_id):
+        error_msg = (
+            f"Invalid service identifier '{service_id}'. "
+            "Please discover available services first using get_available_services() and provide a valid service UUID or name."
+        )
+        logger.warning(f"Placeholder service_id detected: {service_id}")
+        return {"success": False, "error": error_msg}
     
     # Open connection if no session is injected
     session = db or SessionLocal()
@@ -233,6 +302,31 @@ def create_appointment(
     """
     logger.info(f"Creating appointment: Customer={customer_id}, Branch={branch_id}, Service={service_id}")
     
+    # VALIDATION: Reject placeholder/hallucinated values from LLM
+    if _is_placeholder_value(branch_id):
+        error_msg = (
+            f"Invalid branch identifier '{branch_id}'. "
+            "Please discover available branches first using get_available_branches() and provide a valid branch UUID or name."
+        )
+        logger.warning(f"Placeholder branch_id detected: {branch_id}")
+        return {"success": False, "error": error_msg}
+    
+    if _is_placeholder_value(service_id):
+        error_msg = (
+            f"Invalid service identifier '{service_id}'. "
+            "Please discover available services first using get_available_services() and provide a valid service UUID or name."
+        )
+        logger.warning(f"Placeholder service_id detected: {service_id}")
+        return {"success": False, "error": error_msg}
+    
+    if staff_id and _is_placeholder_value(staff_id):
+        error_msg = (
+            f"Invalid staff identifier '{staff_id}'. "
+            "Please discover available staff first using get_available_staff() and provide a valid staff UUID or name."
+        )
+        logger.warning(f"Placeholder staff_id detected: {staff_id}")
+        return {"success": False, "error": error_msg}
+    
     session = db or SessionLocal()
     
     try:
@@ -343,14 +437,23 @@ def create_appointment(
             notes=notes
         )
 
+        appointment_id = None
+        assigned_staff_name = None
+        
         if db:
             session.add(new_appointment)
             session.flush()
             appointment_id = str(new_appointment.id)
+            assigned_staff = session.query(Staff).filter(Staff.id == chosen_staff_id).first()
+            assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
         else:
+            # Use transaction context manager and capture all data INSIDE the transaction
             with db_transaction() as tx:
                 tx.add(new_appointment)
-            appointment_id = str(new_appointment.id)
+                tx.flush()  # Flush to get the ID
+                appointment_id = str(new_appointment.id)
+                assigned_staff = tx.query(Staff).filter(Staff.id == chosen_staff_id).first()
+                assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
 
         logger.info(f"Appointment created: {appointment_id}")
         return {
@@ -358,7 +461,7 @@ def create_appointment(
             "appointment_id": appointment_id,
             "customer_name": customer.full_name,
             "service_name": service.name,
-            "assigned_staff": session.query(Staff).filter(Staff.id == chosen_staff_id).first().full_name,
+            "assigned_staff": assigned_staff_name,
             "start_time": st_start.isoformat(),
             "end_time": st_end.isoformat(),
             "status": "CONFIRMED",
@@ -386,6 +489,15 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
         Dict with success status or error message
     """
     logger.info(f"Cancelling appointment: {appointment_id}")
+    
+    # VALIDATION: Reject placeholder/hallucinated values from LLM
+    if _is_placeholder_value(appointment_id):
+        error_msg = (
+            f"Invalid appointment identifier '{appointment_id}'. "
+            "Please provide a valid appointment UUID."
+        )
+        logger.warning(f"Placeholder appointment_id detected: {appointment_id}")
+        return {"success": False, "error": error_msg}
     
     session = db or SessionLocal()
     
@@ -448,6 +560,15 @@ def reschedule_appointment(
         Dict with success status or error message
     """
     logger.info(f"Rescheduling appointment {appointment_id} to {new_start_time}")
+    
+    # VALIDATION: Reject placeholder/hallucinated values from LLM
+    if _is_placeholder_value(appointment_id):
+        error_msg = (
+            f"Invalid appointment identifier '{appointment_id}'. "
+            "Please provide a valid appointment UUID."
+        )
+        logger.warning(f"Placeholder appointment_id detected: {appointment_id}")
+        return {"success": False, "error": error_msg}
     
     session = db or SessionLocal()
     

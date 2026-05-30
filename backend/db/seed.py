@@ -53,303 +53,172 @@ def seed_database():
     db = SessionLocal()
     
     try:
-        # Check if users already exist
-        existing_users = db.query(User).count()
-        if existing_users > 0:
-            logger.info("ℹ️  Database already seeded. Skipping...")
-            db.close()
-            return
-        
         logger.info("🌱 Seeding SalonAI Workforce database on Supabase...")
         
         # ====================================================================
-        # 1. CREATE BRANCHES
+        # 1. CREATE BRANCHES (if not exist)
         # ====================================================================
-        logger.info("Creating branches...")
-        
-        branches = [
-            Branch(
-                id=uuid.uuid4(),
-                name="Downtown Elite",
-                code="DTE",
-                address="123 Main Street",
-                city="New York",
-                phone="+1-212-555-0100",
-                email="downtown@salonai.com",
-                is_active=True
-            ),
-            Branch(
-                id=uuid.uuid4(),
-                name="Westside Boutique",
-                code="WSB",
-                address="456 Park Avenue",
-                city="Los Angeles",
-                phone="+1-310-555-0200",
-                email="westside@salonai.com",
-                is_active=True
-            ),
-            Branch(
-                id=uuid.uuid4(),
-                name="Midtown Luxe",
-                code="MTL",
-                address="789 Michigan Avenue",
-                city="Chicago",
-                phone="+1-312-555-0300",
-                email="midtown@salonai.com",
-                is_active=True
-            ),
+        logger.info("Checking and creating branches...")
+        branches = []
+        branch_data = [
+            ("Downtown Elite", "DTE", "123 Main Street", "New York", "+1-212-555-0100", "downtown@salonai.com"),
+            ("Westside Boutique", "WSB", "456 Park Avenue", "Los Angeles", "+1-310-555-0200", "westside@salonai.com"),
+            ("Midtown Luxe", "MTL", "789 Michigan Avenue", "Chicago", "+1-312-555-0300", "midtown@salonai.com"),
         ]
-        
-        for branch in branches:
-            db.add(branch)
+        for name, code, addr, city, phone, email in branch_data:
+            existing = db.query(Branch).filter(Branch.code == code).first()
+            if not existing:
+                b = Branch(id=uuid.uuid4(), name=name, code=code, address=addr, city=city, phone=phone, email=email, is_active=True)
+                db.add(b)
+                branches.append(b)
+                logger.info(f"   ✓ Created branch: {name}")
+            else:
+                branches.append(existing)
         db.flush()
-        logger.info(f"✓ Created {len(branches)} branches")
-        
+
         # ====================================================================
-        # 2. CREATE SERVICES
+        # 2. CREATE SERVICES (if not exist)
         # ====================================================================
-        logger.info("Creating services...")
-        
-        services = [
-            Service(
-                id=uuid.uuid4(),
-                name="Signature Precision Haircut",
-                description="Professional haircut with detailed styling consultation",
-                price=Decimal("85.00"),
-                duration_minutes=60,
-                is_active=True
-            ),
-            Service(
-                id=uuid.uuid4(),
-                name="Balayage & Creative Color",
-                description="Hand-painted highlighting technique with custom color blending",
-                price=Decimal("220.00"),
-                duration_minutes=150,
-                is_active=True
-            ),
-            Service(
-                id=uuid.uuid4(),
-                name="Hydrating Deep-Cleansing Facial",
-                description="Luxurious 75-minute facial with premium skincare products",
-                price=Decimal("120.00"),
-                duration_minutes=75,
-                is_active=True
-            ),
-            Service(
-                id=uuid.uuid4(),
-                name="Himalayan Hot Stone Massage",
-                description="Soothing massage with warm stone therapy and aromatherapy",
-                price=Decimal("150.00"),
-                duration_minutes=90,
-                is_active=True
-            ),
+        logger.info("Checking and creating services...")
+        services = []
+        service_data = [
+            ("Signature Precision Haircut", "Professional haircut with detailed styling consultation", Decimal("85.00"), 60),
+            ("Balayage & Creative Color", "Hand-painted highlighting technique with custom color blending", Decimal("220.00"), 150),
+            ("Hydrating Deep-Cleansing Facial", "Luxurious 75-minute facial with premium skincare products", Decimal("120.00"), 75),
+            ("Himalayan Hot Stone Massage", "Soothing massage with warm stone therapy and aromatherapy", Decimal("150.00"), 90),
         ]
-        
-        for service in services:
-            db.add(service)
+        for name, desc, price, dur in service_data:
+            existing = db.query(Service).filter(Service.name == name).first()
+            if not existing:
+                s = Service(id=uuid.uuid4(), name=name, description=desc, price=price, duration_minutes=dur, is_active=True)
+                db.add(s)
+                services.append(s)
+                logger.info(f"   ✓ Created service: {name}")
+            else:
+                services.append(existing)
         db.flush()
-        logger.info(f"✓ Created {len(services)} services")
-        
+
         # ====================================================================
-        # 3. CREATE STAFF
+        # 3. CREATE STAFF (if not exist)
         # ====================================================================
-        logger.info("Creating staff members...")
-        
-        staff_members = [
-            Staff(
-                id=uuid.uuid4(),
-                branch_id=branches[0].id,
-                first_name="Alexandra",
-                last_name="Chen",
-                email="alex.chen@salonai.com",
-                phone="+1-212-555-1001",
-                role="Senior Stylist",
-                is_active=True
-            ),
-            Staff(
-                id=uuid.uuid4(),
-                branch_id=branches[0].id,
-                first_name="Marcus",
-                last_name="Johnson",
-                email="marcus.johnson@salonai.com",
-                phone="+1-212-555-1002",
-                role="Color Specialist",
-                is_active=True
-            ),
-            Staff(
-                id=uuid.uuid4(),
-                branch_id=branches[1].id,
-                first_name="Isabella",
-                last_name="Martinez",
-                email="isabella.martinez@salonai.com",
-                phone="+1-310-555-2001",
-                role="Senior Stylist",
-                is_active=True
-            ),
+        logger.info("Checking and creating staff...")
+        staff_members = []
+        staff_data = [
+            (branches[0].id, "Alexandra", "Chen", "alex.chen@salonai.com", "+1-212-555-1001", "Senior Stylist"),
+            (branches[0].id, "Marcus", "Johnson", "marcus.johnson@salonai.com", "+1-212-555-1002", "Color Specialist"),
+            (branches[1].id, "Isabella", "Martinez", "isabella.martinez@salonai.com", "+1-310-555-2001", "Senior Stylist"),
         ]
-        
-        for staff in staff_members:
-            db.add(staff)
+        for b_id, fn, ln, email, phone, role in staff_data:
+            existing = db.query(Staff).filter(Staff.email == email).first()
+            if not existing:
+                st = Staff(id=uuid.uuid4(), branch_id=b_id, first_name=fn, last_name=ln, email=email, phone=phone, role=role, is_active=True)
+                db.add(st)
+                staff_members.append(st)
+                logger.info(f"   ✓ Created staff: {fn} {ln}")
+            else:
+                staff_members.append(existing)
         db.flush()
-        logger.info(f"✓ Created {len(staff_members)} staff members")
-        
+
         # ====================================================================
-        # 4. CREATE CUSTOMERS
+        # 4. CREATE CUSTOMERS (if not exist)
         # ====================================================================
-        logger.info("Creating customers...")
-        
-        customers = [
-            Customer(
-                id=uuid.uuid4(),
-                first_name="Alice",
-                last_name="Smith",
-                email="alice.smith@example.com",
-                phone="+1-212-555-5001",
-                is_active=True
-            ),
-            Customer(
-                id=uuid.uuid4(),
-                first_name="Robert",
-                last_name="Johnson",
-                email="robert.johnson@example.com",
-                phone="+1-212-555-5002",
-                is_active=True
-            ),
+        logger.info("Checking and creating customers...")
+        customers = []
+        customer_data = [
+            ("Alice", "Smith", "alice.smith@example.com", "+1-212-555-5001"),
+            ("Robert", "Johnson", "robert.johnson@example.com", "+1-212-555-5002"),
         ]
-        
-        for customer in customers:
-            db.add(customer)
+        for fn, ln, email, phone in customer_data:
+            existing = db.query(Customer).filter(Customer.email == email).first()
+            if not existing:
+                c = Customer(id=uuid.uuid4(), first_name=fn, last_name=ln, email=email, phone=phone, is_active=True)
+                db.add(c)
+                customers.append(c)
+                logger.info(f"   ✓ Created customer: {fn} {ln}")
+            else:
+                customers.append(existing)
         db.flush()
-        logger.info(f"✓ Created {len(customers)} customers")
-        
+
         # ====================================================================
-        # 5. CREATE USERS & ROLES
+        # 5. CREATE USERS & ROLES (if not exist)
         # ====================================================================
-        logger.info("Creating authenticated users and role profiles...")
-        
-        # password123 hashed with standard passlib context
+        logger.info("Checking and creating users...")
         hashed_password = "$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW"
         
-        # 5.1 Admin/Owner User
-        owner_user = User(
-            id=uuid.uuid4(),
-            email="owner@salonai.com",
-            hashed_password=hashed_password,
-            role=UserRole.ADMIN,
-            is_active=True
-        )
-        db.add(owner_user)
-        db.flush()
-        
-        owner_profile = Admin(
-            id=uuid.uuid4(),
-            user_id=owner_user.id,
-            first_name="Balu",
-            last_name="Owner",
-            email="owner@salonai.com",
-            phone="+1-212-555-9000"
-        )
-        db.add(owner_profile)
-        
-
-        
-        # 5.3 Staff User (linked to Marcus Stylist)
-        staff_user = User(
-            id=uuid.uuid4(),
-            email="marcus@salonai.com",
-            hashed_password=hashed_password,
-            role=UserRole.STAFF,
-            is_active=True,
-            staff_id=staff_members[1].id
-        )
-        db.add(staff_user)
-        
-        # 5.4 Customer User
-        customer_user = User(
-            id=uuid.uuid4(),
-            email="customer@example.com",
-            hashed_password=hashed_password,
-            role=UserRole.USER,
-            is_active=True,
-            customer_id=customers[0].id
-        )
-        db.add(customer_user)
-        
-        db.flush()
-        logger.info("✓ Created users for Admin, Staff, and Customer profiles")
-        
-        # ====================================================================
-        # 6. CREATE SAMPLE APPOINTMENTS
-        # ====================================================================
-        logger.info("Creating appointments...")
-        
-        now = datetime.now(timezone.utc)
-        tomorrow = now + timedelta(days=1)
-        
-        appointments = [
-            Appointment(
-                id=uuid.uuid4(),
-                customer_id=customers[0].id,
-                branch_id=branches[0].id,
-                staff_id=staff_members[1].id,  # Marcus
-                service_id=services[0].id,  # Haircut
-                start_time=tomorrow.replace(hour=10, minute=0, second=0, microsecond=0),
-                end_time=tomorrow.replace(hour=11, minute=0, second=0, microsecond=0),
-                status=AppointmentStatus.CONFIRMED,
-                notes="Client prefers tiered haircut"
-            ),
-            Appointment(
-                id=uuid.uuid4(),
-                customer_id=customers[1].id,
-                branch_id=branches[0].id,
-                staff_id=staff_members[0].id,  # Alexandra
-                service_id=services[1].id,  # Color
-                start_time=tomorrow.replace(hour=14, minute=0, second=0, microsecond=0),
-                end_time=tomorrow.replace(hour=16, minute=30, second=0, microsecond=0),
-                status=AppointmentStatus.CONFIRMED,
-                notes="Full balayage styling"
-            ),
-        ]
-        
-        for appointment in appointments:
-            db.add(appointment)
-        
-        # ====================================================================
-        # 7. CREATE SAMPLE LEADS & ANALYTICS
-        # ====================================================================
-        logger.info("Creating leads and business intelligence records...")
-        
-        lead = Lead(
-            id=uuid.uuid4(),
-            branch_id=branches[0].id,
-            first_name="Jennifer",
-            last_name="Taylor",
-            email="jennifer.taylor@example.com",
-            phone="+1-212-555-6001",
-            source="Website",
-            status=LeadStatus.NEW,
-            notes="Interested in color specialist appointments"
-        )
-        db.add(lead)
-        
-        analytics = [
-            AnalyticsRecord(metric_name="daily_active_users", metric_value=4.0, dimensions='{"platform":"web"}'),
-            AnalyticsRecord(metric_name="total_completed_appointments", metric_value=12.0, dimensions='{"branch":"DTE"}'),
-            AnalyticsRecord(metric_name="total_revenue_usd", metric_value=1020.0, dimensions='{"branch":"all"}')
-        ]
-        for a in analytics:
-            db.add(a)
+        # Admin
+        existing_owner = db.query(User).filter(User.email == "owner@salonai.com").first()
+        if not existing_owner:
+            owner_user = User(id=uuid.uuid4(), email="owner@salonai.com", hashed_password=hashed_password, role=UserRole.ADMIN, is_active=True)
+            db.add(owner_user)
+            db.flush()
+            owner_profile = Admin(id=uuid.uuid4(), user_id=owner_user.id, first_name="Balu", last_name="Owner", email="owner@salonai.com", phone="+1-212-555-9000")
+            db.add(owner_profile)
+            logger.info("   ✓ Created owner user")
             
-        # Commit all changes
+        # Staff
+        existing_staff_user = db.query(User).filter(User.email == "marcus@salonai.com").first()
+        if not existing_staff_user and len(staff_members) > 1:
+            staff_user = User(id=uuid.uuid4(), email="marcus@salonai.com", hashed_password=hashed_password, role=UserRole.STAFF, is_active=True, staff_id=staff_members[1].id)
+            db.add(staff_user)
+            logger.info("   ✓ Created staff user (Marcus)")
+
+        # Customer
+        existing_cust_user = db.query(User).filter(User.email == "customer@example.com").first()
+        if not existing_cust_user and len(customers) > 0:
+            customer_user = User(id=uuid.uuid4(), email="customer@example.com", hashed_password=hashed_password, role=UserRole.USER, is_active=True, customer_id=customers[0].id)
+            db.add(customer_user)
+            logger.info("   ✓ Created customer user")
+        db.flush()
+
+        # ====================================================================
+        # 6. CREATE SAMPLE APPOINTMENTS (if not exist)
+        # ====================================================================
+        logger.info("Checking and creating appointments...")
+        if db.query(Appointment).count() == 0 and len(customers) > 1 and len(staff_members) > 1 and len(services) > 1:
+            now = datetime.now(timezone.utc)
+            tomorrow = now + timedelta(days=1)
+            appointments = [
+                Appointment(
+                    id=uuid.uuid4(), customer_id=customers[0].id, branch_id=branches[0].id,
+                    staff_id=staff_members[1].id, service_id=services[0].id,
+                    start_time=tomorrow.replace(hour=10, minute=0, second=0, microsecond=0),
+                    end_time=tomorrow.replace(hour=11, minute=0, second=0, microsecond=0),
+                    status=AppointmentStatus.CONFIRMED, notes="Client prefers tiered haircut"
+                ),
+                Appointment(
+                    id=uuid.uuid4(), customer_id=customers[1].id, branch_id=branches[0].id,
+                    staff_id=staff_members[0].id, service_id=services[1].id,
+                    start_time=tomorrow.replace(hour=14, minute=0, second=0, microsecond=0),
+                    end_time=tomorrow.replace(hour=16, minute=30, second=0, microsecond=0),
+                    status=AppointmentStatus.CONFIRMED, notes="Full balayage styling"
+                ),
+            ]
+            for appt in appointments:
+                db.add(appt)
+            logger.info(f"   ✓ Created {len(appointments)} appointments")
+
+        # Leads & Analytics
+        if db.query(Lead).count() == 0:
+            lead = Lead(
+                id=uuid.uuid4(), branch_id=branches[0].id, first_name="Jennifer", last_name="Taylor",
+                email="jennifer.taylor@example.com", phone="+1-212-555-6001", source="Website",
+                status=LeadStatus.NEW, notes="Interested in color specialist appointments"
+            )
+            db.add(lead)
+            logger.info("   ✓ Created sample lead")
+
+        if db.query(AnalyticsRecord).count() == 0:
+            analytics = [
+                AnalyticsRecord(metric_name="daily_active_users", metric_value=4.0, dimensions='{"platform":"web"}'),
+                AnalyticsRecord(metric_name="total_completed_appointments", metric_value=12.0, dimensions='{"branch":"DTE"}'),
+                AnalyticsRecord(metric_name="total_revenue_usd", metric_value=1020.0, dimensions='{"branch":"all"}')
+            ]
+            for a in analytics:
+                db.add(a)
+            logger.info("   ✓ Created analytics records")
+
         db.commit()
-        
-        logger.info("✅ Database seeding on Supabase completed successfully!")
-        logger.info(f"   - {len(branches)} branches")
-        logger.info(f"   - {len(services)} services")
-        logger.info(f"   - {len(staff_members)} staff members")
-        logger.info(f"   - {len(customers)} customers")
-        logger.info(f"   - {len(appointments)} appointments")
-        logger.info(f"   - 4 default login roles created with password 'password123'")
+        logger.info("✅ Database seeding completed successfully!")
     except Exception as e:
         logger.error(f"❌ Error seeding database: {str(e)}", exc_info=True)
         db.rollback()

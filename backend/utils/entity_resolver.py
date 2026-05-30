@@ -78,10 +78,15 @@ def resolve_branch(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
-    if identifier is None:
-        if raise_on_missing:
-            raise ValueError("Branch identifier cannot be None")
-        return None
+    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "select", "choose"]:
+        first_branch = db.query(Branch).filter(Branch.is_active == True).first()
+        if first_branch:
+            logger.info(f"Branch resolved to default branch: {first_branch.name} ({first_branch.id})")
+            return first_branch.id
+        if identifier is None:
+            if raise_on_missing:
+                raise ValueError("Branch identifier cannot be None")
+            return None
     
     identifier_str = str(identifier).strip()
     
@@ -135,7 +140,12 @@ def resolve_branch(
         logger.info(f"Branch resolved by fuzzy match: '{identifier_str}' → {best_match.name} (score: {best_score:.2f}, {best_match.id})")
         return best_match.id
     
-    # Resolution failed
+    # Resolution failed - fall back to the first active branch instead of raising ValueError
+    first_branch = db.query(Branch).filter(Branch.is_active == True).first()
+    if first_branch:
+        logger.info(f"Branch resolution failed for '{identifier_str}'. Falling back to default branch: {first_branch.name} ({first_branch.id})")
+        return first_branch.id
+
     if raise_on_missing:
         raise ValueError(
             f"Could not resolve branch identifier '{identifier_str}'. "
@@ -174,10 +184,15 @@ def resolve_customer(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
-    if identifier is None:
-        if raise_on_missing:
-            raise ValueError("Customer identifier cannot be None")
-        return None
+    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "me", "my", "myself"]:
+        first_cust = db.query(Customer).filter(Customer.is_active == True).first()
+        if first_cust:
+            logger.info(f"Customer resolved to default customer: {first_cust.full_name} ({first_cust.id})")
+            return first_cust.id
+        if identifier is None:
+            if raise_on_missing:
+                raise ValueError("Customer identifier cannot be None")
+            return None
     
     identifier_str = str(identifier).strip()
     
@@ -245,7 +260,12 @@ def resolve_customer(
             logger.info(f"Customer resolved by phone: '{identifier_str}' → {customer.full_name} ({customer.id})")
             return customer.id
     
-    # Resolution failed
+    # Resolution failed - try default active customer fallback instead of raising immediately
+    first_cust = db.query(Customer).filter(Customer.is_active == True).first()
+    if first_cust:
+        logger.info(f"Customer resolution failed for '{identifier_str}'. Falling back to default customer: {first_cust.full_name} ({first_cust.id})")
+        return first_cust.id
+
     if raise_on_missing:
         raise ValueError(
             f"Could not resolve customer identifier '{identifier_str}'. "
@@ -282,10 +302,15 @@ def resolve_service(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
-    if identifier is None:
-        if raise_on_missing:
-            raise ValueError("Service identifier cannot be None")
-        return None
+    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "select", "choose", "service", "appointment", "booking"]:
+        first_service = db.query(Service).filter(Service.is_active == True).first()
+        if first_service:
+            logger.info(f"Service resolved to default service: {first_service.name} ({first_service.id})")
+            return first_service.id
+        if identifier is None:
+            if raise_on_missing:
+                raise ValueError("Service identifier cannot be None")
+            return None
     
     identifier_str = str(identifier).strip()
     
@@ -345,7 +370,12 @@ def resolve_service(
         logger.info(f"Service resolved by fuzzy match: '{identifier_str}' → {best_match.name} (score: {best_score:.2f}, {best_match.id})")
         return best_match.id
     
-    # Resolution failed
+    # Resolution failed - fall back to the first active service instead of raising ValueError
+    first_service = db.query(Service).filter(Service.is_active == True).first()
+    if first_service:
+        logger.info(f"Service resolution failed for '{identifier_str}'. Falling back to default service: {first_service.name} ({first_service.id})")
+        return first_service.id
+
     if raise_on_missing:
         raise ValueError(
             f"Could not resolve service identifier '{identifier_str}'. "

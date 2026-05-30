@@ -22,10 +22,9 @@ from db.models import (
 logger = logging.getLogger(__name__)
 
 
-def _format_date_expr(col):
+def _format_date_expr(col, db: Session):
     """Helper to format datetime field to YYYY-MM-DD based on dialect (PostgreSQL vs SQLite)."""
-    from db.database import engine
-    if engine.dialect.name == "sqlite":
+    if db and db.bind and db.bind.dialect.name == "sqlite":
         return func.strftime("%Y-%m-%d", col)
     return func.to_char(col, "YYYY-MM-DD")
 
@@ -136,7 +135,7 @@ def get_revenue_analytics(
 
         # Revenue over time for line charts
         # Group by formatted date
-        date_expr = _format_date_expr(Appointment.start_time)
+        date_expr = _format_date_expr(Appointment.start_time, db)
         time_query = (
             db.query(date_expr.label("date"), func.sum(Service.price).label("sum"))
             .join(Service, Appointment.service_id == Service.id)

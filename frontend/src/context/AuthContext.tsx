@@ -167,11 +167,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   ): Promise<UserProfile> => {
     console.log('[DEBUG] [AuthContext] Signup request initiated for:', email);
     setLoading(true);
+    const backendRole = role.toUpperCase() === 'USER' ? 'CUSTOMER' : role.toUpperCase();
     try {
       const response = await apiClient.post('/auth/signup', {
         email,
         password,
-        role,
+        role: backendRole,
         first_name: firstName,
         last_name: lastName,
         phone: phone || null,

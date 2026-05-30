@@ -92,8 +92,26 @@ async def chat_with_agent(
     """
     logger.info(f"POST /api/agent/chat received (Session ID: {payload.session_id})")
     
+    from datetime import datetime
+    
+    context_prefix = ""
+    # Inject current date and time context
+    now_dt = datetime.now()
+    context_prefix += f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (Today is {now_dt.strftime('%A, %B %d, %Y')}). Use this to calculate exact dates like 'tomorrow', 'next Tuesday', etc.]\n"
+    
+    # Inject logged-in user context
+    if current_user:
+        if current_user.customer:
+            cust = current_user.customer
+            context_prefix += f"[SYSTEM CUSTOMER CONTEXT: The user chatting with you is logged in as Customer '{cust.full_name}' (ID: {cust.id}, Email: {cust.email}, Phone: {cust.phone or 'N/A'}). Always use this Customer ID directly for bookings and customer history lookups. Do NOT ask them to search or provide their details.]\n"
+        elif current_user.staff:
+            stf = current_user.staff
+            context_prefix += f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff '{stf.full_name}' (ID: {stf.id}, Role: {stf.role}, Branch ID: {stf.branch_id}).]\n"
+        else:
+            context_prefix += f"[SYSTEM USER CONTEXT: The user chatting with you is logged in with email: '{current_user.email}' (Role: {current_user.role.value if hasattr(current_user.role, 'value') else current_user.role}).]\n"
+            
     # 1. Format conversational history as LLM context prepended to the query
-    full_query = ""
+    full_query = context_prefix + "\n"
     if payload.chat_history:
         full_query += "Here is the conversation history so far for context:\n"
         for idx, msg in enumerate(payload.chat_history):

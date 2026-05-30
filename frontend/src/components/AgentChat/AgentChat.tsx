@@ -30,6 +30,7 @@ export const AgentChat: React.FC = () => {
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false); // Collapsed by default
 
   // References for scrolling
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -217,7 +218,9 @@ export const AgentChat: React.FC = () => {
     <div className="w-full max-w-7xl mx-auto flex flex-col md:flex-row bg-slate-50 rounded-2xl shadow-xl border border-slate-200/80 overflow-hidden" style={{ height: '70vh', minHeight: '600px' }}>
       
       {/* --- Sidebar Section (Chat Session History) --- */}
-      <aside className="w-full md:w-80 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800">
+      <aside className={`bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 transition-all duration-300 ease-in-out ${
+        isHistoryOpen ? 'w-full md:w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden border-none'
+      }`}>
         
         {/* Sidebar Header */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -275,12 +278,31 @@ export const AgentChat: React.FC = () => {
         
         {/* Chat Area Header */}
         <header className="p-4 border-b border-slate-200/80 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-3.5">
+            {/* Toggle Sidebar Button */}
+            <button
+              onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+              className={`p-2 rounded-xl border transition-all duration-300 cursor-pointer flex items-center justify-center shadow-sm ${
+                isHistoryOpen
+                  ? 'bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100/85'
+                  : 'bg-white border-slate-200 text-slate-600 hover:text-blue-600 hover:border-slate-300'
+              }`}
+              title={isHistoryOpen ? "Hide History" : "Show History"}
+            >
+              <svg className="w-5 h-5 animate-pulse-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                {isHistoryOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h12M4 18h16" />
+                )}
+              </svg>
+            </button>
+
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-blue-100 border border-blue-200 flex items-center justify-center font-bold text-blue-600 shadow-sm">
                 C
               </div>
-              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white" title="Online" />
+              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white animate-pulse" title="Online" />
             </div>
             <div>
               <h2 className="text-slate-800 font-bold leading-tight">Clara - AI Receptionist</h2>
@@ -306,7 +328,7 @@ export const AgentChat: React.FC = () => {
               {/* Avatar Icon */}
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm border ${
                 msg.role === 'user'
-                  ? 'bg-blue-600 border-blue-700 text-white'
+                  ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white'
                   : 'bg-white border-slate-200 text-blue-600'
               }`}>
                 {msg.role === 'user' ? 'U' : 'C'}
@@ -316,7 +338,7 @@ export const AgentChat: React.FC = () => {
               <div className="flex flex-col">
                 <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed border ${
                   msg.role === 'user'
-                    ? 'bg-blue-600 border-blue-700 text-white rounded-tr-none'
+                    ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white rounded-tr-none shadow-md shadow-blue-600/10'
                     : 'bg-white border-slate-200 text-slate-800 rounded-tl-none'
                 }`}>
                   <p className="whitespace-pre-wrap text-left">{msg.content}</p>
