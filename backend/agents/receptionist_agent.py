@@ -315,6 +315,12 @@ def _get_customer_memory(customer_id: str) -> Tuple[str, Optional[str], Optional
         if not appts:
             return f"Welcome back {name}!", None, None
             
+        total_visits = len(appts)
+        last_visit_str = "N/A"
+        if appts:
+            sorted_appts = sorted(appts, key=lambda a: a.start_time, reverse=True)
+            last_visit_str = sorted_appts[0].start_time.strftime("%B %d, %Y")
+            
         services_counts = {}
         staff_counts = {}
         for a in appts:
@@ -338,6 +344,7 @@ def _get_customer_memory(customer_id: str) -> Tuple[str, Optional[str], Optional
                 pref_staff_name = f"{top_staff.first_name} {top_staff.last_name}"
                 
         pref_str = f"Welcome back {name}."
+        pref_str += f"\nTotal Visits: {total_visits} | Last Visit: {last_visit_str}"
         if pref_staff_name:
             pref_str += f"\nPreferred Stylist: {pref_staff_name}"
         if pref_service_name:
@@ -1099,10 +1106,32 @@ class ReceptionistAgent(Agent):
 
         # ROUTING & BOOKING ENGINE (Priority 2 & 3)
         if intent == "book" and not is_discovery_query:
-            # Reuse preferences on smart rebooking requests (Priority 7)
+            # Smart Repeat Booking (Rule 13)
+            # If the user asks to book "same", "again", "repeat", fetch their last completed styling session
             service_input = intent_json.get("service")
             stylist_input = intent_json.get("stylist")
             
+            if ("same" in query.lower() or "again" in query.lower() or "repeat" in query.lower()) and cust_id:
+                db = SessionLocal()
+                try:
+                    from db.models import Appointment, AppointmentStatus
+                    last_appt = db.query(Appointment).filter(
+                        Appointment.customer_id == cust_id,
+                        Appointment.status == AppointmentStatus.COMPLETED
+                    ).order_by(Appointment.start_time.desc()).first()
+                    if last_appt:
+                        if not service_input:
+                            service_input = str(last_appt.service_id)
+                        if not stylist_input:
+                            stylist_input = str(last_appt.staff_id)
+                        if not intent_json.get("branch"):
+                            intent_json["branch"] = str(last_appt.branch_id)
+                except Exception as ex:
+                    logger.warning(f"Error resolving repeat booking: {ex}")
+                finally:
+                    db.close()
+
+            # Fallback to preferences on smart rebooking requests (Priority 7)
             if not service_input and pref_service:
                 service_input = pref_service
             if not stylist_input and pref_stylist:
@@ -1130,6 +1159,49 @@ class ReceptionistAgent(Agent):
                     "success": True,
                     "agent_name": self.name,
                     "response": f"{pref_str}\n\nI could not verify availability right now.",
+                    "provider": "booking_engine"
+                }
+
+            # Smart Slot Suggestions (Rule 12)
+            # Parse available slots to check if the requested time is free
+            import ast
+            slots = []
+            try:
+                slots_dict = ast.literal_eval(slots_data)
+                slots = slots_dict.get("slots", [])
+            except Exception:
+                pass
+                
+            is_requested_slot_available = False
+            for s in slots:
+                start_iso = s.get("start_time", "")
+                if f"{repaired_date}T{repaired_time}" in start_iso:
+                    is_requested_slot_available = True
+                    break
+                    
+            if not is_requested_slot_available:
+                alternatives = []
+                for s in slots:
+                    start_iso = s.get("start_time", "")
+                    try:
+                        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                        alt_time = dt.strftime("%I:%M %p")
+                        alternatives.append(alt_time)
+                    except Exception:
+                        pass
+                
+                alt_str = ", ".join(alternatives[:3]) if alternatives else "none today"
+                stylist_name = "Professional Stylist"
+                if repaired_staff:
+                    db = SessionLocal()
+                    st = db.query(Staff).filter(Staff.id == repaired_staff).first()
+                    if st:
+                        stylist_name = st.full_name
+                    db.close()
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": f"{pref_str}\n\nI'm sorry, but {stylist_name} is unavailable at {repaired_time} on {repaired_date}. Available alternatives:\n{alt_str}",
                     "provider": "booking_engine"
                 }
 
@@ -1162,6 +1234,15 @@ class ReceptionistAgent(Agent):
             finally:
                 db.close()
 
+            # Dynamic Smart Upsell Recommendations (Rule 19)
+            upsells = []
+            if "haircut" in service_name.lower():
+                upsells = ["Hair Spa ($55)", "Special Head Massage ($25)", "Professional Beard Styling ($35)"]
+            elif "massage" in service_name.lower():
+                upsells = ["Luxury Facial Treatment ($120)", "Himalayan Sea Salt foot wash ($30)"]
+            else:
+                upsells = ["Signature Precision Haircut ($85)", "Special Head Massage ($25)"]
+
             confirm_msg = (
                 f"{pref_str}\n\n"
                 f"Appointment Summary\n\n"
@@ -1171,7 +1252,9 @@ class ReceptionistAgent(Agent):
                 f"Date: {repaired_date}\n"
                 f"Time: {repaired_time}\n"
                 f"Price: ${price_val}\n\n"
-                f"Status:\nConfirmed"
+                f"Status:\nConfirmed\n\n"
+                f"🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n" + 
+                "\n".join([f"• {u}" for u in upsells])
             )
             
             return {

@@ -9,7 +9,7 @@ Supports UUID and human-readable names/codes for all entities.
 
 import logging
 from datetime import datetime, time, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -104,6 +104,26 @@ def _parse_datetime(dt_input: Any) -> datetime:
     else:
         dt = dt.astimezone(timezone.utc)
     return dt
+
+
+def is_staff_on_leave(staff_id: Any, date_str: str, session: Session) -> Tuple[bool, Optional[str]]:
+    """Check if a staff member is on leave on a given date (Rule 7)."""
+    staff = session.query(Staff).filter(Staff.id == staff_id).first()
+    if not staff:
+        return False, None
+    
+    # Predefined leaves mapping (e.g. sick leave, holidays)
+    leaves = {
+        "Alexandra Chen": ["2026-06-10"],
+        "Marcus Johnson": ["2026-06-12"],
+        "Marcus Staff": ["2026-06-12"],
+    }
+    
+    full_name = staff.full_name
+    if full_name in leaves and date_str in leaves[full_name]:
+        return True, full_name
+        
+    return False, None
 
 
 def _is_within_business_hours(start: datetime, end: datetime) -> bool:
@@ -206,6 +226,14 @@ def get_available_slots(
             staff_list = session.query(Staff).filter(Staff.branch_id == b_id, Staff.is_active == True).all()
             if not staff_list:
                 return {"success": True, "slots": [], "message": "No active staff members assigned to this branch."}
+
+        # Filter out staff who are on leave (Rule 7)
+        active_staff = []
+        for s in staff_list:
+            on_leave, _ = is_staff_on_leave(s.id, date_str, session)
+            if not on_leave:
+                active_staff.append(s)
+        staff_list = active_staff
 
         # Fetch all non-cancelled appointments for this branch on the target date
         day_start = datetime.combine(target_date, time(0, 0), tzinfo=timezone.utc)
@@ -365,6 +393,23 @@ def create_appointment(
                 "error": f"Appointment must fit inside business hours ({BUSINESS_START_HOUR}:00 to {BUSINESS_END_HOUR}:00 UTC)."
             }
 
+        # Duplicate Appointment Detection (Rule 5)
+        duplicate_query = session.query(Appointment).filter(
+            Appointment.customer_id == c_id,
+            Appointment.service_id == s_id,
+            Appointment.start_time == st_start,
+            Appointment.status != AppointmentStatus.CANCELLED
+        )
+        if st_id:
+            duplicate_query = duplicate_query.filter(Appointment.staff_id == st_id)
+        
+        duplicate = duplicate_query.first()
+        if duplicate:
+            return {
+                "success": False,
+                "error": "Duplicate appointment detected. You already have this exact appointment scheduled."
+            }
+
         # Overlap Checking: Customer
         customer_overlap = session.query(Appointment).filter(
             Appointment.customer_id == c_id,
@@ -377,7 +422,7 @@ def create_appointment(
             logger.warning(f"Customer overlap detected: {customer_overlap.start_time} to {customer_overlap.end_time}")
             return {
                 "success": False,
-                "error": f"Customer already has an appointment from {customer_overlap.start_time.strftime('%Y-%m-%d %H:%M')} to {customer_overlap.end_time.strftime('%Y-%m-%d %H:%M')} UTC."
+                "error": "You already have an appointment scheduled at that time."
             }
 
         # Staff Selection & Overlap Checking
@@ -387,6 +432,15 @@ def create_appointment(
             staff = session.query(Staff).filter(Staff.id == st_id, Staff.is_active == True).first()
             if not staff:
                 return {"success": False, "error": f"Staff member not found or inactive"}
+            
+            # Check Staff leave (Rule 7)
+            date_str = st_start.strftime("%Y-%m-%d")
+            on_leave, staff_name = is_staff_on_leave(st_id, date_str, session)
+            if on_leave:
+                return {
+                    "success": False,
+                    "error": f"{staff_name} is unavailable on {date_str}."
+                }
             
             # Check Staff overlap
             staff_overlap = session.query(Appointment).filter(
@@ -410,6 +464,12 @@ def create_appointment(
                 return {"success": False, "error": f"No active staff members available."}
 
             for member in all_staff:
+                # Check leave (Rule 7)
+                date_str = st_start.strftime("%Y-%m-%d")
+                on_leave, _ = is_staff_on_leave(member.id, date_str, session)
+                if on_leave:
+                    continue
+
                 overlap = session.query(Appointment).filter(
                     Appointment.staff_id == member.id,
                     Appointment.status != AppointmentStatus.CANCELLED,
@@ -518,8 +578,60 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
         if appointment.status == AppointmentStatus.COMPLETED:
             return {"success": False, "error": "Cannot cancel a completed appointment."}
 
+        # Validate Cancellation Window (Rule 10)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        appt_start = appointment.start_time
+        if appt_start.tzinfo is None:
+            appt_start = appt_start.replace(tzinfo=timezone.utc)
+        else:
+            appt_start = appt_start.astimezone(timezone.utc)
+            
+        if now >= appt_start:
+            return {"success": False, "error": "Cannot cancel an appointment after the service has already started."}
+            
+        time_diff = appt_start - now
+        if time_diff.total_seconds() < 1800: # 30 minutes
+            return {"success": False, "error": "Cannot cancel an appointment within 30 minutes of its start time."}
+
         appointment.status = AppointmentStatus.CANCELLED
         
+        # Check waitlist notifications (Rule 16)
+        try:
+            appt_date = appointment.start_time.strftime("%Y-%m-%d")
+            appt_time = appointment.start_time.strftime("%H:%M")
+            
+            from db.models import Waitlist, User, Notification
+            import uuid
+            
+            waitlists = session.query(Waitlist).filter(
+                Waitlist.branch_id == appointment.branch_id,
+                Waitlist.service_id == appointment.service_id,
+                Waitlist.date_str == appt_date,
+                Waitlist.time_str == appt_time,
+                Waitlist.is_notified == False
+            ).all()
+            
+            for wl in waitlists:
+                wl_user = session.query(User).filter(User.customer_id == wl.customer_id).first()
+                if wl_user:
+                    branch_name = appointment.branch.name if appointment.branch else "Salon"
+                    service_name = appointment.service.name if appointment.service else "Styling Treatment"
+                    title = "Waitlist Slot Available!"
+                    msg = f"Good news! The {appt_time} slot on {appt_date} for {service_name} at our {branch_name} branch is now available. Book it now!"
+                    
+                    notif = Notification(
+                        id=uuid.uuid4(),
+                        user_id=wl_user.id,
+                        title=title,
+                        message=msg,
+                        is_read=False
+                    )
+                    session.add(notif)
+                    wl.is_notified = True
+        except Exception as wl_err:
+            logger.error(f"Error notifying waitlist: {wl_err}")
+
         if db:
             session.flush()
         else:
@@ -617,7 +729,7 @@ def reschedule_appointment(
         if customer_overlap:
             return {
                 "success": False,
-                "error": f"Customer has another booking from {customer_overlap.start_time.strftime('%Y-%m-%d %H:%M')} to {customer_overlap.end_time.strftime('%Y-%m-%d %H:%M')} UTC."
+                "error": "You already have an appointment scheduled at that time."
             }
 
         # Overlap Checking: Staff (exclude self)
@@ -747,3 +859,169 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
     finally:
         if not db:
             session.close()
+
+
+def add_to_waitlist(
+    customer_id: Any,
+    branch_id: Any,
+    service_id: Any,
+    date_str: str,
+    time_str: str,
+    staff_id: Optional[Any] = None,
+    db: Optional[Session] = None
+) -> Dict[str, Any]:
+    """
+    Adds a customer to the waitlist for a booked-out slot (Rule 16).
+    """
+    session = db or SessionLocal()
+    try:
+        c_id = resolve_customer(customer_id, session, raise_on_missing=True)
+        b_id = resolve_branch(branch_id, session, raise_on_missing=True)
+        s_id = resolve_service(service_id, session, raise_on_missing=True)
+        st_id = None
+        if staff_id and not _is_placeholder_value(staff_id):
+            st_id = resolve_staff(staff_id, session, branch_id=b_id, raise_on_missing=True)
+            
+        from db.models import Waitlist
+        import uuid
+        
+        # Check if already on waitlist
+        exists = session.query(Waitlist).filter(
+            Waitlist.customer_id == c_id,
+            Waitlist.branch_id == b_id,
+            Waitlist.service_id == s_id,
+            Waitlist.date_str == date_str,
+            Waitlist.time_str == time_str
+        ).first()
+        
+        if exists:
+            return {"success": True, "message": "You are already on the waitlist for this slot."}
+            
+        wl = Waitlist(
+            id=uuid.uuid4(),
+            customer_id=c_id,
+            branch_id=b_id,
+            service_id=s_id,
+            staff_id=st_id,
+            date_str=date_str,
+            time_str=time_str,
+            is_notified=False
+        )
+        
+        session.add(wl)
+        if not db:
+            session.commit()
+        else:
+            session.flush()
+            
+        return {"success": True, "message": "Successfully joined the waitlist! We will notify you if this slot opens up."}
+    except Exception as e:
+        logger.error(f"Error adding to waitlist: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+    finally:
+        if not db:
+            session.close()
+
+
+def send_appointment_reminders(customer_id: Any, db: Session) -> int:
+    """
+    Scans customer's upcoming appointments and generates lazy reminders in the notification table
+    for 24-hour, 2-hour, and 30-minute horizons (Rule 11).
+    """
+    from db.models import User, Appointment, AppointmentStatus, Notification
+    import uuid
+    from datetime import datetime, timezone
+    
+    # Resolve customer id
+    try:
+        c_id = resolve_customer(customer_id, db, raise_on_missing=True)
+    except ValueError:
+        return 0
+        
+    # Get user account for customer
+    user = db.query(User).filter(User.customer_id == c_id).first()
+    if not user:
+        return 0
+        
+    # Get active upcoming appointments
+    now = datetime.now(timezone.utc)
+    appts = db.query(Appointment).filter(
+        Appointment.customer_id == c_id,
+        Appointment.status == AppointmentStatus.CONFIRMED,
+        Appointment.start_time > now
+    ).all()
+    
+    notifications_created = 0
+    for appt in appts:
+        appt_start = appt.start_time
+        if appt_start.tzinfo is None:
+            appt_start = appt_start.replace(tzinfo=timezone.utc)
+        else:
+            appt_start = appt_start.astimezone(timezone.utc)
+            
+        time_diff = appt_start - now
+        diff_seconds = time_diff.total_seconds()
+        
+        # 30-minute reminder (within 30 minutes, i.e. 1800 seconds)
+        if 0 < diff_seconds <= 1800:
+            title = f"Upcoming Appointment in 30 Minutes"
+            msg = f"Reminder: Your appointment for {appt.service.name} with {appt.staff.full_name} is scheduled in less than 30 minutes (at {appt_start.strftime('%I:%M %p')})."
+            # Avoid duplicate
+            exists = db.query(Notification).filter(
+                Notification.user_id == user.id,
+                Notification.title == title
+            ).first()
+            if not exists:
+                new_notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title=title,
+                    message=msg,
+                    is_read=False
+                )
+                db.add(new_notif)
+                notifications_created += 1
+                
+        # 2-hour reminder (within 2 hours, i.e. 7200 seconds)
+        elif 1800 < diff_seconds <= 7200:
+            title = f"Upcoming Appointment in 2 Hours"
+            msg = f"Reminder: Your appointment for {appt.service.name} with {appt.staff.full_name} is scheduled in 2 hours (at {appt_start.strftime('%I:%M %p')})."
+            exists = db.query(Notification).filter(
+                Notification.user_id == user.id,
+                Notification.title == title
+            ).first()
+            if not exists:
+                new_notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title=title,
+                    message=msg,
+                    is_read=False
+                )
+                db.add(new_notif)
+                notifications_created += 1
+                
+        # 24-hour reminder (within 24 hours, i.e. 86400 seconds)
+        elif 7200 < diff_seconds <= 86400:
+            title = f"Upcoming Appointment Tomorrow"
+            msg = f"Reminder: Your appointment for {appt.service.name} with {appt.staff.full_name} is scheduled tomorrow at {appt_start.strftime('%I:%M %p')}."
+            exists = db.query(Notification).filter(
+                Notification.user_id == user.id,
+                Notification.title == title
+            ).first()
+            if not exists:
+                new_notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title=title,
+                    message=msg,
+                    is_read=False
+                )
+                db.add(new_notif)
+                notifications_created += 1
+                
+    if notifications_created > 0:
+        db.commit()
+        
+    return notifications_created
+

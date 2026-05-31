@@ -379,6 +379,16 @@ class ReviewCreateRequest(BaseModel):
     rating: int
     comment: Optional[str] = None
 
+class StatusUpdateRequest(BaseModel):
+    status: AppointmentStatus
+
+class WaitlistCreateRequest(BaseModel):
+    branch_id: str
+    service_id: str
+    date_str: str
+    time_str: str
+    staff_id: Optional[str] = None
+
 
 @router.get(
     "/appointments/my",
@@ -397,6 +407,14 @@ async def get_my_appointments(
     if current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER":
         if not current_user.customer_id:
             return []
+        
+        # Trigger lazy reminders (Rule 11)
+        try:
+            from tools.booking_tools import send_appointment_reminders
+            send_appointment_reminders(str(current_user.customer_id), db)
+        except Exception as e:
+            logger.warning(f"Lazy reminders trigger failed: {e}")
+
         query = db.query(Appointment).filter(Appointment.customer_id == current_user.customer_id)
     elif current_user.role == UserRole.STAFF or current_user.role.value == "STAFF":
         if not current_user.staff_id:
@@ -588,6 +606,12 @@ async def submit_review(
             detail="You are not authorized to review this appointment."
         )
         
+    if appt.status != AppointmentStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only completed appointments can be reviewed."
+        )
+        
     # Check if a review already exists
     existing_review = db.query(Review).filter(Review.appointment_id == appt.id).first()
     if existing_review:
@@ -609,3 +633,112 @@ async def submit_review(
     db.add(new_review)
     db.commit()
     return {"success": True, "message": "Review submitted successfully."}
+
+
+@router.post(
+    "/appointments/{appointment_id}/status",
+    summary="Update Appointment Status with Strict Workflow",
+    tags=["Appointments"]
+)
+async def update_appointment_status(
+    appointment_id: str,
+    payload: StatusUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update appointment status following the strict workflow rules:
+    Pending -> Confirmed -> Checked In -> In Service -> Completed
+    or
+    Confirmed -> Cancelled
+    """
+    from uuid import UUID
+    try:
+        appt_uuid = UUID(appointment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment_id format.")
+        
+    appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
+        
+    current = appt.status
+    target = payload.status
+    
+    if current == target:
+        return {"success": True, "appointment_id": str(appt.id), "status": appt.status.value}
+
+    # Strict workflow check
+    allowed = False
+    if current == AppointmentStatus.PENDING:
+        if target in [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED]:
+            allowed = True
+    elif current == AppointmentStatus.CONFIRMED:
+        if target in [AppointmentStatus.CHECKED_IN, AppointmentStatus.CANCELLED]:
+            allowed = True
+    elif current == AppointmentStatus.CHECKED_IN:
+        if target == AppointmentStatus.IN_SERVICE:
+            allowed = True
+    elif current == AppointmentStatus.IN_SERVICE:
+        if target == AppointmentStatus.COMPLETED:
+            allowed = True
+            
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status transition from {current} to {target}. Strict workflow is Pending -> Confirmed -> Checked In -> In Service -> Completed, or Confirmed -> Cancelled."
+        )
+        
+    if target == AppointmentStatus.CANCELLED:
+        from tools.booking_tools import cancel_appointment
+        result = cancel_appointment(appointment_id=appointment_id, db=db)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.get("error", "Cancellation failed.")
+            )
+        return result
+        
+    appt.status = target
+    db.commit()
+    return {"success": True, "appointment_id": str(appt.id), "status": appt.status.value}
+
+
+@router.post(
+    "/waitlist",
+    summary="Join Waitlist",
+    tags=["Waitlist"]
+)
+async def join_waitlist(
+    payload: WaitlistCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Join waitlist for a slot that is currently booked out (Rule 16).
+    """
+    if not current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only customer accounts can join the waitlist."
+        )
+        
+    from tools.booking_tools import add_to_waitlist
+    result = add_to_waitlist(
+        customer_id=str(current_user.customer_id),
+        branch_id=payload.branch_id,
+        service_id=payload.service_id,
+        date_str=payload.date_str,
+        time_str=payload.time_str,
+        staff_id=payload.staff_id,
+        db=db
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Failed to join waitlist.")
+        )
+        
+    return result
+

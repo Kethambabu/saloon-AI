@@ -34,6 +34,8 @@ class AppointmentStatus(str, enum.Enum):
     """Lifecycle states of a booking appointment"""
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
+    CHECKED_IN = "CHECKED_IN"
+    IN_SERVICE = "IN_SERVICE"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
     NO_SHOW = "NO_SHOW"
@@ -356,6 +358,50 @@ class Review(BaseModel):
 
     def __repr__(self) -> str:
         return f"<Review rating={self.rating} status={self.status}>"
+
+
+class Waitlist(BaseModel):
+    """
+    Represents customer waitlist bookings for fully booked slots.
+    """
+    __tablename__ = "waitlists"
+
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    branch_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    service_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    staff_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
+    )
+    date_str = Column(String(50), nullable=False, index=True)
+    time_str = Column(String(50), nullable=False)
+    is_notified = Column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    customer = relationship("Customer")
+    branch = relationship("Branch")
+    service = relationship("Service")
+    staff = relationship("Staff")
+
+    def __repr__(self) -> str:
+        return f"<Waitlist customer={self.customer_id} date={self.date_str} time={self.time_str}>"
 
 
 class User(BaseModel):

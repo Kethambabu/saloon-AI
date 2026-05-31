@@ -121,7 +121,7 @@ def test_create_appointment_success_and_overlap_prevention(db_session):
         db=db_session
     )
     assert result_overlap_cust["success"] is False
-    assert "Customer already has an appointment" in result_overlap_cust["error"]
+    assert "You already have an appointment scheduled at that time" in result_overlap_cust["error"] or "Duplicate appointment detected" in result_overlap_cust["error"]
 
     # Create another customer to test stylist overlap
     other_customer = Customer(first_name="Alice", last_name="Jones", email="alice@test.com")
