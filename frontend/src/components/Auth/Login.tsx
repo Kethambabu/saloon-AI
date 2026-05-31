@@ -47,14 +47,14 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
       setTimeout(() => {
         const role = userProfile.role;
         if (role === 'Admin' || role === 'ADMIN') {
-          console.log('[DEBUG] [Login] Navigating to /admin');
-          navigate('/admin', { replace: true });
+          console.log('[DEBUG] [Login] Navigating to /admin/dashboard');
+          navigate('/admin/dashboard', { replace: true });
         } else if (role === 'Staff' || role === 'STAFF') {
-          console.log('[DEBUG] [Login] Navigating to /staff');
-          navigate('/staff', { replace: true });
+          console.log('[DEBUG] [Login] Navigating to /staff/dashboard');
+          navigate('/staff/dashboard', { replace: true });
         } else if (role === 'User' || role === 'CUSTOMER' || role === 'USER') {
-          console.log('[DEBUG] [Login] Navigating to /user');
-          navigate('/user', { replace: true });
+          console.log('[DEBUG] [Login] Navigating to /user/dashboard');
+          navigate('/user/dashboard', { replace: true });
         } else {
           console.error('[DEBUG] [Login] Unknown user role:', userProfile.role);
           setError('Unknown user role. Please contact support.');

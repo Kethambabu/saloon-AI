@@ -31,8 +31,8 @@ def test_receptionist_agent_initialization():
     sys_msg = receptionist.assistant._system_messages[0].content
     assert "Clara" in sys_msg
     assert "receptionist" in sys_msg.lower()
-    assert "business hours" in sys_msg.lower()
-    assert "Himalayan Hot Stone Massage" in sys_msg
+    assert "never invent data" in sys_msg.lower()
+    assert "tool execution is mandatory" in sys_msg.lower()
 
     # 4. Verify that the 5 custom booking tools wrapper functions are bound to the agent
     bound_tools = receptionist.assistant._tools

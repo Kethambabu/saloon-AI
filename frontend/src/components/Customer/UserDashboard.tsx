@@ -15,10 +15,12 @@ interface AppointmentRecord {
     duration_minutes: number;
   };
   staff: {
+    id?: string;
     first_name: string;
     last_name: string;
   } | null;
   branch: {
+    id?: string;
     name: string;
     city: string;
   };
@@ -38,171 +40,333 @@ interface BranchItem {
   city: string;
 }
 
+interface StaffItem {
+  id: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+}
+
+interface NotificationItem {
+  id: string;
+  type: 'success' | 'info' | 'warning';
+  title: string;
+  message: string;
+  timestamp: string;
+}
+
 export const UserDashboard: React.FC = () => {
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'history' | 'services' | 'clara' | 'profile'>('dashboard');
+  const { user, logout } = useAuth();
+  
+  // Navigation & active views
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'my-appointments' | 'history' | 'assistant' | 'services' | 'notifications' | 'profile'>('dashboard');
+  
+  // Data loading states
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [branches, setBranches] = useState<BranchItem[]>([]);
+  const [staff, setStaff] = useState<StaffItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [bookingSuccess, setBookingSuccess] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Form states for booking
+  // My Appointments Tab state
+  const [appointmentTab, setAppointmentTab] = useState<'upcoming' | 'completed' | 'cancelled'>('upcoming');
+
+  // Reschedule state
+  const [reschedulingAppt, setReschedulingAppt] = useState<AppointmentRecord | null>(null);
+  const [newRescheduleDate, setNewRescheduleDate] = useState<string>('');
+  const [newRescheduleTime, setNewRescheduleTime] = useState<string>('');
+
+  // Review submission state
+  const [reviewingAppt, setReviewingAppt] = useState<AppointmentRecord | null>(null);
+  const [ratingValue, setRatingValue] = useState<number>(5);
+  const [reviewComment, setReviewComment] = useState<string>('');
+
+  // Step-by-Step Booking Wizard states
+  const [bookingStep, setBookingStep] = useState<number>(1);
   const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [selectedService, setSelectedService] = useState<string>('');
+  const [selectedStylist, setSelectedStylist] = useState<string>('any');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
   const [bookingNotes, setBookingNotes] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isUpsellAccepted, setIsUpsellAccepted] = useState<boolean>(false);
+  const [isBookingSubmitting, setIsBookingSubmitting] = useState<boolean>(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        // Load services and branches for booking dropdowns
-        const srvRes = await apiClient.get<ServiceItem[]>('/services');
-        setServices(srvRes.data);
-        if (srvRes.data.length > 0) setSelectedService(srvRes.data[0].id);
+  // User Profile Preferences state
+  const [prefBranch, setPrefBranch] = useState<string>('');
+  const [prefStylist, setPrefStylist] = useState<string>('');
+  const [prefService, setPrefService] = useState<string>('');
 
-        const branchRes = await apiClient.get<BranchItem[]>('/branches');
-        setBranches(branchRes.data);
-        if (branchRes.data.length > 0) setSelectedBranch(branchRes.data[0].id);
+  // Notification center alerts
+  const [notifications, setNotifications] = useState<NotificationItem[]>([
+    { id: 'n1', type: 'success', title: 'Loyalty Upgrade', message: 'Congratulations! You have been upgraded to Gold Membership tier.', timestamp: 'Just now' },
+    { id: 'n2', type: 'info', title: 'Season Discount', message: 'Use code LUXSPA20 to get 20% off any massage treatments next week.', timestamp: '2 hours ago' },
+    { id: 'n3', type: 'success', title: 'System Booking Secured', message: 'Your last precision styling session with Marcus Johnson was completed successfully.', timestamp: '1 day ago' }
+  ]);
 
-        // Load appointments
-        const apptRes = await apiClient.get<AppointmentRecord[]>('/appointments/my');
-        setAppointments(apptRes.data);
-      } catch (err) {
-        console.warn('Backend offline or not returning customer data, generating mocked profile context');
-        setServices([
-          { id: '1', name: 'Signature Precision Haircut', description: 'Professional haircut with detailed styling', price: 85, duration_minutes: 60 },
-          { id: '2', name: 'Balayage & Creative Color', description: 'Hand-painted highlighting technique with custom color', price: 220, duration_minutes: 150 },
-          { id: '3', name: 'Hydrating Deep-Cleansing Facial', description: 'Luxurious 75-minute facial with premium skincare', price: 120, duration_minutes: 75 },
-          { id: '4', name: 'Himalayan Hot Stone Massage', description: 'Soothing massage with warm stone therapy', price: 150, duration_minutes: 90 }
-        ]);
-        setBranches([
-          { id: '1', name: 'Downtown Elite', city: 'New York' },
-          { id: '2', name: 'Westside Boutique', city: 'Los Angeles' }
-        ]);
-        setAppointments([
-          {
-            id: 'appt-100',
-            start_time: new Date(Date.now() + 86400000).toISOString(),
-            end_time: new Date(Date.now() + 90000000).toISOString(),
-            status: 'CONFIRMED',
-            notes: 'Prefers quiet session',
-            service: { name: 'Signature Precision Haircut', price: 85, duration_minutes: 60 },
-            staff: { first_name: 'Alexandra', last_name: 'Chen' },
-            branch: { name: 'Downtown Elite', city: 'New York' }
-          }
-        ]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
-
-  const handleBookAppointment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedBranch || !selectedService || !selectedDate || !selectedTime) {
-      alert('Please fill out all fields');
-      return;
-    }
-
-    setIsSubmitting(true);
+  // Load backend data
+  const fetchData = async () => {
     try {
-      const startTime = `${selectedDate}T${selectedTime}:00Z`;
-      // API call to book appointment
-      await apiClient.post('/appointments', {
-        branch_id: selectedBranch,
-        service_id: selectedService,
-        start_time: startTime,
-        notes: bookingNotes
-      });
-      setBookingSuccess('Your appointment has been successfully booked!');
+      setIsLoading(true);
       
-      // Refresh list
+      // Load services & branches
+      const srvRes = await apiClient.get<ServiceItem[]>('/services');
+      setServices(srvRes.data);
+      if (srvRes.data.length > 0) setSelectedService(srvRes.data[0].id);
+
+      const branchRes = await apiClient.get<BranchItem[]>('/branches');
+      setBranches(branchRes.data);
+      if (branchRes.data.length > 0) setSelectedBranch(branchRes.data[0].id);
+
+      // Load client's appointments
       const apptRes = await apiClient.get<AppointmentRecord[]>('/appointments/my');
       setAppointments(apptRes.data);
-      
-      setTimeout(() => {
-        setBookingSuccess(null);
-        setActiveTab('dashboard');
-      }, 2500);
     } catch (err) {
-      console.warn('Booking mock success triggers');
-      const chosenService = services.find(s => s.id === selectedService);
-      const chosenBranch = branches.find(b => b.id === selectedBranch);
-      
-      const newMockAppt: AppointmentRecord = {
-        id: `appt-${Math.floor(Math.random() * 1000)}`,
-        start_time: `${selectedDate}T${selectedTime}:00Z`,
-        end_time: `${selectedDate}T${selectedTime}:00Z`,
-        status: 'CONFIRMED',
-        notes: bookingNotes || null,
-        service: {
-          name: chosenService?.name || 'Haircut',
-          price: chosenService?.price || 85,
-          duration_minutes: chosenService?.duration_minutes || 60
+      console.warn('Backend offline or not returning customer data, fallback to mock data');
+      setServices([
+        { id: 's1', name: 'Signature Precision Haircut', description: 'Crafted haircut with custom styling tailored to your face structure.', price: 85, duration_minutes: 60 },
+        { id: 's2', name: 'Balayage & Creative Color', description: 'Premium hand-painted high-definition balayage with high-shine seal.', price: 220, duration_minutes: 150 },
+        { id: 's3', name: 'Hydrating Deep-Cleansing Facial', description: 'Luxurious 75-minute facial with premium organic skincare.', price: 120, duration_minutes: 75 },
+        { id: 's4', name: 'Himalayan Hot Stone Massage', description: 'Soothing aromatic massage with warm volcanic hot stones.', price: 150, duration_minutes: 90 },
+        { id: 's5', name: 'Luxury Spa Pedicure', description: 'Exfoliating foot massage, sea salt wrap, and professional polish.', price: 75, duration_minutes: 50 },
+        { id: 's6', name: 'Elite Gel Manicure', description: 'Precision cuticle treatment, hand hydration, and shellac polish.', price: 65, duration_minutes: 45 }
+      ]);
+      setBranches([
+        { id: 'b1', name: 'Vijayawada Benz Circle', city: 'Vijayawada' },
+        { id: 'b2', name: 'Jubilee Hills Elite', city: 'Hyderabad' },
+        { id: 'b3', name: 'Indiranagar Premium', city: 'Bengaluru' }
+      ]);
+      setAppointments([
+        {
+          id: 'appt-1',
+          start_time: new Date(Date.now() + 86400000).toISOString(), // Tomorrow
+          end_time: new Date(Date.now() + 90000000).toISOString(),
+          status: 'CONFIRMED',
+          notes: 'Prefers mild lavender oils',
+          service: { name: 'Himalayan Hot Stone Massage', price: 150, duration_minutes: 90 },
+          staff: { first_name: 'Alexandra', last_name: 'Chen' },
+          branch: { name: 'Jubilee Hills Elite', city: 'Hyderabad' }
         },
-        staff: { first_name: 'Marcus', last_name: 'Johnson' },
-        branch: {
-          name: chosenBranch?.name || 'Downtown Elite',
-          city: chosenBranch?.city || 'New York'
+        {
+          id: 'appt-2',
+          start_time: new Date(Date.now() - 172800000).toISOString(), // Completed 2 days ago
+          end_time: new Date(Date.now() - 169200000).toISOString(),
+          status: 'COMPLETED',
+          notes: 'Regular customer session',
+          service: { name: 'Signature Precision Haircut', price: 85, duration_minutes: 60 },
+          staff: { first_name: 'Marcus', last_name: 'Johnson' },
+          branch: { name: 'Vijayawada Benz Circle', city: 'Vijayawada' }
         }
-      };
-
-      setAppointments(prev => [newMockAppt, ...prev]);
-      setBookingSuccess('Your appointment has been successfully booked!');
-      setTimeout(() => {
-        setBookingSuccess(null);
-        setActiveTab('dashboard');
-      }, 2000);
+      ]);
     } finally {
-      setIsSubmitting(false);
+      setIsLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchData();
+    // Load local storage preferences if available
+    setPrefBranch(localStorage.getItem('pref_branch') || '');
+    setPrefStylist(localStorage.getItem('pref_stylist') || '');
+    setPrefService(localStorage.getItem('pref_service') || '');
+  }, []);
+
+  // Handle staff loading when branch changes
+  useEffect(() => {
+    const fetchStaff = async () => {
+      if (!selectedBranch) return;
+      try {
+        const staffRes = await apiClient.get<StaffItem[]>(`/branches/${selectedBranch}/staff`);
+        setStaff(staffRes.data);
+      } catch (err) {
+        console.warn('Failed to load branch stylists, falling back to mock staff');
+        setStaff([
+          { id: 'st1', first_name: 'Alexandra', last_name: 'Chen', role: 'Senior Stylist' },
+          { id: 'st2', first_name: 'Marcus', last_name: 'Johnson', role: 'Color Specialist' }
+        ]);
+      }
+    };
+    fetchStaff();
+  }, [selectedBranch]);
+
+  const showToast = (text: string, type: 'success' | 'error') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
+
+  // Perform Smart Rebooking in one click
+  const handleSmartRebook = (lastService: string, lastStylist: string, lastBranch: string) => {
+    const foundService = services.find(s => s.name === lastService || s.id === lastService);
+    const foundBranch = branches.find(b => b.name === lastBranch || b.id === lastBranch);
+    
+    if (foundBranch) setSelectedBranch(foundBranch.id);
+    if (foundService) setSelectedService(foundService.id);
+    setSelectedStylist(lastStylist || 'any');
+    
+    // Set to tomorrow at 5pm automatically
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    setSelectedDate(tomorrowStr);
+    setSelectedTime('17:00');
+    setBookingNotes('One-click smart rebooked session');
+    
+    // Move to confirm step
+    setBookingStep(5);
+    setActiveTab('book');
+  };
+
+  // Reschedule logic
+  const handleRescheduleSubmit = async () => {
+    if (!reschedulingAppt || !newRescheduleDate || !newRescheduleTime) return;
+    
+    const newStartTime = `${newRescheduleDate}T${newRescheduleTime}:00Z`;
+    
+    try {
+      await apiClient.post(`/appointments/${reschedulingAppt.id}/reschedule`, {
+        new_start_time: newStartTime
+      });
+      showToast('Appointment rescheduled successfully!', 'success');
+      setReschedulingAppt(null);
+      fetchData();
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.detail || 'Rescheduling failed. Slot might be unavailable.';
+      showToast(errorMsg, 'error');
+    }
+  };
+
+  // Cancel logic
   const handleCancelAppointment = async (apptId: string) => {
     if (!window.confirm('Are you sure you want to cancel this booking?')) return;
     try {
       await apiClient.delete(`/appointments/${apptId}`);
-      setAppointments(prev => prev.filter(a => a.id !== apptId));
-    } catch (e) {
-      setAppointments(prev => prev.filter(a => a.id !== apptId));
+      showToast('Booking cancelled successfully.', 'success');
+      fetchData();
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Failed to cancel booking.', 'error');
     }
   };
 
+  // Review submission logic
+  const handleReviewSubmit = async () => {
+    if (!reviewingAppt) return;
+    try {
+      await apiClient.post('/reviews', {
+        appointment_id: reviewingAppt.id,
+        rating: ratingValue,
+        comment: reviewComment
+      });
+      showToast('Review submitted successfully! Thank you.', 'success');
+      setReviewingAppt(null);
+      setReviewComment('');
+      setRatingValue(5);
+      fetchData();
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Failed to submit review.', 'error');
+    }
+  };
+
+  // Booking submit logic
+  const handleFinalizeBooking = async () => {
+    if (!selectedBranch || !selectedService || !selectedDate || !selectedTime) {
+      showToast('Please complete all wizard steps.', 'error');
+      return;
+    }
+
+    setIsBookingSubmitting(true);
+    const startTime = `${selectedDate}T${selectedTime}:00Z`;
+    const finalNotes = isUpsellAccepted 
+      ? `${bookingNotes ? bookingNotes + ' | ' : ''}Accepted Special head-massage upsell bundle ($25)` 
+      : bookingNotes;
+
+    try {
+      await apiClient.post('/appointments', {
+        branch_id: selectedBranch,
+        service_id: selectedService,
+        start_time: startTime,
+        staff_id: selectedStylist === 'any' ? null : selectedStylist,
+        notes: finalNotes || null
+      });
+      
+      showToast('Styling session booked successfully!', 'success');
+      
+      // Reset wizard
+      setBookingStep(1);
+      setSelectedDate('');
+      setSelectedTime('');
+      setBookingNotes('');
+      setIsUpsellAccepted(false);
+      
+      // Navigate back to My Appointments
+      setActiveTab('my-appointments');
+      setAppointmentTab('upcoming');
+      fetchData();
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Double booking error: Client or Stylist is busy at this slot.', 'error');
+    } finally {
+      setIsBookingSubmitting(false);
+    }
+  };
+
+  // Preference update logic
+  const savePreferences = () => {
+    localStorage.setItem('pref_branch', prefBranch);
+    localStorage.setItem('pref_stylist', prefStylist);
+    localStorage.setItem('pref_service', prefService);
+    showToast('Dashboard style preferences updated successfully.', 'success');
+  };
+
+  // Filter list helper
+  const getFilteredAppointments = (tab: 'upcoming' | 'completed' | 'cancelled') => {
+    return appointments.filter(appt => {
+      const status = appt.status.toUpperCase();
+      if (tab === 'upcoming') return status === 'CONFIRMED' || status === 'PENDING';
+      if (tab === 'completed') return status === 'COMPLETED';
+      return status === 'CANCELLED' || status === 'CANCELED';
+    });
+  };
+
   return (
-    <div className="flex flex-col md:flex-row min-h-[80vh] bg-slate-950 text-white rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl">
-      {/* Sidebar Navigation */}
-      <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800/80 p-6 flex flex-col justify-between">
-        <div className="space-y-6">
-          <div className="text-left border-b border-slate-800 pb-4">
-            <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-              SalonAI Portal
+    <div className="flex flex-col lg:flex-row min-h-screen bg-slate-950 text-white font-sans">
+      
+      {/* ============================================================================
+          SIDEBAR NAVIGATION BAR
+          ============================================================================ */}
+      <aside className="w-full lg:w-72 bg-slate-900/90 border-b lg:border-b-0 lg:border-r border-slate-800/80 p-6 flex flex-col justify-between backdrop-blur-xl">
+        <div className="space-y-8">
+          {/* Custom Salon Brand Header */}
+          <div className="text-left pb-4 border-b border-slate-800">
+            <h2 className="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+              SalonAI Elite
             </h2>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
-              Role: Guest Customer
-            </p>
+            <span className="block text-[8px] tracking-widest text-slate-500 uppercase font-black -mt-0.5">Customer Experience Portal</span>
           </div>
-          
-          <nav className="flex flex-col gap-2">
+
+          {/* Navigation Links */}
+          <nav className="flex flex-col gap-1.5">
             {[
-              { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
+              { id: 'dashboard', label: 'Dashboard Home', icon: '🏠' },
               { id: 'book', label: 'Book Appointment', icon: '📅' },
+              { id: 'my-appointments', label: 'My Appointments', icon: '⏰' },
               { id: 'history', label: 'Booking History', icon: '📜' },
-              { id: 'services', label: 'Service Catalog', icon: '💇' },
-              { id: 'clara', label: 'AI Receptionist', icon: '🤖' },
-              { id: 'profile', label: 'My Profile', icon: '👤' }
+              { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
+              { id: 'services', label: 'Services Catalog', icon: '💇' },
+              { id: 'notifications', label: 'Notifications Center', icon: '🔔' },
+              { id: 'profile', label: 'Profile Settings', icon: '👤' }
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-xl text-xs font-bold text-left transition-all cursor-pointer ${
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setBookingStep(1); // Reset booking wizard whenever switching
+                }}
+                className={`flex items-center space-x-3.5 px-4 py-3 rounded-2xl text-xs font-bold text-left transition-all duration-300 cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
                 }`}
               >
                 <span className="text-lg">{tab.icon}</span>
@@ -212,199 +376,918 @@ export const UserDashboard: React.FC = () => {
           </nav>
         </div>
 
-        <div className="mt-8 text-left border-t border-slate-800 pt-4">
-          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Logged Account</span>
-          <span className="block text-xs font-bold text-slate-300 truncate mt-1">{user?.email}</span>
+        {/* Logged in User Profile Footer */}
+        <div className="mt-8 pt-4 border-t border-slate-800 text-left space-y-3">
+          <div>
+            <span className="block text-[9px] font-black text-slate-500 uppercase tracking-widest">Client Session</span>
+            <span className="block text-xs font-extrabold text-slate-300 truncate mt-0.5">{user?.email}</span>
+            <span className="inline-block mt-1 px-2.5 py-0.5 rounded-full text-[8px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-widest">
+              🥇 Gold Tier Member
+            </span>
+          </div>
+          <button
+            onClick={logout}
+            className="w-full py-2.5 bg-red-950/20 hover:bg-red-900/30 border border-red-900/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-bold tracking-wider transition-all duration-300 cursor-pointer text-center"
+          >
+            🚪 Logout Securely
+          </button>
         </div>
       </aside>
 
-      {/* Main Panel Content */}
-      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto max-h-[85vh]">
+      {/* ============================================================================
+          MAIN BODY VIEWPORTS
+          ============================================================================ */}
+      <main className="flex-1 p-6 lg:p-10 text-left overflow-y-auto max-h-screen">
+        
+        {/* Toast Alerts Banner */}
+        {toastMessage && (
+          <div className={`fixed top-6 right-6 z-50 px-5 py-4 rounded-2xl shadow-2xl text-xs font-bold animate-fade-in border ${
+            toastMessage.type === 'success' 
+              ? 'bg-emerald-950/90 border-emerald-500/30 text-emerald-400 shadow-emerald-950/40' 
+              : 'bg-red-950/90 border-red-500/30 text-red-400 shadow-red-950/40'
+          }`}>
+            <span className="flex items-center space-x-2">
+              <span>{toastMessage.type === 'success' ? '✓' : '⚠'}</span>
+              <span>{toastMessage.text}</span>
+            </span>
+          </div>
+        )}
+
         {isLoading ? (
-          <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
-            Syncing customized client session...
+          <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
+            <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+            <span className="text-xs font-black text-slate-500 uppercase tracking-widest animate-pulse">Syncing client portfolio context...</span>
           </div>
         ) : (
-          <div className="animate-fade-in space-y-6">
-            
-            {/* 1. Dashboard Landing View */}
+          <div className="space-y-8 animate-fade-in">
+
+            {/* ============================================================================
+                VIEW 1: DASHBOARD HOME
+                ============================================================================ */}
             {activeTab === 'dashboard' && (
-              <div className="space-y-6">
-                <section className="bg-gradient-to-r from-blue-900/60 to-indigo-950/60 rounded-3xl p-6 border border-slate-800/80 flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="space-y-2">
-                    <span className="px-2.5 py-0.5 text-[10px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full uppercase tracking-widest">
-                      Welcome Back
+              <div className="space-y-8">
+                
+                {/* Gold Tier Lounge Banner */}
+                <section className="bg-gradient-to-r from-blue-900/40 to-indigo-950/40 rounded-3xl p-6 lg:p-8 border border-slate-800/80 flex flex-col lg:flex-row items-center justify-between gap-6">
+                  <div className="space-y-3">
+                    <span className="px-3 py-1 text-[9px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full uppercase tracking-widest">
+                      Member Welcome
                     </span>
-                    <h2 className="text-2xl font-black">Your SalonAI Lounge</h2>
-                    <p className="text-xs text-slate-400 max-w-xl">
-                      Book top-tier stylists, reschedule sessions on the fly, or have a direct chat with Clara, our AI receptionist.
+                    <h2 className="text-3xl font-black tracking-tight text-white">Your Zenoti Styling Lounge</h2>
+                    <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
+                      Enjoy elite membership rewards. Check out your real-time styling parameters, active upcoming reservations, or launch a booking instantly.
                     </p>
                   </div>
-                  <button
-                    onClick={() => setActiveTab('book')}
-                    className="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-xl transition-all shadow-lg shadow-blue-500/10 whitespace-nowrap cursor-pointer"
-                  >
-                    📅 Book New Session
-                  </button>
+                  
+                  {/* Loyalty Points Metrics Grid */}
+                  <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-4.5 rounded-2xl border border-slate-800">
+                    <div className="text-left px-3">
+                      <span className="block text-[8px] text-slate-500 font-bold uppercase tracking-widest">Loyalty Points</span>
+                      <span className="block text-xl font-black text-blue-400 mt-1">450 Points</span>
+                    </div>
+                    <div className="text-left px-3 border-l border-slate-800">
+                      <span className="block text-[8px] text-slate-500 font-bold uppercase tracking-widest">Member Rank</span>
+                      <span className="block text-xl font-black text-indigo-400 mt-1">Gold Elite</span>
+                    </div>
+                  </div>
                 </section>
 
-                {/* Upcoming bookings grid */}
-                <section className="space-y-4">
-                  <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-wider">Upcoming Scheduled Sessions</h3>
-                  {appointments.filter(a => a.status === 'CONFIRMED' || a.status === 'PENDING').length === 0 ? (
-                    <div className="bg-slate-900/40 rounded-2xl border border-slate-850 p-8 text-center text-slate-500 text-xs">
-                      No upcoming bookings scheduled. Need a fresh style? Book one today!
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {appointments.filter(a => a.status === 'CONFIRMED' || a.status === 'PENDING').map(appt => (
-                        <div key={appt.id} className="bg-slate-900/80 border border-slate-800/80 p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between">
-                          <div className="absolute top-0 right-0 px-3 py-1 bg-emerald-500/15 border-l border-b border-emerald-500/30 text-emerald-400 text-[10px] font-bold rounded-bl-xl uppercase tracking-wider">
-                            {appt.status}
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <h4 className="text-base font-extrabold text-white">{appt.service.name}</h4>
-                            <div className="flex items-center text-xs text-slate-400 gap-2">
-                              <span>📍 {appt.branch.name}</span>
-                              <span>•</span>
-                              <span>💇 {appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Auto-Assign'}</span>
-                            </div>
-                            <p className="text-xs text-slate-400 font-medium">
-                              📅 {new Date(appt.start_time).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
-                            </p>
-                          </div>
-
-                          <div className="mt-4 pt-4 border-t border-slate-800/80 flex justify-between items-center">
-                            <span className="text-sm font-black text-blue-400">${appt.service.price}</span>
-                            <button
-                              onClick={() => handleCancelAppointment(appt.id)}
-                              className="px-3 py-1.5 bg-red-950/20 hover:bg-red-900/20 border border-red-900/30 text-red-400 text-xs font-bold rounded-lg transition-all cursor-pointer"
-                            >
-                              Cancel Booking
-                            </button>
-                          </div>
+                {/* Main Dashboard Interactive Split Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  
+                  {/* Left Column - Appointments Context & Smart Rebooking */}
+                  <div className="lg:col-span-2 space-y-6">
+                    
+                    {/* Active reservation */}
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest">Your Next Confirmed Styling Session</h3>
+                      {appointments.filter(a => a.status === 'CONFIRMED' || a.status === 'PENDING').length === 0 ? (
+                        <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-8 text-center text-slate-500 text-xs">
+                          No upcoming sessions booked. Need a refresh? Reserve a custom slot in our wizard.
                         </div>
-                      ))}
+                      ) : (
+                        (() => {
+                          const active = appointments.filter(a => a.status === 'CONFIRMED' || a.status === 'PENDING')[0];
+                          return (
+                            <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl relative overflow-hidden flex flex-col justify-between">
+                              <div className="absolute top-0 right-0 px-4 py-1.5 bg-emerald-500/10 border-l border-b border-emerald-500/20 text-emerald-400 text-[10px] font-black rounded-bl-2xl uppercase tracking-wider">
+                                {active.status}
+                              </div>
+                              <div className="space-y-2.5">
+                                <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Confirmed Appointment</span>
+                                <h4 className="text-xl font-black text-white">{active.service.name}</h4>
+                                <div className="flex flex-wrap items-center text-xs text-slate-400 gap-4 mt-2">
+                                  <span>📍 {active.branch.name}</span>
+                                  <span>•</span>
+                                  <span>💇 {active.staff ? `${active.staff.first_name} ${active.staff.last_name}` : 'Professional assigned'}</span>
+                                  <span>•</span>
+                                  <span>⏱️ {active.service.duration_minutes} min</span>
+                                </div>
+                                <p className="text-xs font-bold text-slate-300 mt-2 bg-slate-950/40 p-3 rounded-xl border border-slate-850">
+                                  📅 {new Date(active.start_time).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
+                                </p>
+                              </div>
+                              <div className="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between">
+                                <span className="text-lg font-black text-blue-400">${active.service.price}</span>
+                                <button
+                                  onClick={() => {
+                                    setActiveTab('my-appointments');
+                                    setAppointmentTab('upcoming');
+                                  }}
+                                  className="px-4.5 py-2 bg-slate-800 hover:bg-slate-750 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
+                                >
+                                  Manage Session
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      )}
                     </div>
-                  )}
-                </section>
+
+                    {/* Smart Rebooking Shortcut Card */}
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest">Smart Quick-Rebook Co-Pilot</h3>
+                      {appointments.filter(a => a.status === 'COMPLETED').length === 0 ? (
+                        <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-8 text-center text-slate-500 text-xs">
+                          Complete a styling session with us to enable smart quick re-booking parameters.
+                        </div>
+                      ) : (
+                        (() => {
+                          const last = appointments.filter(a => a.status === 'COMPLETED')[0];
+                          return (
+                            <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-between gap-6 text-left">
+                              <div className="space-y-1.5">
+                                <span className="px-2.5 py-0.5 text-[8px] font-black bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full uppercase tracking-widest">
+                                  Based on your last visit
+                                </span>
+                                <h4 className="text-base font-extrabold text-white">Repeat styling with {last.staff ? last.staff.first_name : 'stylist'}?</h4>
+                                <p className="text-xs text-slate-400">
+                                  Quickly book a **{last.service.name}** at our **{last.branch.name}** lounge.
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleSmartRebook(
+                                  last.service.name, 
+                                  last.staff?.id || 'any', 
+                                  last.branch.name
+                                )}
+                                className="w-full md:w-auto px-5 py-3 bg-gradient-to-tr from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap shadow-md shadow-blue-500/10"
+                              >
+                                ⚡ One-Click Rebook
+                              </button>
+                            </div>
+                          );
+                        })()
+                      )}
+                    </div>
+
+                  </div>
+
+                  {/* Right Column - Preferences Memorized */}
+                  <div className="space-y-6">
+                    <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5">
+                      <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-3">My Styling Profile</h3>
+                      
+                      <div className="space-y-3.5 text-xs">
+                        <div className="flex justify-between border-b border-slate-850 pb-2">
+                          <span className="text-slate-500 font-bold">Preferred Lounge</span>
+                          <span className="text-slate-300 font-extrabold">{prefBranch || 'Not Set'}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-850 pb-2">
+                          <span className="text-slate-500 font-bold">Preferred Artist</span>
+                          <span className="text-slate-300 font-extrabold">{prefStylist || 'Not Set'}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-slate-850 pb-2">
+                          <span className="text-slate-500 font-bold">Preferred Treatment</span>
+                          <span className="text-slate-300 font-extrabold">{prefService || 'Not Set'}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setActiveTab('profile')}
+                        className="w-full py-2.5 bg-slate-800 hover:bg-slate-750 text-[11px] font-bold rounded-xl transition-all cursor-pointer text-center"
+                      >
+                        ⚙ Customize Styling Preferences
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+
               </div>
             )}
 
-            {/* 2. Book Appointment Form */}
+            {/* ============================================================================
+                VIEW 2: STEP-BY-STEP BOOKING WIZARD
+                ============================================================================ */}
             {activeTab === 'book' && (
-              <div className="bg-slate-900/40 border border-slate-800/80 p-6 md:p-8 rounded-3xl space-y-6 max-w-xl mx-auto">
+              <div className="bg-slate-900/40 border border-slate-800 p-6 lg:p-8 rounded-3xl max-w-2xl mx-auto space-y-8 relative">
+                
+                {/* Wizard Header */}
                 <div className="text-center space-y-1">
-                  <h3 className="text-xl font-extrabold text-white">📅 Request Appointment Session</h3>
-                  <p className="text-xs text-slate-400">Fill in details below to reserve your custom slot.</p>
+                  <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Styling Wizard</span>
+                  <h3 className="text-2xl font-black text-white">📅 Reserve Premium Styling Session</h3>
+                  
+                  {/* Steps Progress Indicator */}
+                  <div className="flex items-center justify-center space-x-2 mt-4">
+                    {[1, 2, 3, 4, 5].map(step => (
+                      <div 
+                        key={step} 
+                        className={`h-1.5 w-10 rounded-full transition-all duration-300 ${
+                          bookingStep >= step ? 'bg-blue-500' : 'bg-slate-800'
+                        }`} 
+                      />
+                    ))}
+                  </div>
                 </div>
 
-                {bookingSuccess && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold p-4 rounded-xl text-center animate-fade-in">
-                    {bookingSuccess}
+                {/* STEP 1: BRANCH SELECTION */}
+                {bookingStep === 1 && (
+                  <div className="space-y-4">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-wider text-left">Step 1: Choose Lounge Location</label>
+                    <div className="grid grid-cols-1 gap-3.5">
+                      {branches.map(b => (
+                        <div 
+                          key={b.id} 
+                          onClick={() => {
+                            setSelectedBranch(b.id);
+                            setBookingStep(2);
+                          }}
+                          className={`p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 ${
+                            selectedBranch === b.id 
+                              ? 'bg-blue-600/10 border-blue-500' 
+                              : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <span className="inline-block text-[9px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">{b.city}</span>
+                          <h4 className="text-base font-extrabold text-white mt-1.5">{b.name}</h4>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
-                <form onSubmit={handleBookAppointment} className="space-y-4">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Salon Location</label>
-                    <select
-                      value={selectedBranch}
-                      onChange={e => setSelectedBranch(e.target.value)}
-                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
-                    >
-                      {branches.map(b => (
-                        <option key={b.id} value={b.id}>{b.name} ({b.city})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Styling Service</label>
-                    <select
-                      value={selectedService}
-                      onChange={e => setSelectedService(e.target.value)}
-                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
-                    >
+                {/* STEP 2: SERVICE SELECTION */}
+                {bookingStep === 2 && (
+                  <div className="space-y-4">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-wider text-left">Step 2: Choose Styling Treatment</label>
+                    <div className="grid grid-cols-1 gap-3">
                       {services.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} - ${s.price} ({s.duration_minutes}m)</option>
+                        <div 
+                          key={s.id} 
+                          onClick={() => {
+                            setSelectedService(s.id);
+                            setBookingStep(3);
+                          }}
+                          className={`p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 flex justify-between items-center ${
+                            selectedService === s.id 
+                              ? 'bg-blue-600/10 border-blue-500' 
+                              : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <h4 className="text-sm font-extrabold text-white">{s.name}</h4>
+                            <p className="text-xs text-slate-400 leading-relaxed font-medium max-w-md">{s.description}</p>
+                            <span className="block text-[10px] text-slate-500">⏱️ {s.duration_minutes} minutes duration</span>
+                          </div>
+                          <span className="text-base font-black text-blue-400">${s.price}</span>
+                        </div>
                       ))}
-                    </select>
+                    </div>
+                    <button 
+                      onClick={() => setBookingStep(1)} 
+                      className="px-4 py-2 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer mt-4"
+                    >
+                      ← Back to Location
+                    </button>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Date</label>
-                      <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={e => setSelectedDate(e.target.value)}
-                        required
-                        className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                {/* STEP 3: STYLIST / STAFF SELECTION */}
+                {bookingStep === 3 && (
+                  <div className="space-y-4">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-wider text-left">Step 3: Choose Professional Artist</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div 
+                        onClick={() => {
+                          setSelectedStylist('any');
+                          setBookingStep(4);
+                        }}
+                        className={`p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 ${
+                          selectedStylist === 'any' 
+                            ? 'bg-blue-600/10 border-blue-500' 
+                            : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <span className="text-3xl block">👥</span>
+                        <h4 className="text-sm font-extrabold text-white mt-2">Auto-Assign Best Available</h4>
+                        <p className="text-[11px] text-slate-400 mt-1">We will allocate the top artist available for your time slot.</p>
+                      </div>
+                      
+                      {staff.map(st => (
+                        <div 
+                          key={st.id} 
+                          onClick={() => {
+                            setSelectedStylist(st.id);
+                            setBookingStep(4);
+                          }}
+                          className={`p-4 rounded-2xl border text-left cursor-pointer transition-all duration-200 ${
+                            selectedStylist === st.id 
+                              ? 'bg-blue-600/10 border-blue-500' 
+                              : 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <span className="text-3xl block">👩‍🎨</span>
+                          <h4 className="text-sm font-extrabold text-white mt-2">{st.first_name} {st.last_name}</h4>
+                          <span className="inline-block text-[9px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest mt-1">{st.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button 
+                      onClick={() => setBookingStep(2)} 
+                      className="px-4 py-2 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer mt-4"
+                    >
+                      ← Back to Services
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP 4: DATE & TIME SELECTOR */}
+                {bookingStep === 4 && (
+                  <div className="space-y-6">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-wider text-left">Step 4: Select Scheduling slot</label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Select Day</label>
+                        <input 
+                          type="date" 
+                          value={selectedDate}
+                          onChange={e => setSelectedDate(e.target.value)}
+                          required
+                          className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                        />
+                      </div>
+                      
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Select Available Time</label>
+                        <select 
+                          value={selectedTime}
+                          onChange={e => setSelectedTime(e.target.value)}
+                          required
+                          className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                        >
+                          <option value="">Choose slot...</option>
+                          <option value="10:00">10:00 AM</option>
+                          <option value="11:30">11:30 AM</option>
+                          <option value="13:00">1:00 PM</option>
+                          <option value="14:30">2:30 PM</option>
+                          <option value="16:00">4:00 PM</option>
+                          <option value="17:00">5:00 PM</option>
+                          <option value="18:30">6:30 PM</option>
+                          <option value="20:00">8:00 PM</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col gap-1.5 text-left">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Special Requests / Notes</label>
+                      <textarea 
+                        value={bookingNotes}
+                        onChange={e => setBookingNotes(e.target.value)}
+                        placeholder="Add special requirements or styling preferences..."
+                        className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none h-20 resize-none"
                       />
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Time</label>
-                      <input
-                        type="time"
-                        value={selectedTime}
-                        onChange={e => setSelectedTime(e.target.value)}
-                        required
-                        className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
-                      />
+
+                    <div className="flex justify-between mt-4">
+                      <button 
+                        onClick={() => setBookingStep(3)} 
+                        className="px-4 py-2 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+                      >
+                        ← Back to Stylist
+                      </button>
+                      <button 
+                        disabled={!selectedDate || !selectedTime}
+                        onClick={() => setBookingStep(5)} 
+                        className="px-5 py-2.5 bg-blue-600 disabled:opacity-50 text-xs font-bold rounded-xl text-white cursor-pointer hover:bg-blue-500"
+                      >
+                        Continue to Confirm →
+                      </button>
                     </div>
                   </div>
+                )}
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Special Requests / Notes</label>
-                    <textarea
-                      value={bookingNotes}
-                      onChange={e => setBookingNotes(e.target.value)}
-                      placeholder="Add any specific requirements or stylist preferences here..."
-                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none h-24 resize-none"
-                    />
+                {/* STEP 5: UPSELL SUGGESTIONS & CONFIRMATION */}
+                {bookingStep === 5 && (
+                  <div className="space-y-6 text-left">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-wider">Step 5: Verify Details & Confirm Booking</label>
+                    
+                    {/* Real-time details review */}
+                    <div className="bg-slate-950/50 rounded-2xl border border-slate-850 p-5 space-y-3.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-bold">Lounge Location:</span>
+                        <span className="text-white font-extrabold">{branches.find(b => b.id === selectedBranch)?.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-bold">Styling Service:</span>
+                        <span className="text-white font-extrabold">{services.find(s => s.id === selectedService)?.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-bold">Artist Stylist:</span>
+                        <span className="text-white font-extrabold">{selectedStylist === 'any' ? 'Best Available Assign' : staff.find(st => st.id === selectedStylist)?.first_name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500 font-bold">Time Slot:</span>
+                        <span className="text-blue-400 font-black">{selectedDate} at {selectedTime}</span>
+                      </div>
+                    </div>
+
+                    {/* Dynamic AI Receptionist Upsell Suggestion Card */}
+                    <div className="bg-gradient-to-r from-blue-950/60 to-indigo-950/60 border border-blue-500/30 rounded-2xl p-5 space-y-3">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-base">✨</span>
+                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Clara's Upsell Bundle Suggestion</span>
+                      </div>
+                      <p className="text-xs text-slate-300 leading-relaxed font-semibold">
+                        Add a luxurious nourishing **Head Massage & Deep Hair Conditioning** treatment to your schedule for only **$25** (normally $55)!
+                      </p>
+                      
+                      <div className="flex items-center space-x-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsUpsellAccepted(true)}
+                          className={`px-4.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            isUpsellAccepted 
+                              ? 'bg-blue-600 text-white shadow-lg' 
+                              : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {isUpsellAccepted ? '✓ Bundle Added' : 'Add to Booking (+$25)'}
+                        </button>
+                        {isUpsellAccepted && (
+                          <button 
+                            type="button" 
+                            onClick={() => setIsUpsellAccepted(false)}
+                            className="text-[10px] text-red-400 font-bold hover:underline cursor-pointer"
+                          >
+                            Remove Upsell
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Final Cost & Booking Action */}
+                    <div className="flex items-center justify-between border-t border-slate-800/80 pt-4 mt-6">
+                      <div>
+                        <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-widest">Total Styling Fee</span>
+                        <span className="text-2xl font-black text-blue-400">
+                          ${(services.find(s => s.id === selectedService)?.price || 0) + (isUpsellAccepted ? 25 : 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex space-x-3">
+                        <button 
+                          onClick={() => setBookingStep(4)} 
+                          className="px-4 py-2 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          ← Back
+                        </button>
+                        <button 
+                          disabled={isBookingSubmitting}
+                          onClick={handleFinalizeBooking} 
+                          className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-xs font-black rounded-xl text-white shadow-lg cursor-pointer"
+                        >
+                          {isBookingSubmitting ? 'Confirming with Supabase...' : 'Confirm Booking Slot'}
+                        </button>
+                      </div>
+                    </div>
+
                   </div>
+                )}
 
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-lg shadow-blue-500/10 mt-4"
-                  >
-                    {isSubmitting ? 'Confirming booking...' : 'Submit Booking Request'}
-                  </button>
-                </form>
               </div>
             )}
 
-            {/* 3. Booking History */}
-            {activeTab === 'history' && (
-              <div className="space-y-4">
-                <h3 className="text-lg font-extrabold text-white">📜 Historical Appointment Log</h3>
-                {appointments.length === 0 ? (
-                  <div className="bg-slate-900/40 rounded-2xl border border-slate-850 p-8 text-center text-slate-500 text-xs">
-                    No historical bookings found.
+            {/* ============================================================================
+                VIEW 3: MY APPOINTMENTS (UPCOMING, COMPLETED, CANCELLED TABS)
+                ============================================================================ */}
+            {activeTab === 'my-appointments' && (
+              <div className="space-y-6">
+                
+                {/* View Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="text-left">
+                    <h3 className="text-xl font-black">⏰ Real-Time Scheduled Sessions</h3>
+                    <p className="text-xs text-slate-500">Track active bookings, view historical logs, and submit stylist reviews.</p>
+                  </div>
+                  
+                  {/* Filter Tabs */}
+                  <div className="flex bg-slate-900 border border-slate-800 p-1.5 rounded-2xl">
+                    {[
+                      { id: 'upcoming', label: 'Active Scheduled' },
+                      { id: 'completed', label: 'Completed' },
+                      { id: 'cancelled', label: 'Cancelled' }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setAppointmentTab(tab.id as any)}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          appointmentTab === tab.id 
+                            ? 'bg-blue-600 text-white shadow-md' 
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Appointments List Grid */}
+                {getFilteredAppointments(appointmentTab).length === 0 ? (
+                  <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-12 text-center text-slate-500 text-xs">
+                    No {appointmentTab} appointments found.
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {appointments.map(appt => (
-                      <div key={appt.id} className="bg-slate-900/60 border border-slate-800/50 p-4 rounded-xl flex items-center justify-between gap-4">
-                        <div>
-                          <h4 className="text-sm font-extrabold text-white">{appt.service.name}</h4>
-                          <p className="text-[11px] text-slate-400">
-                            📅 {new Date(appt.start_time).toLocaleDateString()} at {new Date(appt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                          <p className="text-[10px] text-slate-500 font-medium">Stylist: {appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Auto Assigned'}</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {getFilteredAppointments(appointmentTab).map(appt => (
+                      <div key={appt.id} className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-2xl relative overflow-hidden flex flex-col justify-between text-left">
+                        
+                        {/* Status Tag */}
+                        <div className={`absolute top-0 right-0 px-3.5 py-1 text-[9px] font-black rounded-bl-xl border-l border-b uppercase tracking-widest ${
+                          appt.status.toUpperCase() === 'COMPLETED' 
+                            ? 'bg-blue-500/10 border-blue-500/25 text-blue-400' 
+                            : appt.status.toUpperCase() === 'CANCELLED' || appt.status.toUpperCase() === 'CANCELED'
+                              ? 'bg-red-500/10 border-red-500/25 text-red-400' 
+                              : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                        }`}>
+                          {appt.status}
                         </div>
-                        <div className="text-right space-y-1">
-                          <span className="block text-xs font-black text-slate-300">${appt.service.price}</span>
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                            appt.status === 'COMPLETED'
-                              ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          }`}>
-                            {appt.status}
-                          </span>
+
+                        <div className="space-y-3">
+                          <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">{appt.branch.name}</span>
+                          <h4 className="text-base font-black text-white">{appt.service.name}</h4>
+                          <p className="text-[11px] text-slate-400 font-bold bg-slate-950/40 p-2.5 rounded-xl border border-slate-850">
+                            📅 {new Date(appt.start_time).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
+                          </p>
+                          <div className="flex items-center space-x-2 text-xs text-slate-400">
+                            <span>Stylist:</span>
+                            <span className="text-slate-200 font-bold">{appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Professional assigns'}</span>
+                          </div>
+                          {appt.notes && (
+                            <p className="text-[11px] text-slate-400 italic bg-slate-950/20 p-2 rounded-lg border border-slate-850">Notes: "{appt.notes}"</p>
+                          )}
+                        </div>
+
+                        {/* Interactive Action Buttons */}
+                        <div className="mt-5 pt-4 border-t border-slate-800/60 flex items-center justify-between">
+                          <span className="text-base font-black text-blue-400">${appt.service.price}</span>
+                          
+                          <div className="flex space-x-2">
+                            {appointmentTab === 'upcoming' && (
+                              <>
+                                <button
+                                  onClick={() => setReschedulingAppt(appt)}
+                                  className="px-3 py-2 bg-slate-800 hover:bg-slate-750 text-xs font-bold rounded-xl text-slate-300 cursor-pointer transition-all"
+                                >
+                                  Reschedule
+                                </button>
+                                <button
+                                  onClick={() => handleCancelAppointment(appt.id)}
+                                  className="px-3 py-2 bg-red-950/15 hover:bg-red-900/20 border border-red-900/30 text-red-400 text-xs font-bold rounded-xl cursor-pointer transition-all"
+                                >
+                                  Cancel Booking
+                                </button>
+                              </>
+                            )}
+                            
+                            {appointmentTab === 'completed' && (
+                              <button
+                                onClick={() => setReviewingAppt(appt)}
+                                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold rounded-xl text-white cursor-pointer transition-all shadow-md shadow-blue-500/10"
+                              >
+                                ★ Submit Review
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* ============================================================================
+                    MODAL: SUBMIT RATING & REVIEW FOR COMPLETED SESSION
+                    ============================================================================ */}
+                {reviewingAppt && (
+                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
+                      <button 
+                        onClick={() => setReviewingAppt(null)}
+                        className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                      
+                      <div className="text-center space-y-1">
+                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Share experience</span>
+                        <h4 className="text-lg font-black text-white">Rate Your Styling Treatment</h4>
+                        <p className="text-xs text-slate-450 mt-1">Reviewing **{reviewingAppt.service.name}** with **{reviewingAppt.staff?.first_name}**</p>
+                      </div>
+
+                      {/* Interactive Stars Selection */}
+                      <div className="flex items-center justify-center space-x-2.5 py-2">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            onClick={() => setRatingValue(star)}
+                            className="text-2xl cursor-pointer hover:scale-115 transition-transform"
+                          >
+                            {star <= ratingValue ? '★' : '☆'}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 text-left">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Styling Comments</label>
+                        <textarea
+                          value={reviewComment}
+                          onChange={e => setReviewComment(e.target.value)}
+                          placeholder="Tell us about the stylist's precision, salon atmosphere, or premium products..."
+                          className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none h-24 resize-none"
+                        />
+                      </div>
+
+                      <div className="flex justify-between items-center pt-2">
+                        <button
+                          onClick={() => setReviewingAppt(null)}
+                          className="px-4 py-2.5 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleReviewSubmit}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white cursor-pointer shadow-lg shadow-blue-500/10"
+                        >
+                          Commit Review
+                        </button>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* ============================================================================
+                    MODAL: RESCHEDULE SCHEDULING TIME
+                    ============================================================================ */}
+                {reschedulingAppt && (
+                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+                    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
+                      <button 
+                        onClick={() => setReschedulingAppt(null)}
+                        className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                      
+                      <div className="text-center space-y-1">
+                        <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Modify booking</span>
+                        <h4 className="text-lg font-black text-white">Reschedule Your Session</h4>
+                        <p className="text-xs text-slate-450">Moving **{reschedulingAppt.service.name}** reservation.</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 text-left">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Select New Date</label>
+                          <input
+                            type="date"
+                            value={newRescheduleDate}
+                            onChange={e => setNewRescheduleDate(e.target.value)}
+                            required
+                            className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Select New Time Slot</label>
+                          <select
+                            value={newRescheduleTime}
+                            onChange={e => setNewRescheduleTime(e.target.value)}
+                            required
+                            className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                          >
+                            <option value="">Choose slot...</option>
+                            <option value="10:00">10:00 AM</option>
+                            <option value="11:30">11:30 AM</option>
+                            <option value="13:00">1:00 PM</option>
+                            <option value="14:30">2:30 PM</option>
+                            <option value="16:00">4:00 PM</option>
+                            <option value="17:00">5:00 PM</option>
+                            <option value="18:30">6:30 PM</option>
+                            <option value="20:00">8:00 PM</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-2">
+                        <button
+                          onClick={() => setReschedulingAppt(null)}
+                          className="px-4 py-2.5 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleRescheduleSubmit}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white cursor-pointer shadow-lg shadow-blue-500/10"
+                        >
+                          Submit Reschedule
+                        </button>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* ============================================================================
+                VIEW 4: APPOINTMENT HISTORY LOG
+                ============================================================================ */}
+            {activeTab === 'history' && (
+              <div className="space-y-6">
+                <div className="text-left">
+                  <h3 className="text-xl font-black">📜 Historical Archive</h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Archived Styling Sessions</p>
+                </div>
+
+                {appointments.length === 0 ? (
+                  <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-12 text-center text-slate-500 text-xs">
+                    No historical logs found in our database.
+                  </div>
+                ) : (
+                  <div className="bg-slate-900/40 rounded-3xl border border-slate-800 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 border-b border-slate-850 text-slate-500 font-black uppercase tracking-wider">
+                            <th className="px-6 py-4">Treatment / Service</th>
+                            <th className="px-6 py-4">Lounge Location</th>
+                            <th className="px-6 py-4">Stylist Artist</th>
+                            <th className="px-6 py-4">Completion Date</th>
+                            <th className="px-6 py-4">Price paid</th>
+                            <th className="px-6 py-4">Session Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-850 text-slate-350">
+                          {appointments.map(appt => (
+                            <tr key={appt.id} className="hover:bg-slate-900/45 transition-colors">
+                              <td className="px-6 py-4.5 font-bold text-white">{appt.service.name}</td>
+                              <td className="px-6 py-4.5">{appt.branch.name}</td>
+                              <td className="px-6 py-4.5 font-semibold text-slate-300">{appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Auto Assigned'}</td>
+                              <td className="px-6 py-4.5">{new Date(appt.start_time).toLocaleDateString()}</td>
+                              <td className="px-6 py-4.5 text-blue-400 font-black">${appt.service.price}</td>
+                              <td className="px-6 py-4.5">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border ${
+                                  appt.status.toUpperCase() === 'COMPLETED' 
+                                    ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
+                                    : appt.status.toUpperCase() === 'CANCELLED' || appt.status.toUpperCase() === 'CANCELED'
+                                      ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                                      : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                                }`}>
+                                  {appt.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ============================================================================
+                VIEW 5: CONVERSATIONAL AI ASSISTANT (CLARA FULLSCREEN VIEWPORT)
+                ============================================================================ */}
+            {activeTab === 'assistant' && (
+              <div className="space-y-6">
+                <div className="text-left border-b border-slate-800 pb-4">
+                  <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Conversational Assistant</span>
+                  <h3 className="text-xl font-black text-white">🤖 Clara - Automated Salon Receptionist</h3>
+                  <p className="text-xs text-slate-500 mt-1">Book schedules, cancel bookings, check slot times using plain natural language.</p>
+                </div>
+                
+                {/* Full screen render wrapper for Clara chat */}
+                <div className="bg-slate-900/30 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative custom-fullscreen-agentchat-container">
+                  <AgentChat />
+                </div>
+
+                <style>{`
+                  .custom-fullscreen-agentchat-container .w-full.max-w-7xl {
+                    max-width: 100% !important;
+                    height: 65vh !important;
+                    border: none !important;
+                    background: transparent !important;
+                    box-shadow: none !important;
+                  }
+                  .custom-fullscreen-agentchat-container aside {
+                    background: #0f172a !important;
+                    border-right-color: #1e293b !important;
+                  }
+                  .custom-fullscreen-agentchat-container section {
+                    background: #0b1329/40 !important;
+                  }
+                  .custom-fullscreen-agentchat-container header {
+                    background: #0f172a !important;
+                    border-bottom-color: #1e293b !important;
+                  }
+                  .custom-fullscreen-agentchat-container .bg-slate-50\\/50 {
+                    background-color: #0b1329/20 !important;
+                  }
+                  .custom-fullscreen-agentchat-container footer {
+                    background: #0f172a !important;
+                    border-top-color: #1e293b !important;
+                  }
+                  .custom-fullscreen-agentchat-container input {
+                    background: #070d1e !important;
+                    border-color: #1e293b !important;
+                    color: white !important;
+                  }
+                `}</style>
+              </div>
+            )}
+
+            {/* ============================================================================
+                VIEW 6: COMPREHENSIVE SERVICE OFFERINGS CATALOG
+                ============================================================================ */}
+            {activeTab === 'services' && (
+              <div className="space-y-6">
+                <div className="text-left">
+                  <h3 className="text-xl font-black">💆 Styling & Spa Catalog</h3>
+                  <p className="text-xs text-slate-550 font-bold uppercase tracking-widest mt-1">Zenoti Premium High-Value Services</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {services.map(s => (
+                    <div key={s.id} className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl flex flex-col justify-between hover:border-blue-500/40 hover:bg-slate-900/80 transition-all duration-300 group">
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-2xl bg-blue-900/30 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+                          {s.name.includes('Massage') ? '🪨' : s.name.includes('Hair') || s.name.includes('Cut') ? '💇' : s.name.includes('Facial') ? '🧖‍♀️' : s.name.includes('Pedi') ? '👣' : s.name.includes('Mani') ? '💅' : '🎨'}
+                        </div>
+                        <h4 className="text-base font-extrabold text-white mt-3">{s.name}</h4>
+                        <p className="text-xs text-slate-450 leading-relaxed font-medium mt-1">{s.description}</p>
+                      </div>
+                      
+                      <div className="flex items-center justify-between border-t border-slate-800/60 pt-4 mt-6 text-xs">
+                        <span className="text-slate-500 font-bold">⏱️ {s.duration_minutes} minutes duration</span>
+                        <span className="text-blue-400 text-sm font-black">${s.price}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ============================================================================
+                VIEW 7: NOTIFICATIONS CENTER
+                ============================================================================ */}
+            {activeTab === 'notifications' && (
+              <div className="space-y-6">
+                <div className="text-left flex justify-between items-center border-b border-slate-800 pb-4">
+                  <div>
+                    <h3 className="text-xl font-black">🔔 Notifications Alert Console</h3>
+                    <p className="text-xs text-slate-500 mt-1">Real-time scheduling commits and special promotional updates.</p>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      setNotifications([]);
+                      showToast('Notification logs cleared.', 'success');
+                    }}
+                    className="px-3.5 py-2 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-400 cursor-pointer"
+                  >
+                    Clear All Alerts
+                  </button>
+                </div>
+
+                {notifications.length === 0 ? (
+                  <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-12 text-center text-slate-500 text-xs">
+                    No active notifications logs.
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-w-2xl mx-auto">
+                    {notifications.map(n => (
+                      <div key={n.id} className="bg-slate-900/50 border border-slate-800 p-4.5 rounded-2xl flex items-start space-x-4 text-left hover:border-slate-750 transition-colors">
+                        <span className="text-lg mt-0.5">{n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : 'ℹ'}</span>
+                        <div className="flex-1 space-y-1">
+                          <div className="flex justify-between items-center">
+                            <h4 className="text-xs font-black text-slate-200">{n.title}</h4>
+                            <span className="text-[10px] text-slate-500 font-medium">{n.timestamp}</span>
+                          </div>
+                          <p className="text-xs text-slate-400 leading-relaxed font-semibold">{n.message}</p>
                         </div>
                       </div>
                     ))}
@@ -413,67 +1296,88 @@ export const UserDashboard: React.FC = () => {
               </div>
             )}
 
-            {/* 4. Service Catalog */}
-            {activeTab === 'services' && (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-extrabold text-white">💇 Service Offerings Catalog</h3>
-                  <p className="text-xs text-slate-500">Discover premium high-value services available at our branches.</p>
-                </div>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {services.map(s => (
-                    <div key={s.id} className="bg-slate-900/60 border border-slate-800/80 p-5 rounded-2xl space-y-2 hover:border-slate-700/60 transition-all flex flex-col justify-between">
-                      <div className="space-y-1">
-                        <h4 className="text-sm font-extrabold text-white">{s.name}</h4>
-                        <p className="text-xs text-slate-400 leading-relaxed font-medium">{s.description}</p>
-                      </div>
-                      <div className="flex items-center justify-between pt-4 border-t border-slate-800/60 text-xs">
-                        <span className="font-bold text-slate-500">⏱️ {s.duration_minutes} minutes</span>
-                        <span className="font-black text-blue-400 text-sm">${s.price}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 5. Clara AI Receptionist */}
-            {activeTab === 'clara' && (
-              <div className="space-y-4">
-                <div className="text-left border-b border-slate-800 pb-4">
-                  <h3 className="text-lg font-extrabold text-white">🤖 Conversational AI Assistant</h3>
-                  <p className="text-xs text-slate-500">Book, reschedule, or cancel bookings in plain natural language with Clara.</p>
-                </div>
-                <AgentChat />
-              </div>
-            )}
-
-            {/* 6. Profile */}
+            {/* ============================================================================
+                VIEW 8: PREFERRED PROFILE PAGE
+                ============================================================================ */}
             {activeTab === 'profile' && (
-              <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-3xl max-w-md mx-auto space-y-6">
-                <h3 className="text-lg font-extrabold text-white text-center">👤 Client Account Profile</h3>
-                
-                <div className="space-y-4">
-                  <div className="flex justify-between border-b border-slate-800 pb-2 text-xs">
-                    <span className="text-slate-500 font-bold">Email Address</span>
-                    <span className="text-white font-extrabold">{user?.email}</span>
+              <div className="bg-slate-900/40 border border-slate-800 p-6 lg:p-8 rounded-3xl max-w-xl mx-auto space-y-6">
+                <div className="text-center space-y-1.5 border-b border-slate-800 pb-5">
+                  <h3 className="text-xl font-black">👤 Custom Styling Parameters</h3>
+                  <p className="text-xs text-slate-450">Save preferred parameters for a personalized dashboard and AI receptionist profile memory.</p>
+                </div>
+
+                <div className="space-y-5 text-left">
+                  
+                  {/* Account detail overview */}
+                  <div className="bg-slate-950/60 p-4.5 rounded-2xl border border-slate-850 space-y-2.5 text-xs">
+                    <span className="block text-[8px] font-black text-slate-550 uppercase tracking-widest border-b border-slate-850 pb-2">Client Details</span>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Email Address:</span>
+                      <span className="text-white font-extrabold">{user?.email}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-bold">Privilege Membership Rank:</span>
+                      <span className="text-blue-400 font-black">Gold Member Elite</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between border-b border-slate-800 pb-2 text-xs">
-                    <span className="text-slate-500 font-bold">Privilege Tier</span>
-                    <span className="text-blue-400 font-black tracking-wider uppercase">{user?.role}</span>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Preferred Lounge Branch</label>
+                    <select
+                      value={prefBranch}
+                      onChange={e => setPrefBranch(e.target.value)}
+                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                    >
+                      <option value="">Select branch...</option>
+                      {branches.map(b => (
+                        <option key={b.id} value={b.name}>{b.name}</option>
+                      ))}
+                    </select>
                   </div>
-                  <div className="flex justify-between border-b border-slate-800 pb-2 text-xs">
-                    <span className="text-slate-500 font-bold">Account Status</span>
-                    <span className="text-emerald-400 font-extrabold">Active</span>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Preferred Styling Specialist</label>
+                    <select
+                      value={prefStylist}
+                      onChange={e => setPrefStylist(e.target.value)}
+                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                    >
+                      <option value="">Select stylist...</option>
+                      <option value="Alexandra Chen">Alexandra Chen (Senior Stylist)</option>
+                      <option value="Marcus Johnson">Marcus Johnson (Color Specialist)</option>
+                    </select>
                   </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Preferred styling Treatment</label>
+                    <select
+                      value={prefService}
+                      onChange={e => setPrefService(e.target.value)}
+                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
+                    >
+                      <option value="">Select service...</option>
+                      {services.map(s => (
+                        <option key={s.id} value={s.name}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={savePreferences}
+                    className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white transition-all cursor-pointer shadow-lg shadow-blue-500/10 mt-3"
+                  >
+                    Save Preference Memory
+                  </button>
+
                 </div>
               </div>
             )}
 
           </div>
         )}
+
       </main>
+
     </div>
   );
 };

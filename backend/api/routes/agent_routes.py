@@ -6,7 +6,7 @@ Defines the /agent/chat endpoint which connects directly to the ReceptionistAgen
 import logging
 from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from pydantic import BaseModel, Field, ConfigDict
 
 # Project imports
@@ -84,6 +84,7 @@ class ChatResponse(BaseModel):
 )
 async def chat_with_agent(
     payload: ChatRequest,
+    background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user)
 ):
     """
@@ -93,6 +94,7 @@ async def chat_with_agent(
     logger.info(f"POST /api/agent/chat received (Session ID: {payload.session_id})")
     
     from datetime import datetime
+    import asyncio
     
     context_prefix = ""
     # Inject current date and time context
@@ -132,16 +134,29 @@ async def chat_with_agent(
             detail=f"Agent service is currently initializing or unavailable: {str(e)}"
         )
 
-    # 3. Process query through AutoGen asynchronously with robust error handling
+    # Helper function to run agent processing in a background task
+    async def run_agent_in_background(query_data: Dict[str, Any]):
+        try:
+            logger.info("Executing agent process in background task...")
+            await agent.process(query_data)
+            logger.info("Agent process completed in background task successfully.")
+        except Exception as bg_ex:
+            logger.error(f"Error in background agent process execution: {bg_ex}")
+
+    # 3. Process query through AutoGen asynchronously with hybrid background forking
     try:
         logger.debug(f"Sending query to agent: {full_query[:100]}...")
-        agent_response = await agent.process({"query": full_query})
+        
+        # Try to wait for the agent response for a maximum of 3.0 seconds
+        agent_response = await asyncio.wait_for(
+            agent.process({"query": full_query}),
+            timeout=3.0
+        )
         
         if not agent_response.get("success"):
             error_msg = agent_response.get("error", "Unknown agent processing error.")
             logger.error(f"Agent returned failure response: {error_msg}")
             
-            # Return structured error response (don't crash API)
             return ChatResponse(
                 success=False,
                 session_id=payload.session_id,
@@ -149,8 +164,7 @@ async def chat_with_agent(
                 agent_name=agent_response.get("agent_name", "Clara")
             )
 
-        # 4. Construct structured response mapping back aliases
-        logger.info(f"Agent successfully processed query for session {payload.session_id}")
+        logger.info(f"Agent successfully processed query within 3 seconds for session {payload.session_id}")
         return ChatResponse(
             success=True,
             session_id=payload.session_id,
@@ -158,6 +172,16 @@ async def chat_with_agent(
             agent_name=agent_response.get("agent_name", "Clara")
         )
 
+    except asyncio.TimeoutError:
+        logger.warning(f"⏰ Agent execution exceeded 3.0 seconds. Forking task to FastAPI background worker.")
+        background_tasks.add_task(run_agent_in_background, {"query": full_query})
+        
+        return ChatResponse(
+            success=True,
+            session_id=payload.session_id,
+            response="Processing your request...",
+            agent_name="Clara"
+        )
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -171,7 +195,6 @@ async def chat_with_agent(
             }
         )
         
-        # Return graceful error response without crashing API
         return ChatResponse(
             success=False,
             session_id=payload.session_id,

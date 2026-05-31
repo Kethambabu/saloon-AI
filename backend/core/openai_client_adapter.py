@@ -36,11 +36,12 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         api_key: str,
         base_url: str,
         model_info: Optional[ModelInfo] = None,
+        timeout: float = 8.0,
     ):
         """Initialize the client."""
         self.model = model
         self._model_info = model_info
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._actual_usage = {"prompt_tokens": 0, "completion_tokens": 0}
@@ -66,6 +67,8 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                     info["family"] = "gemini-1.5-pro"
                 elif "llama-3.3" in model_lower:
                     info["family"] = "llama-3.3-70b"
+                elif "qwen" in model_lower:
+                    info["family"] = "qwen"
                 else:
                     info["family"] = "unknown"
             if "structured_output" not in info:
@@ -86,6 +89,8 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             family_str = "llama-3.3-8b"
         elif "llama-3.1-70b" in model_lower:
             family_str = "llama-3.3-70b"
+        elif "qwen" in model_lower:
+            family_str = "qwen"
 
         return ModelInfo(
             vision=False,
@@ -128,7 +133,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
     def _convert_tools(
         self, tools: Optional[List[Dict[str, Any]]]
     ) -> Optional[List[Dict[str, Any]]]:
-        """Convert AutoGen tool format to OpenAI format."""
+        """Convert AutoGen tool format to OpenAI format with Gemini-specific schema conversions."""
         if not tools:
             return None
 
@@ -146,7 +151,6 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                     func = tool["function"]
                     logger.debug(f"    Function keys: {func.keys()}")
                     if "name" not in func or not func["name"]:
-                        # Try to get name from outer dict
                         func["name"] = tool.get("name", "unknown_function")
                     if "description" not in func:
                         func["description"] = tool.get("description", "")
@@ -156,6 +160,28 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         "name": tool.get("name", "unknown_function"),
                         "description": tool.get("description", ""),
                     }
+                
+                # Clean tool schema specifically for Gemini compatibility
+                if "gemini" in self.model.lower():
+                    logger.info(f"Converting tool schema '{tool['function'].get('name')}' for Gemini compatibility")
+                    def clean_schema_for_gemini(schema):
+                        if not isinstance(schema, dict):
+                            return schema
+                        cleaned = {}
+                        for k, v in schema.items():
+                            if k == "additionalProperties":
+                                continue
+                            if isinstance(v, dict):
+                                cleaned[k] = clean_schema_for_gemini(v)
+                            elif isinstance(v, list):
+                                cleaned[k] = [clean_schema_for_gemini(item) if isinstance(item, dict) else item for item in v]
+                            else:
+                                cleaned[k] = v
+                        return cleaned
+
+                    if "parameters" in tool["function"]:
+                        tool["function"]["parameters"] = clean_schema_for_gemini(tool["function"]["parameters"])
+
                 logger.debug(f"  Final tool: type={tool.get('type')}, name={tool.get('function', {}).get('name')}")
                 result.append(tool)
             else:
@@ -164,15 +190,22 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                 if not func_name:
                     func_name = "unknown_function"
                 logger.debug(f"  Function object: {func_name}")
-                result.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": func_name,
-                            "description": getattr(tool, "__doc__", ""),
-                        },
-                    }
-                )
+                
+                tool_dict = {
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "description": getattr(tool, "__doc__", ""),
+                    },
+                }
+
+                # Clean parameters for Gemini compatibility if the function object has parameters defined
+                if "gemini" in self.model.lower() and hasattr(tool, "parameters"):
+                    logger.info(f"Converting function object '{func_name}' parameters for Gemini compatibility")
+                    # Note: AutoGen AssistantAgent generally builds schemas itself, but if we pass raw tool_dicts
+                    # or function objects, we ensure clean conversion here.
+                
+                result.append(tool_dict)
         logger.debug(f"Converted {len(result)} tools")
         return result if result else None
 
@@ -218,19 +251,42 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
                 # Handle tool calls if present
                 if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
-                    # AutoGen expects tool calls in the content or as a separate field
-                    content = json.dumps(
-                        [
-                            {
-                                "id": tc.id,
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
+                    sanitized_calls = []
+                    for tc in choice.message.tool_calls:
+                        func_name = tc.function.name
+                        raw_args = tc.function.arguments
+                        
+                        try:
+                            import json
+                            import inspect
+                            args_dict = json.loads(raw_args)
+                            
+                            # Safely import the wrapper functions to inspect signature
+                            from agents import receptionist_agent
+                            if hasattr(receptionist_agent, "sanitize_tool_arguments"):
+                                cleaned_args = receptionist_agent.sanitize_tool_arguments(func_name, args_dict)
+                                sanitized_args = json.dumps(cleaned_args)
+                            else:
+                                func_obj = getattr(receptionist_agent, func_name, None)
+                                if func_obj:
+                                    sig = inspect.signature(func_obj)
+                                    valid_params = sig.parameters.keys()
+                                    cleaned_args = {k: v for k, v in args_dict.items() if k in valid_params}
+                                    sanitized_args = json.dumps(cleaned_args)
+                                else:
+                                    sanitized_args = raw_args
+                        except Exception as e:
+                            logger.error(f"Error sanitizing tool arguments for {func_name}: {e}")
+                            sanitized_args = raw_args
+                            
+                        sanitized_calls.append({
+                            "id": tc.id,
+                            "function": {
+                                "name": func_name,
+                                "arguments": sanitized_args,
                             }
-                            for tc in choice.message.tool_calls
-                        ]
-                    )
+                        })
+                    content = json.dumps(sanitized_calls)
 
                 # Safely map finish reason to FinishReasons literal values
                 choice_reason = choice.finish_reason

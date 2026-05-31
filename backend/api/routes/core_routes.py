@@ -4,19 +4,31 @@ Public endpoints for services, branches, and basic discovery (no authentication 
 """
 
 import logging
-from typing import List, Optional
-from fastapi import APIRouter, Query, Path, HTTPException, Depends
+from typing import List, Optional, Any
+from fastapi import APIRouter, Query, Path, HTTPException, Depends, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from db.database import SessionLocal
-from db import Branch, Service, Staff, Customer
-from db.models import UserRole
-from api.deps import RoleChecker
+from db import (
+    get_db,
+    SessionLocal,
+    Branch,
+    Service,
+    Staff,
+    Customer,
+    Appointment,
+    Review,
+    User,
+    UserRole,
+    AppointmentStatus,
+    ReviewStatus,
+)
+from api.deps import RoleChecker, get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/core",
+    prefix="",
     tags=["Core"]
 )
 
@@ -346,3 +358,254 @@ async def core_health():
         }
     finally:
         db.close()
+
+
+# ============================================================================
+# CUSTOMER APPOINTMENTS & REVIEWS ENDPOINTS
+# ============================================================================
+
+class AppointmentCreateRequest(BaseModel):
+    branch_id: str
+    service_id: str
+    start_time: str
+    staff_id: Optional[str] = None
+    notes: Optional[str] = None
+
+class RescheduleRequest(BaseModel):
+    new_start_time: str
+
+class ReviewCreateRequest(BaseModel):
+    appointment_id: str
+    rating: int
+    comment: Optional[str] = None
+
+
+@router.get(
+    "/appointments/my",
+    summary="Get My Appointments",
+    tags=["Appointments"]
+)
+async def get_my_appointments(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve all appointments for the currently authenticated user.
+    """
+    logger.info(f"Retrieving appointments for user {current_user.email} (customer_id={current_user.customer_id})")
+    
+    if current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER":
+        if not current_user.customer_id:
+            return []
+        query = db.query(Appointment).filter(Appointment.customer_id == current_user.customer_id)
+    elif current_user.role == UserRole.STAFF or current_user.role.value == "STAFF":
+        if not current_user.staff_id:
+            return []
+        query = db.query(Appointment).filter(Appointment.staff_id == current_user.staff_id)
+    else:
+        query = db.query(Appointment)
+        
+    appointments = query.order_by(Appointment.start_time.desc()).all()
+    
+    result = []
+    for appt in appointments:
+        result.append({
+            "id": str(appt.id),
+            "start_time": appt.start_time.isoformat(),
+            "end_time": appt.end_time.isoformat(),
+            "status": appt.status.value if hasattr(appt.status, "value") else str(appt.status),
+            "notes": appt.notes,
+            "service": {
+                "name": appt.service.name,
+                "price": float(appt.service.price),
+                "duration_minutes": appt.service.duration_minutes
+            },
+            "staff": {
+                "first_name": appt.staff.first_name,
+                "last_name": appt.staff.last_name
+            } if appt.staff else None,
+            "branch": {
+                "name": appt.branch.name,
+                "city": appt.branch.city
+            }
+        })
+    return result
+
+
+@router.post(
+    "/appointments",
+    status_code=status.HTTP_201_CREATED,
+    summary="Book a New Appointment",
+    tags=["Appointments"]
+)
+async def book_appointment(
+    payload: AppointmentCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Book a new validated appointment.
+    """
+    if not current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only customer accounts can book appointments."
+        )
+        
+    from tools.booking_tools import create_appointment
+    result = create_appointment(
+        customer_id=str(current_user.customer_id),
+        branch_id=payload.branch_id,
+        service_id=payload.service_id,
+        start_time=payload.start_time,
+        staff_id=payload.staff_id,
+        notes=payload.notes,
+        db=db
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Booking failed.")
+        )
+        
+    return result
+
+
+@router.delete(
+    "/appointments/{appointment_id}",
+    summary="Cancel an Appointment",
+    tags=["Appointments"]
+)
+async def cancel_booking(
+    appointment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Cancel an existing appointment.
+    """
+    from uuid import UUID
+    try:
+        appt_uuid = UUID(appointment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment_id format.")
+        
+    appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
+        
+    if (current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER") and appt.customer_id != current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to cancel this appointment."
+        )
+        
+    from tools.booking_tools import cancel_appointment
+    result = cancel_appointment(appointment_id=appointment_id, db=db)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Cancellation failed.")
+        )
+        
+    return result
+
+
+@router.post(
+    "/appointments/{appointment_id}/reschedule",
+    summary="Reschedule an Appointment",
+    tags=["Appointments"]
+)
+async def reschedule_booking(
+    appointment_id: str,
+    payload: RescheduleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Reschedule an existing appointment.
+    """
+    from uuid import UUID
+    try:
+        appt_uuid = UUID(appointment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment_id format.")
+        
+    appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
+        
+    if (current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER") and appt.customer_id != current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to reschedule this appointment."
+        )
+        
+    from tools.booking_tools import reschedule_appointment
+    result = reschedule_appointment(
+        appointment_id=appointment_id,
+        new_start_time=payload.new_start_time,
+        db=db
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Rescheduling failed.")
+        )
+        
+    return result
+
+
+@router.post(
+    "/reviews",
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a Review",
+    tags=["Reviews"]
+)
+async def submit_review(
+    payload: ReviewCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Submit a review for an appointment.
+    """
+    from uuid import UUID
+    try:
+        appt_uuid = UUID(payload.appointment_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment_id format.")
+        
+    appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
+        
+    if (current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER") and appt.customer_id != current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to review this appointment."
+        )
+        
+    # Check if a review already exists
+    existing_review = db.query(Review).filter(Review.appointment_id == appt.id).first()
+    if existing_review:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You have already submitted a review for this appointment."
+        )
+        
+    import uuid
+    new_review = Review(
+        id=uuid.uuid4(),
+        customer_id=appt.customer_id,
+        branch_id=appt.branch_id,
+        appointment_id=appt.id,
+        rating=payload.rating,
+        comment=payload.comment,
+        status=ReviewStatus.PENDING
+    )
+    db.add(new_review)
+    db.commit()
+    return {"success": True, "message": "Review submitted successfully."}

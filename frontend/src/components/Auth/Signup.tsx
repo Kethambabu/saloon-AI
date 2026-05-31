@@ -89,11 +89,11 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
       // Auto-navigate to dashboard based on role
       setTimeout(() => {
         if (userProfile.role === 'Admin') {
-          navigate('/admin', { replace: true });
+          navigate('/admin/dashboard', { replace: true });
         } else if (userProfile.role === 'Staff') {
-          navigate('/staff', { replace: true });
+          navigate('/staff/dashboard', { replace: true });
         } else {
-          navigate('/user', { replace: true });
+          navigate('/user/dashboard', { replace: true });
         }
       }, 1500);
     } catch (err: any) {
