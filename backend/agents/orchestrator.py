@@ -22,7 +22,7 @@ from typing import Dict, Any, List, Optional
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+from core.openai_client_adapter import OpenAIChatCompletionClient
 
 # Project imports
 from agents import Agent
@@ -250,7 +250,7 @@ def get_booking_trends(period: str = "last_30_days") -> str:
 # ---------------------------------------------------------------------------
 # Model Client Factory
 # ---------------------------------------------------------------------------
-def _create_model_client() -> OpenAIChatCompletionClient:
+def _create_model_client():
     """Create an LLM model client from centralized configuration."""
     llm_config = get_llm_config()
     config = llm_config.get_config()

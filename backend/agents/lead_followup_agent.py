@@ -25,7 +25,13 @@ from typing import Dict, Any, List, Optional
 
 # AutoGen modern imports
 from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+try:
+    from core.openai_client_adapter import OpenAIChatCompletionClient
+except ImportError:
+    try:
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+    except ImportError:
+        from openai import OpenAI as OpenAIChatCompletionClient
 
 # Project imports
 from agents import Agent

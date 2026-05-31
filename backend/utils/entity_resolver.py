@@ -506,11 +506,12 @@ def resolve_appointment(
     """
     Resolve an appointment identifier to a UUID.
     
-    Currently supports:
+    Supports:
     - UUID (string or UUID object)
+    - Natural language description (e.g., "Downtown Elite on May 31st at 2:00 PM - Haircut with Alexandra Chen")
     
     Args:
-        identifier: UUID of appointment
+        identifier: UUID or natural language description
         db: SQLAlchemy session
         raise_on_missing: If True, raise error if not found; else return None
     
@@ -527,12 +528,13 @@ def resolve_appointment(
     
     identifier_str = str(identifier).strip()
     
+    # Try 1: Direct UUID parsing
     if _is_valid_uuid(identifier_str):
         try:
             appt_uuid = uuid.UUID(identifier_str)
             appointment = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
             if appointment:
-                logger.info(f"Appointment resolved: {appt_uuid}")
+                logger.info(f"Appointment resolved by UUID: {appt_uuid}")
                 return appt_uuid
             elif raise_on_missing:
                 raise ValueError(f"Appointment with UUID '{identifier_str}' not found")
@@ -543,8 +545,64 @@ def resolve_appointment(
                 raise
             return None
     
+    # Try 2: Natural language description (e.g., "Downtown Elite on May 31st at 2:00 PM - Haircut with Alexandra Chen")
+    # Extract key information from natural language
+    identifier_lower = identifier_str.lower()
+    
+    try:
+        # Get all pending/confirmed appointments (exclude cancelled/completed)
+        appointments = db.query(Appointment).filter(
+            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
+        ).all()
+        
+        best_matches = []
+        
+        for appt in appointments:
+            match_score = 0
+            
+            # Try to match branch name
+            branch = db.query(Branch).filter(Branch.id == appt.branch_id).first()
+            if branch and branch.name.lower() in identifier_lower:
+                match_score += 2
+            
+            # Try to match service name
+            service = db.query(Service).filter(Service.id == appt.service_id).first()
+            if service and service.name.lower() in identifier_lower:
+                match_score += 2
+            
+            # Try to match staff name
+            staff = db.query(Staff).filter(Staff.id == appt.staff_id).first()
+            if staff:
+                first_name = staff.first_name.lower()
+                last_name = staff.last_name.lower()
+                if first_name in identifier_lower or last_name in identifier_lower:
+                    match_score += 2
+            
+            # Try to match date/time keywords
+            if any(date_word in identifier_lower for date_word in ['may 31', 'may 30', 'june 1', 'june 2', 'tomorrow', 'today', 'next']):
+                match_score += 1
+            
+            if any(time_word in identifier_lower for time_word in ['2:00', '14:00', '5:00', '17:00', 'pm', 'am']):
+                match_score += 1
+            
+            if match_score >= 2:  # Require at least 2 matching factors
+                best_matches.append((appt, match_score))
+        
+        # Sort by match score and return best match
+        if best_matches:
+            best_matches.sort(key=lambda x: x[1], reverse=True)
+            best_appt = best_matches[0][0]
+            logger.info(f"Appointment resolved by natural language: '{identifier_str}' → {best_appt.id} (score: {best_matches[0][1]})")
+            return best_appt.id
+    
+    except Exception as e:
+        logger.debug(f"Natural language appointment resolution failed: {e}")
+    
     if raise_on_missing:
-        raise ValueError(f"Invalid appointment identifier '{identifier_str}'. Please provide a valid UUID.")
+        raise ValueError(
+            f"Could not resolve appointment identifier '{identifier_str}'. "
+            f"Please provide a valid UUID or a description with branch name, service, stylist name, or appointment date/time."
+        )
     return None
 
 

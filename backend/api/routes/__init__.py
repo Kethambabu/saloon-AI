@@ -4,6 +4,10 @@ from fastapi import APIRouter
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
+# Include core sub-routes (public endpoints for services, branches)
+from api.routes.core_routes import router as core_router
+router.include_router(core_router)
+
 # Include agent sub-routes
 from api.routes.agent_routes import router as agent_router
 router.include_router(agent_router)
