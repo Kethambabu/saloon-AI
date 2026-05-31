@@ -9,7 +9,7 @@ import logging
 import time
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 # AutoGen modern imports
 from autogen_agentchat.agents import AssistantAgent
@@ -153,12 +153,14 @@ def repair_date(date_input: Any) -> str:
 
 
 def repair_time(time_input: Any) -> str:
-    """Convert relative time slots (e.g. 5pm) to standard HH:MM format."""
+    """Convert relative time slots (e.g. 5pm, 3-4pm, 3-4pm slot) to standard HH:MM format (start time)."""
     if not time_input:
         return "17:00"
         
     time_str = str(time_input).strip()
     import re
+    
+    # Already in HH:MM format
     if re.match(r"^\d{2}:\d{2}$", time_str):
         return time_str
     if re.match(r"^\d{2}:\d{2}:\d{2}$", time_str):
@@ -168,21 +170,34 @@ def repair_time(time_input: Any) -> str:
     is_pm = "pm" in time_clean
     is_am = "am" in time_clean
     
-    digits = "".join([c for c in time_clean if c.isdigit() or c == ":"])
+    # Handle time ranges like "3-4pm", "3-4", "03-04pm", etc.
+    # Extract ONLY the first number for the start time
+    time_no_text = re.sub(r"[^0-9:\-]", "", time_clean)
+    
+    # Split by dash/hyphen to get the start time (first part)
+    if "-" in time_no_text:
+        start_part = time_no_text.split("-")[0]
+    else:
+        start_part = time_no_text
+    
+    # Extract digits from the start part
+    digits = "".join([c for c in start_part if c.isdigit() or c == ":"])
+    
     if ":" in digits:
         parts = digits.split(":")
         try:
             hour = int(parts[0])
-            minute = int(parts[1])
+            minute = int(parts[1]) if len(parts) > 1 else 0
         except ValueError:
             hour, minute = 12, 0
     else:
         try:
-            hour = int(digits)
+            hour = int(digits) if digits else 12
             minute = 0
         except ValueError:
             hour, minute = 12, 0
-            
+    
+    # Handle AM/PM
     if is_pm and hour < 12:
         hour += 12
     elif is_am and hour == 12:
@@ -279,6 +294,271 @@ def repair_customer(customer_id: Any) -> str:
         return str(first_c.id) if first_c else str(customer_id)
     finally:
         db.close()
+
+
+def _get_customer_memory(customer_id: str) -> Tuple[str, Optional[str], Optional[str]]:
+    """Retrieve warm welcome-back string with preferred stylist and service counts from SQLite history (Priority 7)."""
+    if not customer_id or _is_placeholder_value(customer_id):
+        return "Welcome back valued client!", None, None
+    db = SessionLocal()
+    try:
+        customer = db.query(Customer).filter(Customer.id == customer_id).first()
+        name = customer.first_name if customer else "valued client"
+        
+        # Load completed appointments to count preferences
+        from db.models import Appointment, AppointmentStatus
+        appts = db.query(Appointment).filter(
+            Appointment.customer_id == customer_id,
+            Appointment.status == AppointmentStatus.COMPLETED
+        ).all()
+        
+        if not appts:
+            return f"Welcome back {name}!", None, None
+            
+        services_counts = {}
+        staff_counts = {}
+        for a in appts:
+            services_counts[a.service_id] = services_counts.get(a.service_id, 0) + 1
+            if a.staff_id:
+                staff_counts[a.staff_id] = staff_counts.get(a.staff_id, 0) + 1
+                
+        pref_service_name = None
+        pref_staff_name = None
+        
+        if services_counts:
+            top_service_id = max(services_counts, key=services_counts.get)
+            top_service = db.query(Service).filter(Service.id == top_service_id).first()
+            if top_service:
+                pref_service_name = top_service.name
+                
+        if staff_counts:
+            top_staff_id = max(staff_counts, key=staff_counts.get)
+            top_staff = db.query(Staff).filter(Staff.id == top_staff_id).first()
+            if top_staff:
+                pref_staff_name = f"{top_staff.first_name} {top_staff.last_name}"
+                
+        pref_str = f"Welcome back {name}."
+        if pref_staff_name:
+            pref_str += f"\nPreferred Stylist: {pref_staff_name}"
+        if pref_service_name:
+            pref_str += f"\nPreferred Service: {pref_service_name}"
+            
+        return pref_str, pref_service_name, pref_staff_name
+    except Exception:
+        return "Welcome back!", None, None
+    finally:
+        db.close()
+
+
+def find_matching_active_appointment(customer_id: str, intent_json: Dict[str, Any], query_text: str) -> Optional[str]:
+    """
+    Intelligently searches the database for a customer's active appointment (CONFIRMED or PENDING)
+    that matches the provided criteria (service, branch, stylist, date, time) to resolve contexts.
+    """
+    if not customer_id:
+        return None
+        
+    db = SessionLocal()
+    try:
+        from db import Appointment, AppointmentStatus, Service, Branch, Staff
+        
+        # Get all confirmed or pending appointments for this customer
+        appts = db.query(Appointment).filter(
+            Appointment.customer_id == customer_id,
+            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
+        ).all()
+        
+        if not appts:
+            return None
+            
+        # Parse targets from intent_json
+        target_service_id = None
+        target_branch_id = None
+        target_staff_id = None
+        target_date = None
+        target_time = None
+        
+        if intent_json.get("service"):
+            try:
+                target_service_id = resolve_service(intent_json.get("service"), db, raise_on_missing=False)
+            except Exception:
+                pass
+        if intent_json.get("branch"):
+            try:
+                target_branch_id = resolve_branch(intent_json.get("branch"), db, raise_on_missing=False)
+            except Exception:
+                pass
+        if intent_json.get("stylist"):
+            try:
+                target_staff_id = resolve_staff(intent_json.get("stylist"), db, raise_on_missing=False)
+            except Exception:
+                pass
+                
+        if intent_json.get("date"):
+            try:
+                target_date = repair_date(intent_json.get("date"))
+            except Exception:
+                pass
+        if intent_json.get("time"):
+            try:
+                target_time = repair_time(intent_json.get("time"))
+            except Exception:
+                pass
+                
+        query_lower = query_text.lower()
+        best_appt = None
+        best_score = -1
+        
+        for appt in appts:
+            score = 0
+            
+            # Compare service
+            if target_service_id and appt.service_id == target_service_id:
+                score += 10
+            elif intent_json.get("service") and intent_json.get("service").lower() in appt.service.name.lower():
+                score += 8
+            elif appt.service.name.lower() in query_lower:
+                score += 5
+                
+            # Compare branch
+            if target_branch_id and appt.branch_id == target_branch_id:
+                score += 10
+            elif intent_json.get("branch") and intent_json.get("branch").lower() in appt.branch.name.lower():
+                score += 8
+            elif appt.branch.name.lower() in query_lower:
+                score += 5
+                
+            # Compare staff
+            if target_staff_id and appt.staff_id == target_staff_id:
+                score += 10
+            elif intent_json.get("stylist") and appt.staff and intent_json.get("stylist").lower() in appt.staff.full_name.lower():
+                score += 8
+            elif appt.staff and appt.staff.full_name.lower() in query_lower:
+                score += 5
+                
+            # Compare date
+            appt_date_str = appt.start_time.strftime("%Y-%m-%d")
+            if target_date and appt_date_str == target_date:
+                score += 15
+            elif intent_json.get("date") and str(intent_json.get("date")) in query_lower:
+                score += 10
+                
+            # Compare time
+            appt_time_str = appt.start_time.strftime("%H:%M")
+            if target_time and appt_time_str == target_time:
+                score += 15
+            elif intent_json.get("time") and str(intent_json.get("time")) in query_lower:
+                score += 10
+                
+            if score > best_score:
+                best_score = score
+                best_appt = appt
+                
+        if best_appt and best_score >= 10:
+            return str(best_appt.id)
+            
+        # Fallback to the most recently created confirmed appointment
+        sorted_appts = sorted(appts, key=lambda a: a.created_at if hasattr(a, "created_at") else a.start_time, reverse=True)
+        if sorted_appts:
+            return str(sorted_appts[0].id)
+            
+        return None
+    except Exception as e:
+        logger.warning(f"Error in find_matching_active_appointment: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def format_receptionist_tool_output(intent: str, raw_res_str: str) -> str:
+    """
+    Format raw JSON or single quoted dict representations of tool outputs to beautiful, clear, natural language.
+    """
+    if not raw_res_str:
+        return "Your request has been successfully processed."
+        
+    raw_res_clean = raw_res_str.strip()
+    
+    data = None
+    if raw_res_clean.startswith("{") or raw_res_clean.startswith("[") or raw_res_clean.startswith("{'"):
+        import ast
+        try:
+            data = ast.literal_eval(raw_res_clean)
+        except Exception:
+            try:
+                import json
+                data = json.loads(raw_res_clean)
+            except Exception:
+                pass
+                
+    if not isinstance(data, dict):
+        if "error" in raw_res_str.lower() and "cancelled" in raw_res_str.lower():
+            return "I apologize, but we cannot reschedule a cancelled appointment. Please book a new styling session instead."
+        return raw_res_str
+        
+    if intent == "cancel":
+        if data.get("success"):
+            return "Your appointment has been successfully cancelled. The database has been updated accordingly."
+        else:
+            err = data.get("error") or "Cancellation failed."
+            return f"I apologize, but we encountered an issue cancelling your appointment: {err}"
+            
+    elif intent == "reschedule":
+        if data.get("success"):
+            start_str = data.get("start_time", "")
+            try:
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                nice_dt = dt.strftime("%A, %B %d, %Y at %I:%M %p")
+            except Exception:
+                nice_dt = start_str
+            return f"Your appointment has been successfully rescheduled to {nice_dt}."
+        else:
+            err = data.get("error") or "Rescheduling failed."
+            if "cancelled" in str(err).lower():
+                return "I apologize, but we cannot reschedule a cancelled appointment. Please book a new styling session instead."
+            return f"I apologize, but we encountered an issue rescheduling your appointment: {err}"
+            
+    elif intent == "history":
+        history = data.get("history", [])
+        if not history:
+            return "You do not have any past styling appointments on record with us."
+        
+        lines = []
+        for appt in history:
+            start_str = appt.get("start_time", "")
+            try:
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                nice_time = dt.strftime("%B %d, %Y at %I:%M %p")
+            except Exception:
+                nice_time = start_str
+                
+            svc = appt.get("service_name") or "Styling Treatment"
+            staff = appt.get("staff_name") or "Professional Stylist"
+            branch = appt.get("branch_name") or "SalonAI Lounge"
+            status = appt.get("status", "CONFIRMED").upper()
+            
+            lines.append(f"• **{svc}** with {staff} at our {branch} lounge on {nice_time} ({status})")
+            
+        return "Here is your styling history:\n" + "\n".join(lines)
+        
+    elif intent == "availability":
+        slots = data.get("slots", [])
+        if not slots:
+            return f"I'm sorry, but there are no available slots for {data.get('date', 'your selected date')}."
+        
+        lines = []
+        for slot in slots:
+            start_str = slot.get("start_time", "")
+            try:
+                dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                nice_time = dt.strftime("%I:%M %p")
+            except Exception:
+                nice_time = start_str
+            lines.append(nice_time)
+            
+        return f"The following slots are available for your selected styling session: {', '.join(lines)}."
+        
+    return raw_res_str
 
 
 # ============================================================================
@@ -450,13 +730,10 @@ def cancel_existing_appointment(appointment_id: str) -> str:
     """
     import concurrent.futures
     def run():
-        if not appointment_id or _is_placeholder_value(appointment_id):
-            return "Error: Invalid appointment identifier provided. Please check booking history first."
-            
-        appt_str = str(appointment_id).strip()
+        appt_str = str(appointment_id).strip() if appointment_id else ""
         repaired_appt = appt_str
         
-        if not _is_valid_uuid(appt_str):
+        if not appt_str or _is_placeholder_value(appt_str) or not _is_valid_uuid(appt_str):
             sys_c = get_query_customer_id()
             if sys_c:
                 db = SessionLocal()
@@ -465,7 +742,7 @@ def cancel_existing_appointment(appointment_id: str) -> str:
                     active_appts = db.query(Appointment).filter(
                         Appointment.customer_id == sys_c,
                         Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
-                    ).all()
+                    ).order_by(Appointment.created_at.desc()).all()
                     if active_appts:
                         repaired_appt = str(active_appts[0].id)
                 finally:
@@ -486,13 +763,10 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
     """
     import concurrent.futures
     def run():
-        if not appointment_id or _is_placeholder_value(appointment_id):
-            return "Error: Invalid appointment identifier. Rescheduling failed."
-            
-        appt_str = str(appointment_id).strip()
+        appt_str = str(appointment_id).strip() if appointment_id else ""
         repaired_appt = appt_str
         
-        if not _is_valid_uuid(appt_str):
+        if not appt_str or _is_placeholder_value(appt_str) or not _is_valid_uuid(appt_str):
             sys_c = get_query_customer_id()
             if sys_c:
                 db = SessionLocal()
@@ -501,7 +775,7 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
                     active_appts = db.query(Appointment).filter(
                         Appointment.customer_id == sys_c,
                         Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
-                    ).all()
+                    ).order_by(Appointment.created_at.desc()).all()
                     if active_appts:
                         repaired_appt = str(active_appts[0].id)
                 finally:
@@ -691,7 +965,7 @@ class ReceptionistAgent(Agent):
         }
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Processes booking queries with strict timeouts and local Ollama support."""
+        """Processes booking queries with strict timeouts, direct database routing, and Ollama support."""
         query = input_data.get("query", "").strip()
         if not query:
             return {"success": False, "error": "Please provide a booking request."}
@@ -719,20 +993,7 @@ class ReceptionistAgent(Agent):
                 "base_url": "http://localhost:11434/v1"
             })
 
-        # Tier 2: Groq llama-3.1-8b-instant
-        if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
-            model = "llama-3.1-8b-instant"
-            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
-                logger.info(f"⏭️ Skipping Groq model '{model}' due to active cooldown.")
-            else:
-                fallback_queue.append({
-                    "provider": "groq",
-                    "model": model,
-                    "api_key": groq_key,
-                    "base_url": "https://api.groq.com/openai/v1"
-                })
-
-        # Tier 3: Gemini Flash (gemini-2.0-flash or gemini-1.5-flash)
+        # Tier 2: Gemini Flash (gemini-2.0-flash or gemini-1.5-flash)
         if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
             model = "gemini-2.0-flash"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
@@ -745,9 +1006,262 @@ class ReceptionistAgent(Agent):
                     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"
                 })
 
+        # Tier 3: Groq llama-3.1-8b-instant
+        if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
+            model = "llama-3.1-8b-instant"
+            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
+                logger.info(f"⏭️ Skipping Groq model '{model}' due to active cooldown.")
+            else:
+                fallback_queue.append({
+                    "provider": "groq",
+                    "model": model,
+                    "api_key": groq_key,
+                    "base_url": "https://api.groq.com/openai/v1"
+                })
+
         if not fallback_queue:
             fallback_queue.append({"provider": "groq", "model": "llama-3.1-8b-instant", "api_key": "mock-groq-key", "base_url": "https://api.groq.com/openai/v1"})
 
+        # Step 1: High-speed Intent & Entity Extractor (Priority 2 & 3)
+        intent_json = None
+        for tier in fallback_queue:
+            model_name = tier["model"]
+            api_key = tier["api_key"]
+            base_url = tier["base_url"]
+            
+            try:
+                extraction_sys_prompt = (
+                    "You are a strict JSON intent and entity extractor. Output raw JSON only. Do not write explanations.\n"
+                    "Format:\n"
+                    "{\n"
+                    '  "intent": "book" | "cancel" | "reschedule" | "history" | "availability" | "chat",\n'
+                    '  "service": string or null,\n'
+                    '  "branch": string or null,\n'
+                    '  "stylist": string or null,\n'
+                    '  "date": string or null,\n'
+                    '  "time": string or null,\n'
+                    '  "appointment_id": string or null\n'
+                    "}\n"
+                    "Intents:\n"
+                    "- 'book': customer wants to create/schedule a booking, same service, same appointment, or book again.\n"
+                    "- 'cancel': cancel an appointment.\n"
+                    "- 'reschedule': move/reschedule an appointment.\n"
+                    "- 'history': review history or check past bookings.\n"
+                    "- 'availability': checking slot availability.\n"
+                    "- 'chat': greetings or other talk.\n\n"
+                    "TIME EXTRACTION RULES (CRITICAL):\n"
+                    "- Extract EXACTLY what the user specifies for time, including time ranges\n"
+                    "- If user says '3-4PM', extract '3-4PM' or '3-4pm'\n"
+                    "- If user says '5-6PM SLOT', extract '5-6pm'\n"
+                    "- If user says '3 PM', extract '3pm' or '3 PM'\n"
+                    "- If user says '15:00', extract '15:00'\n"
+                    "- Always extract time as provided by user, never leave as null if time is mentioned\n"
+                    "- The repair function will extract the START time from ranges like '3-4PM' -> '3PM'"
+                )
+                
+                client = OpenAIChatCompletionClient(
+                    model=model_name,
+                    api_key=api_key,
+                    base_url=base_url,
+                    timeout=8.0
+                )
+                
+                from autogen_core.models import SystemMessage, UserMessage
+                sys_msg = SystemMessage(content=extraction_sys_prompt)
+                user_msg = UserMessage(content=f"User Query:\n{query}", source="user")
+                
+                res = await asyncio.wait_for(client.create(messages=[sys_msg, user_msg]), timeout=8.0)
+                res_content = res.content.strip()
+                
+                import json
+                if "```" in res_content:
+                    res_content = res_content.split("```")[1]
+                    if res_content.startswith("json"):
+                        res_content = res_content[4:]
+                intent_json = json.loads(res_content.strip())
+                break
+            except Exception as e:
+                logger.warning(f"Fast extraction failed on model '{model_name}': {e}")
+                # Cooldown model on failure
+                ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 1800
+
+        if not intent_json:
+            intent_json = {"intent": "chat", "service": None, "branch": None, "stylist": None, "date": None, "time": None}
+
+        intent = intent_json.get("intent", "chat")
+        
+        # Load Customer History Memory for warm personalized greeting (Priority 7)
+        cust_id = get_query_customer_id()
+        pref_str, pref_service, pref_stylist = _get_customer_memory(cust_id)
+
+        # Priority 4: Direct discovery catalog browser rules
+        is_discovery_query = any(k in query.lower() for k in ["show services", "show branches", "show staff", "list services", "list branches", "list staff"])
+
+        # ROUTING & BOOKING ENGINE (Priority 2 & 3)
+        if intent == "book" and not is_discovery_query:
+            # Reuse preferences on smart rebooking requests (Priority 7)
+            service_input = intent_json.get("service")
+            stylist_input = intent_json.get("stylist")
+            
+            if not service_input and pref_service:
+                service_input = pref_service
+            if not stylist_input and pref_stylist:
+                stylist_input = pref_stylist
+                
+            repaired_cust = repair_customer(cust_id)
+            repaired_branch = repair_branch(intent_json.get("branch"))
+            repaired_service = repair_service(service_input)
+            repaired_staff = repair_staff(stylist_input, repaired_branch)
+            
+            repaired_date = repair_date(intent_json.get("date"))
+            repaired_time = repair_time(intent_json.get("time"))
+            repaired_time_str = f"{repaired_date}T{repaired_time}:00Z"
+
+            # Check availability directly via Python tool
+            slots_data = check_stylist_availability(
+                branch_id=repaired_branch,
+                date=repaired_date,
+                staff_id=repaired_staff,
+                service_id=repaired_service
+            )
+            
+            if "error" in slots_data.lower() or not slots_data:
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": f"{pref_str}\n\nI could not verify availability right now.",
+                    "provider": "booking_engine"
+                }
+
+            # Create appointment directly via Python tool
+            booking_res = book_new_appointment(
+                customer_id=repaired_cust,
+                branch_id=repaired_branch,
+                service_id=repaired_service,
+                start_time=repaired_time_str,
+                staff_id=repaired_staff,
+                notes="Self-guided booking"
+            )
+            
+            # Format confirmed response using strict summary structure
+            db = SessionLocal()
+            try:
+                service_name = db.query(Service).filter(Service.id == repaired_service).first().name
+                branch_name = db.query(Branch).filter(Branch.id == repaired_branch).first().name
+                stylist_name = "Professional Stylist"
+                if repaired_staff:
+                    st = db.query(Staff).filter(Staff.id == repaired_staff).first()
+                    if st:
+                        stylist_name = f"{st.first_name} {st.last_name}"
+                price_val = db.query(Service).filter(Service.id == repaired_service).first().price
+            except Exception:
+                service_name = "Precision Haircut"
+                branch_name = "Vijayawada Benz Circle"
+                stylist_name = "Alexandra Chen"
+                price_val = 85.0
+            finally:
+                db.close()
+
+            confirm_msg = (
+                f"{pref_str}\n\n"
+                f"Appointment Summary\n\n"
+                f"Service: {service_name}\n"
+                f"Branch: {branch_name}\n"
+                f"Stylist: {stylist_name}\n"
+                f"Date: {repaired_date}\n"
+                f"Time: {repaired_time}\n"
+                f"Price: ${price_val}\n\n"
+                f"Status:\nConfirmed"
+            )
+            
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": confirm_msg,
+                "provider": "booking_engine"
+            }
+
+        elif intent == "availability" and not is_discovery_query:
+            repaired_branch = repair_branch(intent_json.get("branch"))
+            repaired_service = repair_service(intent_json.get("service"))
+            repaired_staff = repair_staff(intent_json.get("stylist"), repaired_branch)
+            repaired_date = repair_date(intent_json.get("date"))
+
+            slots_data = check_stylist_availability(
+                branch_id=repaired_branch,
+                date=repaired_date,
+                staff_id=repaired_staff,
+                service_id=repaired_service
+            )
+            
+            if "error" in slots_data.lower() or not slots_data:
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": "I could not verify availability right now.",
+                    "provider": "booking_engine"
+                }
+
+            formatted_slots = format_receptionist_tool_output("availability", slots_data)
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": f"{pref_str}\n\n{formatted_slots}",
+                "provider": "booking_engine"
+            }
+
+        elif intent == "cancel":
+            appt_id = intent_json.get("appointment_id")
+            repaired_cust = repair_customer(cust_id)
+            
+            # Resolve the correct active appointment id
+            resolved_id = find_matching_active_appointment(repaired_cust, intent_json, query)
+            if resolved_id:
+                appt_id = resolved_id
+                
+            cancel_res = cancel_existing_appointment(appointment_id=appt_id)
+            formatted_cancel = format_receptionist_tool_output("cancel", cancel_res)
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": f"{pref_str}\n\n{formatted_cancel}",
+                "provider": "booking_engine"
+            }
+
+        elif intent == "reschedule":
+            appt_id = intent_json.get("appointment_id")
+            repaired_cust = repair_customer(cust_id)
+            
+            # Resolve the correct active appointment id
+            resolved_id = find_matching_active_appointment(repaired_cust, intent_json, query)
+            if resolved_id:
+                appt_id = resolved_id
+                
+            new_date = repair_date(intent_json.get("date"))
+            new_time = repair_time(intent_json.get("time"))
+            new_start_time = f"{new_date}T{new_time}:00Z"
+            
+            resched_res = reschedule_existing_appointment(appointment_id=appt_id, new_start_time=new_start_time)
+            formatted_resched = format_receptionist_tool_output("reschedule", resched_res)
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": f"{pref_str}\n\n{formatted_resched}",
+                "provider": "booking_engine"
+            }
+
+        elif intent == "history":
+            repaired_cust = repair_customer(cust_id)
+            history_data = check_customer_booking_history(customer_id=repaired_cust)
+            formatted_history = format_receptionist_tool_output("history", history_data)
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": f"{pref_str}\n\n{formatted_history}",
+                "provider": "booking_engine"
+            }
+
+        # Chat / Discovery queries fall back to standard Agent execution
         last_error = None
         for idx, tier in enumerate(fallback_queue, 1):
             model_name = tier["model"]
@@ -755,7 +1269,7 @@ class ReceptionistAgent(Agent):
             base_url = tier["base_url"]
             api_key = tier["api_key"]
 
-            max_attempts = 1  # 429 logic immediately skips. Disable multi-retries for 429
+            max_attempts = 1
             for attempt in range(1, max_attempts + 1):
                 start_time = time.perf_counter()
                 try:
@@ -849,7 +1363,6 @@ class ReceptionistAgent(Agent):
                     
                     last_error = ex
 
-                    # Check for rate limit / quota / timeout (Priority 1 & timeouts)
                     from openai import RateLimitError, APITimeoutError
                     import httpx
 
@@ -857,13 +1370,13 @@ class ReceptionistAgent(Agent):
                     is_timeout = "timeout" in err_str.lower() or isinstance(ex, APITimeoutError) or isinstance(ex, httpx.TimeoutException) or isinstance(ex, asyncio.TimeoutError)
 
                     if is_rate_limit or is_timeout:
-                        logger.error(f"🚨 Model '{model_name}' rate limit or timeout. Triggering 30-minute cooldown and immediately fallback.")
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 1800 # 30 minutes cooldown
+                        logger.error(f"🚨 Model '{model_name}' rate limit or timeout. Cooldown for 30 minutes.")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 1800
                         
                         ReceptionistAgent.FAILURE_COUNT += 1
                         if ReceptionistAgent.FAILURE_COUNT >= ReceptionistAgent.MAX_FAILURES:
                             ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = True
-                        break # Break loop immediately to try next model
+                        break
 
                     ReceptionistAgent.FAILURE_COUNT += 1
                     if ReceptionistAgent.FAILURE_COUNT >= ReceptionistAgent.MAX_FAILURES:

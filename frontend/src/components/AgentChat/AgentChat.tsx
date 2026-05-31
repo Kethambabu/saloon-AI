@@ -22,7 +22,11 @@ interface ChatSession {
   messages: Message[];
 }
 
-export const AgentChat: React.FC = () => {
+interface AgentChatProps {
+  onRefreshAppointments?: () => void;
+}
+
+export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) => {
   // --- States ---
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
@@ -164,6 +168,9 @@ export const AgentChat: React.FC = () => {
       });
 
       if (response.data && response.data.success) {
+        if (onRefreshAppointments) {
+          onRefreshAppointments();
+        }
         const assistantMsg: Message = {
           id: `msg_assistant_${Date.now()}`,
           role: 'assistant',

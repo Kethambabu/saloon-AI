@@ -55,6 +55,48 @@ interface NotificationItem {
   timestamp: string;
 }
 
+/**
+ * Format ISO datetime string in UTC without browser timezone conversion.
+ * Converts "2026-06-07T13:00:00Z" to "June 7, 2026 at 1:00 PM" (UTC)
+ */
+const formatUTCDateTime = (isoString: string): string => {
+  try {
+    const date = new Date(isoString);
+    // Use UTC methods to avoid timezone conversion
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth();
+    const day = date.getUTCDate();
+    const hours = date.getUTCHours();
+    const minutes = date.getUTCMinutes();
+    
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    
+    return `${monthNames[month]} ${day}, ${year} at ${displayHours}:${displayMinutes} ${ampm}`;
+  } catch (err) {
+    return 'Invalid date';
+  }
+};
+
+/**
+ * Format ISO date string to YYYY-MM-DD in UTC without browser timezone conversion.
+ */
+const formatUTCDate = (isoString: string): string => {
+  try {
+    const date = new Date(isoString);
+    const year = date.getUTCFullYear();
+    const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+    const day = date.getUTCDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch (err) {
+    return 'Invalid date';
+  }
+};
+
 export const UserDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   
@@ -484,20 +526,25 @@ export const UserDashboard: React.FC = () => {
                                   <span>⏱️ {active.service.duration_minutes} min</span>
                                 </div>
                                 <p className="text-xs font-bold text-slate-300 mt-2 bg-slate-950/40 p-3 rounded-xl border border-slate-850">
-                                  📅 {new Date(active.start_time).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
+                                  📅 {formatUTCDateTime(active.start_time)}
                                 </p>
                               </div>
                               <div className="mt-5 pt-4 border-t border-slate-800/80 flex items-center justify-between">
                                 <span className="text-lg font-black text-blue-400">${active.service.price}</span>
-                                <button
-                                  onClick={() => {
-                                    setActiveTab('my-appointments');
-                                    setAppointmentTab('upcoming');
-                                  }}
-                                  className="px-4.5 py-2 bg-slate-800 hover:bg-slate-750 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
-                                >
-                                  Manage Session
-                                </button>
+                                <div className="flex items-center space-x-2">
+                                  <button
+                                    onClick={() => setReschedulingAppt(active)}
+                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
+                                  >
+                                    🕒 Reschedule
+                                  </button>
+                                  <button
+                                    onClick={() => handleCancelAppointment(active.id)}
+                                    className="px-4 py-2 bg-red-950/40 hover:bg-red-900/30 border border-red-900/30 text-red-400 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
+                                  >
+                                    🗑️ Cancel
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -929,7 +976,7 @@ export const UserDashboard: React.FC = () => {
                           <span className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">{appt.branch.name}</span>
                           <h4 className="text-base font-black text-white">{appt.service.name}</h4>
                           <p className="text-[11px] text-slate-400 font-bold bg-slate-950/40 p-2.5 rounded-xl border border-slate-850">
-                            📅 {new Date(appt.start_time).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' })}
+                            📅 {formatUTCDateTime(appt.start_time)}
                           </p>
                           <div className="flex items-center space-x-2 text-xs text-slate-400">
                             <span>Stylist:</span>
@@ -1146,7 +1193,7 @@ export const UserDashboard: React.FC = () => {
                               <td className="px-6 py-4.5 font-bold text-white">{appt.service.name}</td>
                               <td className="px-6 py-4.5">{appt.branch.name}</td>
                               <td className="px-6 py-4.5 font-semibold text-slate-300">{appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Auto Assigned'}</td>
-                              <td className="px-6 py-4.5">{new Date(appt.start_time).toLocaleDateString()}</td>
+                              <td className="px-6 py-4.5">{formatUTCDate(appt.start_time)}</td>
                               <td className="px-6 py-4.5 text-blue-400 font-black">${appt.service.price}</td>
                               <td className="px-6 py-4.5">
                                 <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border ${
@@ -1182,7 +1229,7 @@ export const UserDashboard: React.FC = () => {
                 
                 {/* Full screen render wrapper for Clara chat */}
                 <div className="bg-slate-900/30 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative custom-fullscreen-agentchat-container">
-                  <AgentChat />
+                  <AgentChat onRefreshAppointments={fetchData} />
                 </div>
 
                 <style>{`
