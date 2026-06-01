@@ -30,6 +30,15 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 class LoginRequest(BaseModel):
     email: EmailStr = Field(..., example="owner@salonai.com")
     password: str = Field(..., example="password123")
+    selected_role: Optional[UserRole] = Field(default=None, description="Role when multiple options exist")
+
+
+class LoginChoiceResponse(BaseModel):
+    """Response when user has multiple role options"""
+    require_role_selection: bool = True
+    available_roles: list[str]
+    email: str
+    message: str
 
 
 class TokenResponse(BaseModel):
@@ -43,6 +52,8 @@ class TokenResponse(BaseModel):
     refreshToken: Optional[str] = None
     user: Optional[dict] = None
     message: Optional[str] = None
+    require_role_selection: Optional[bool] = False
+    available_roles: Optional[list[str]] = None
 
 
 class RefreshRequest(BaseModel):
@@ -64,33 +75,68 @@ class UserMeResponse(BaseModel):
     "/login",
     response_model=TokenResponse,
     summary="User Login",
-    description="Authenticate user with email and password, returning access and refresh JWT tokens."
+    description="Authenticate user with email and password. May require role selection if user has multiple roles."
 )
 def login(
     payload: LoginRequest,
     db: Session = Depends(get_db)
 ):
-    """Authenticate and issue JWT tokens."""
-    user = db.query(User).filter(User.email == payload.email.lower().strip()).first()
+    """Authenticate and issue JWT tokens or prompt for role selection."""
+    email_clean = payload.email.lower().strip()
     
-    if not user:
+    # Find all users with this email (there can be multiple roles)
+    users = db.query(User).filter(User.email == email_clean).all()
+    
+    if not users:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
-        
-    if not verify_password(payload.password, user.hashed_password):
+    
+    # Verify password matches for at least one user record
+    valid_users = []
+    for user in users:
+        if verify_password(payload.password, user.hashed_password):
+            if user.is_active:
+                valid_users.append(user)
+    
+    if not valid_users:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
+    
+    # If multiple valid roles exist, prompt user to select one
+    if len(valid_users) > 1:
+        available_roles = [user.role.value for user in valid_users]
         
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is suspended or inactive. Please contact support."
-        )
-        
+        # If user already specified a role, use it
+        if payload.selected_role:
+            selected_user = next(
+                (u for u in valid_users if u.role == payload.selected_role),
+                None
+            )
+            if not selected_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Role {payload.selected_role} not available for this user"
+                )
+            user = selected_user
+        else:
+            # Return available roles and ask user to select
+            return TokenResponse(
+                access_token="",
+                refresh_token="",
+                role=UserRole.CUSTOMER,
+                email=email_clean,
+                success=False,
+                message="Multiple roles available for this account. Please select one.",
+                require_role_selection=True,
+                available_roles=available_roles
+            )
+    else:
+        user = valid_users[0]
+    
     # Generate tokens
     access_token = create_access_token(subject=user.id, role=user.role.value)
     refresh_token = create_refresh_token(subject=user.id)

@@ -30,10 +30,12 @@ from db.models import (
     ChatLog,
     Notification,
     AnalyticsRecord,
+    LoyaltyTransaction,
     AppointmentStatus,
     LeadStatus,
     ReviewStatus,
     UserRole,
+    LoyaltyTransactionType,
 )
 
 # Export all symbols for clean import paths
@@ -60,9 +62,11 @@ __all__ = [
     "ChatLog",
     "Notification",
     "AnalyticsRecord",
+    "LoyaltyTransaction",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
     "UserRole",
+    "LoyaltyTransactionType",
 ]
 

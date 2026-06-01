@@ -16,6 +16,14 @@ router.include_router(agent_router)
 from api.routes.auth_routes import router as auth_router
 router.include_router(auth_router)
 
+# Include customer sub-routes (isolated customer data access)
+from api.routes.customer_routes import router as customer_router
+router.include_router(customer_router)
+
+# Include staff sub-routes (isolated staff data access)
+from api.routes.staff_routes import router as staff_router
+router.include_router(staff_router)
+
 # Include analytics sub-routes
 from api.routes.analytics_routes import router as analytics_router
 router.include_router(analytics_router)

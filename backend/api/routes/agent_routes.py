@@ -90,25 +90,33 @@ async def chat_with_agent(
     """
     Endpoint to send queries to Clara, the AI Salon Receptionist.
     Maintains context through history prepending and executes booking operations on the database automatically.
+    Role-based: Customers use customer-specific agent, Staff use staff agent.
     """
-    logger.info(f"POST /api/agent/chat received (Session ID: {payload.session_id})")
+    logger.info(f"POST /api/agent/chat received (Session ID: {payload.session_id}, User Role: {current_user.role})")
     
     from datetime import datetime
     import asyncio
+    
+    # Role-based agent enforcement
+    if current_user.role.value == "CUSTOMER" and not current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer users must have an associated customer profile"
+        )
     
     context_prefix = ""
     # Inject current date and time context
     now_dt = datetime.now()
     context_prefix += f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (Today is {now_dt.strftime('%A, %B %d, %Y')}). Use this to calculate exact dates like 'tomorrow', 'next Tuesday', etc.]\n"
     
-    # Inject logged-in user context
+    # Inject logged-in user context WITH ROLE ISOLATION
     if current_user:
         if current_user.customer:
             cust = current_user.customer
-            context_prefix += f"[SYSTEM CUSTOMER CONTEXT: The user chatting with you is logged in as Customer '{cust.full_name}' (ID: {cust.id}, Email: {cust.email}, Phone: {cust.phone or 'N/A'}). Always use this Customer ID directly for bookings and customer history lookups. Do NOT ask them to search or provide their details.]\n"
+            context_prefix += f"[SYSTEM CUSTOMER CONTEXT: The user chatting with you is logged in as Customer '{cust.full_name}' (ID: {cust.id}, Email: {cust.email}, Phone: {cust.phone or 'N/A'}, Loyalty Points: {cust.loyalty_points}). Always use this Customer ID directly for bookings and customer history lookups. Do NOT ask them to search or provide their details.]\n"
         elif current_user.staff:
             stf = current_user.staff
-            context_prefix += f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff '{stf.full_name}' (ID: {stf.id}, Role: {stf.role}, Branch ID: {stf.branch_id}).]\n"
+            context_prefix += f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff '{stf.full_name}' (ID: {stf.id}, Role: {stf.role}, Branch ID: {stf.branch_id}). You have access to internal staff tools and analytics.]\n"
         else:
             context_prefix += f"[SYSTEM USER CONTEXT: The user chatting with you is logged in with email: '{current_user.email}' (Role: {current_user.role.value if hasattr(current_user.role, 'value') else current_user.role}).]\n"
             
@@ -134,6 +142,29 @@ async def chat_with_agent(
             detail=f"Agent service is currently initializing or unavailable: {str(e)}"
         )
 
+    # 3. Store chat log with customer isolation
+    from db import get_db, ChatLog
+    from sqlalchemy.orm import Session as SQLAlchemySession
+    
+    async def store_chat_log(db_session: SQLAlchemySession, sender: str, message: str):
+        """Store chat interaction with proper customer isolation."""
+        try:
+            chat_log = ChatLog(
+                session_id=payload.session_id,
+                user_id=current_user.id,
+                customer_id=current_user.customer_id if current_user.customer_id else None,
+                staff_id=current_user.staff_id if current_user.staff_id else None,
+                agent_type="RECEPTIONIST",
+                sender=sender,
+                message=message
+            )
+            db_session.add(chat_log)
+            db_session.commit()
+            logger.info(f"Stored chat log for user {current_user.id}, customer_id: {current_user.customer_id}")
+        except Exception as e:
+            logger.error(f"Failed to store chat log: {e}")
+            db_session.rollback()
+
     # Helper function to run agent processing in a background task
     async def run_agent_in_background(query_data: Dict[str, Any]):
         try:
@@ -143,7 +174,7 @@ async def chat_with_agent(
         except Exception as bg_ex:
             logger.error(f"Error in background agent process execution: {bg_ex}")
 
-    # 3. Process query through AutoGen asynchronously with hybrid background forking
+    # 4. Process query through AutoGen asynchronously with hybrid background forking
     try:
         logger.debug(f"Sending query to agent: {full_query[:100]}...")
         

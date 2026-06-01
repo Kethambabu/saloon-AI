@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { apiClient } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 
 // Structured interface for chat messages
 interface Message {
@@ -28,6 +29,7 @@ interface AgentChatProps {
 
 export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) => {
   // --- States ---
+  const { user } = useAuth();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -39,9 +41,18 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
   // References for scrolling
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Get user-specific localStorage key
+  const getStorageKey = (): string => {
+    if (!user || !user.id) {
+      return 'salonai_sessions_anonymous';
+    }
+    return `salonai_sessions_${user.id}`;
+  };
+
   // --- Load Initial Sessions & Restore State ---
   useEffect(() => {
-    const savedSessions = localStorage.getItem('salonai_sessions');
+    const storageKey = getStorageKey();
+    const savedSessions = localStorage.getItem(storageKey);
     if (savedSessions) {
       try {
         const parsed = JSON.parse(savedSessions) as ChatSession[];
@@ -59,7 +70,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
     } else {
       createNewSession();
     }
-  }, []);
+  }, [user]);
 
   // --- Auto-scroll to Bottom on New Messages ---
   useEffect(() => {
@@ -69,7 +80,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
   // --- Helper: Save sessions to localStorage ---
   const saveSessions = (updatedSessions: ChatSession[]) => {
     setSessions(updatedSessions);
-    localStorage.setItem('salonai_sessions', JSON.stringify(updatedSessions));
+    const storageKey = getStorageKey();
+    localStorage.setItem(storageKey, JSON.stringify(updatedSessions));
   };
 
   // --- Action: Create New Session ---
@@ -113,7 +125,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
     
     if (filtered.length === 0) {
       // If no sessions remain, reset completely
-      localStorage.removeItem('salonai_sessions');
+      const storageKey = getStorageKey();
+      localStorage.removeItem(storageKey);
       createNewSession();
     } else {
       saveSessions(filtered);

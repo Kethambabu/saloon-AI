@@ -65,6 +65,17 @@ class UserRole(str, enum.Enum):
     OWNER = "OWNER"
 
 
+class LoyaltyTransactionType(str, enum.Enum):
+    """Types of loyalty point transactions"""
+    APPOINTMENT_COMPLETED = "APPOINTMENT_COMPLETED"
+    APPOINTMENT_CANCELLED = "APPOINTMENT_CANCELLED"
+    REVIEW_SUBMITTED = "REVIEW_SUBMITTED"
+    RATING_BONUS = "RATING_BONUS"
+    APP_USAGE_BONUS = "APP_USAGE_BONUS"
+    POINT_REDEMPTION = "POINT_REDEMPTION"
+    MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT"
+
+
 
 class BaseModel(Base):
     """
@@ -179,6 +190,7 @@ class Customer(BaseModel):
     email = Column(String(100), unique=True, index=True, nullable=False)
     phone = Column(String(20), index=True, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    loyalty_points = Column(Integer, default=0, nullable=False, index=True)
 
     # Relationships
     appointments = relationship(
@@ -191,13 +203,62 @@ class Customer(BaseModel):
         back_populates="customer",
         cascade="all, delete-orphan"
     )
+    loyalty_transactions = relationship(
+        "LoyaltyTransaction",
+        back_populates="customer",
+        cascade="all, delete-orphan"
+    )
 
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
 
     def __repr__(self) -> str:
-        return f"<Customer name={self.full_name} email={self.email}>"
+        return f"<Customer name={self.full_name} email={self.email} loyalty_points={self.loyalty_points}>"
+
+
+class LoyaltyTransaction(BaseModel):
+    """
+    Tracks loyalty point transactions for customers.
+    Records how points are earned/spent and reasons for changes.
+    """
+    __tablename__ = "loyalty_transactions"
+
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    transaction_type = Column(
+        SQLEnum(LoyaltyTransactionType, name="loyalty_transaction_type"),
+        nullable=False,
+        index=True
+    )
+    points_change = Column(Integer, nullable=False)
+    previous_balance = Column(Integer, nullable=False)
+    new_balance = Column(Integer, nullable=False)
+    description = Column(Text, nullable=True)
+    appointment_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    review_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("reviews.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    # Relationships
+    customer = relationship("Customer", back_populates="loyalty_transactions")
+    appointment = relationship("Appointment")
+    review = relationship("Review")
+
+    def __repr__(self) -> str:
+        return f"<LoyaltyTransaction customer_id={self.customer_id} type={self.transaction_type} points_change={self.points_change}>"
 
 
 class Service(BaseModel):
@@ -476,11 +537,26 @@ class ChatLog(BaseModel):
         nullable=True,
         index=True
     )
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    staff_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    agent_type = Column(String(50), nullable=False, default="RECEPTIONIST")
     sender = Column(String(50), nullable=False)
     message = Column(Text, nullable=False)
 
     # Relationships
     user = relationship("User", backref="chat_logs")
+    customer = relationship("Customer", backref="chat_logs")
+    staff = relationship("Staff", backref="chat_logs")
 
 
 class Notification(BaseModel):

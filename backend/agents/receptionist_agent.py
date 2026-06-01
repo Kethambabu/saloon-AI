@@ -1424,8 +1424,22 @@ class ReceptionistAgent(Agent):
                         sys_msg = SystemMessage(content=formatter_sys_prompt)
                         user_msg = UserMessage(content=f"Raw System Result:\n{response_stripped}", source="user")
                         
-                        fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg]), timeout=10.0)
-                        response_text = fmt_result.content.strip()
+                        try:
+                            fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg]), timeout=10.0)
+                            formatted_response = fmt_result.content.strip()
+                            
+                            # Validate formatter response - ensure it's not truncated or incomplete
+                            if formatted_response and len(formatted_response) >= 20:
+                                response_text = formatted_response
+                                logger.info(f"Formatter successfully formatted response (length: {len(formatted_response)})")
+                            else:
+                                logger.warning(f"Formatter returned suspiciously short response: '{formatted_response}'. Using original response instead.")
+                                # Fall back to original response if formatter output is too short
+                                response_text = response_stripped
+                        except Exception as fmt_ex:
+                            logger.error(f"Formatter failed with error: {str(fmt_ex)}. Using original response instead.")
+                            # Fall back to original response if formatter fails
+                            response_text = response_stripped
 
                     ReceptionistAgent.FAILURE_COUNT = 0
                     ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = False

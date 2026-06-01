@@ -12,6 +12,7 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
   const navigate = useNavigate();
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [selectedRole, setSelectedRole] = useState<'Staff' | 'User'>('User');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -104,12 +105,15 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
     if (role === 'Admin') {
       setEmail('owner@salonai.com');
       setPassword('password123');
+      setSelectedRole('User');
     } else if (role === 'Staff') {
       setEmail('marcus@salonai.com');
       setPassword('password123');
+      setSelectedRole('Staff');
     } else {
       setEmail('customer@example.com');
       setPassword('password123');
+      setSelectedRole('User');
     }
   };
 
@@ -189,6 +193,27 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                   placeholder="••••••••"
                   className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
                 />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="role" className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
+                Login As
+              </label>
+              <div className="mt-1">
+                <select
+                  id="role"
+                  name="role"
+                  value={selectedRole}
+                  onChange={(e) => {
+                    setSelectedRole(e.target.value as 'Staff' | 'User');
+                    if (error) setError(null);
+                  }}
+                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm cursor-pointer"
+                >
+                  <option value="User" className="bg-slate-900 text-white">👤 Customer / User Account</option>
+                  <option value="Staff" className="bg-slate-900 text-white">💇 Staff / Stylist Account</option>
+                </select>
               </div>
             </div>
 
