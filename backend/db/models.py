@@ -22,7 +22,9 @@ from sqlalchemy import (
     ForeignKey,
     Uuid,
     Enum as SQLEnum,
-    CheckConstraint
+    CheckConstraint,
+    Date,
+    Time
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -45,6 +47,7 @@ class LeadStatus(str, enum.Enum):
     """Lifecycle states of a prospective client lead"""
     NEW = "NEW"
     CONTACTED = "CONTACTED"
+    INTERESTED = "INTERESTED"
     CONVERTED = "CONVERTED"
     LOST = "LOST"
 
@@ -169,6 +172,7 @@ class Staff(BaseModel):
     # Relationships
     branch = relationship("Branch", back_populates="staff")
     appointments = relationship("Appointment", back_populates="staff")
+    reviews = relationship("Review", back_populates="staff")
 
     @property
     def full_name(self) -> str:
@@ -344,31 +348,95 @@ class Lead(BaseModel):
     """
     __tablename__ = "leads"
 
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    customer_name = Column(Text, nullable=True)
+    customer_email = Column(Text, nullable=True)
+    customer_phone = Column(Text, nullable=True)
+    service_name = Column(Text, nullable=True)
+    preferred_date = Column(Date, nullable=True)
+    preferred_time = Column(Time, nullable=True)
     branch_id = Column(
         Uuid(as_uuid=True),
         ForeignKey("branches.id", ondelete="SET NULL"),
         nullable=True,
         index=True
     )
-    first_name = Column(String(50), nullable=False)
-    last_name = Column(String(50), nullable=True)
-    email = Column(String(100), index=True, nullable=True)
-    phone = Column(String(20), index=True, nullable=True)
-    source = Column(String(50), index=True, nullable=True)
+    assigned_staff = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    source = Column(Text, nullable=True)
     status = Column(
         SQLEnum(LeadStatus, name="lead_status"),
         default=LeadStatus.NEW,
         nullable=False,
         index=True
     )
+    lead_score = Column(Integer, default=0, nullable=False)
+    followup_count = Column(Integer, default=0, nullable=False)
+    last_contacted = Column(DateTime(timezone=True), nullable=True)
+    converted = Column(Boolean, default=False, nullable=False)
+    converted_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
 
     # Relationships
     branch = relationship("Branch", back_populates="leads")
+    customer = relationship("Customer")
+    staff = relationship("Staff", foreign_keys=[assigned_staff])
+
+    @property
+    def first_name(self) -> str:
+        if self.customer_name:
+            return self.customer_name.split()[0]
+        return ""
+
+    @first_name.setter
+    def first_name(self, value: str):
+        if not self.customer_name:
+            self.customer_name = value
+        else:
+            parts = self.customer_name.split()
+            last = " ".join(parts[1:]) if len(parts) > 1 else ""
+            self.customer_name = f"{value} {last}".strip()
+
+    @property
+    def last_name(self) -> str:
+        if self.customer_name:
+            parts = self.customer_name.split()
+            return " ".join(parts[1:]) if len(parts) > 1 else ""
+        return ""
+
+    @last_name.setter
+    def last_name(self, value: str):
+        first = self.first_name
+        self.customer_name = f"{first} {value or ''}".strip()
+
+    @property
+    def email(self) -> Optional[str]:
+        return self.customer_email
+
+    @email.setter
+    def email(self, value: Optional[str]):
+        self.customer_email = value
+
+    @property
+    def phone(self) -> Optional[str]:
+        return self.customer_phone
+
+    @phone.setter
+    def phone(self, value: Optional[str]):
+        self.customer_phone = value
 
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name or ''}".strip()
+        return self.customer_name or ""
 
     def __repr__(self) -> str:
         return f"<Lead name={self.full_name} status={self.status}>"
@@ -403,8 +471,19 @@ class Review(BaseModel):
         nullable=True,
         index=True
     )
+    staff_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
     rating = Column(Integer, nullable=False)
     comment = Column(Text, nullable=True)
+    review_text = Column(Text, nullable=True)  # Mirror text for Reputation Agent
+    sentiment = Column(String(50), default="NEUTRAL", nullable=True)
+    ai_response = Column(Text, nullable=True)
+    escalation_required = Column(Boolean, default=False, nullable=False)
+    responded = Column(Boolean, default=False, nullable=False)
     status = Column(
         SQLEnum(ReviewStatus, name="review_status"),
         default=ReviewStatus.PENDING,
@@ -416,9 +495,10 @@ class Review(BaseModel):
     customer = relationship("Customer", back_populates="reviews")
     branch = relationship("Branch", back_populates="reviews")
     appointment = relationship("Appointment", back_populates="review")
+    staff = relationship("Staff", back_populates="reviews")
 
     def __repr__(self) -> str:
-        return f"<Review rating={self.rating} status={self.status}>"
+        return f"<Review rating={self.rating} status={self.status} sentiment={self.sentiment}>"
 
 
 class Waitlist(BaseModel):
@@ -592,6 +672,70 @@ class AnalyticsRecord(BaseModel):
     dimensions = Column(Text, nullable=True)  # JSON-formatted string for flexible dimensions
 
 
+class ServiceRecommendation(BaseModel):
+    """
+    Stores service-to-service upsell rules and confidence scores.
+    Directly mirrors Zenoti's Automated Upsells configuration.
+    """
+    __tablename__ = "service_recommendations"
+
+    service_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    recommended_service_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    confidence_score = Column(Float, default=1.0, nullable=False)
+
+    # Relationships
+    service = relationship("Service", foreign_keys=[service_id], backref="source_recommendations")
+    recommended_service = relationship("Service", foreign_keys=[recommended_service_id], backref="target_recommendations")
+
+    def __repr__(self) -> str:
+        return f"<ServiceRecommendation service_id={self.service_id} recommended={self.recommended_service_id}>"
+
+
+class CustomerRecommendation(BaseModel):
+    """
+    Tracks personalization recommendations issued to customers and their outcomes.
+    """
+    __tablename__ = "customer_recommendations"
+
+    customer_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    appointment_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    recommended_service_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("services.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    accepted = Column(Boolean, default=False, nullable=False, index=True)
+
+    # Relationships
+    customer = relationship("Customer", backref="recommendations")
+    appointment = relationship("Appointment", backref="recommendations")
+    recommended_service = relationship("Service", backref="customer_recommendations")
+
+    def __repr__(self) -> str:
+        return f"<CustomerRecommendation customer_id={self.customer_id} service={self.recommended_service_id} accepted={self.accepted}>"
+
+
 # Export all models and enums
 __all__ = [
     "BaseModel",
@@ -607,6 +751,8 @@ __all__ = [
     "ChatLog",
     "Notification",
     "AnalyticsRecord",
+    "ServiceRecommendation",
+    "CustomerRecommendation",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",

@@ -66,6 +66,10 @@ def add_loyalty_points(
     if not customer:
         raise ValueError(f"Customer {customer_id} not found")
 
+    # Ensure customer starts with 0 points if not initialized
+    if customer.loyalty_points is None:
+        customer.loyalty_points = 0
+    
     previous_balance = customer.loyalty_points
     new_balance = max(0, previous_balance + points)  # Don't allow negative points
 
@@ -83,6 +87,10 @@ def add_loyalty_points(
     customer.loyalty_points = new_balance
     db.add(transaction)
     db.flush()
+    db.commit()  # Commit to ensure changes persist
+    
+    # Refresh customer object to get updated loyalty_points from DB
+    db.refresh(customer)
 
     logger.info(
         f"Added {points} loyalty points to customer {customer_id}. "
@@ -284,7 +292,7 @@ def reset_customer_loyalty_points(
     if not customer:
         raise ValueError(f"Customer {customer_id} not found")
 
-    previous_balance = customer.loyalty_points
+    previous_balance = customer.loyalty_points or 0  # Ensure previous_balance is never None
     customer.loyalty_points = 0
 
     transaction = LoyaltyTransaction(
@@ -298,6 +306,10 @@ def reset_customer_loyalty_points(
 
     db.add(transaction)
     db.flush()
+    db.commit()  # Commit to ensure changes persist
+    
+    # Refresh customer object to get updated loyalty_points from DB
+    db.refresh(customer)
 
     logger.info(f"Reset loyalty points for customer {customer_id} from {previous_balance} to 0")
 

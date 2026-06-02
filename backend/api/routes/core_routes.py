@@ -576,63 +576,7 @@ async def reschedule_booking(
     return result
 
 
-@router.post(
-    "/reviews",
-    status_code=status.HTTP_201_CREATED,
-    summary="Submit a Review",
-    tags=["Reviews"]
-)
-async def submit_review(
-    payload: ReviewCreateRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Submit a review for an appointment.
-    """
-    from uuid import UUID
-    try:
-        appt_uuid = UUID(payload.appointment_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid appointment_id format.")
-        
-    appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
-    if not appt:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found.")
-        
-    if (current_user.role == UserRole.CUSTOMER or current_user.role.value == "CUSTOMER") and appt.customer_id != current_user.customer_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to review this appointment."
-        )
-        
-    if appt.status != AppointmentStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only completed appointments can be reviewed."
-        )
-        
-    # Check if a review already exists
-    existing_review = db.query(Review).filter(Review.appointment_id == appt.id).first()
-    if existing_review:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You have already submitted a review for this appointment."
-        )
-        
-    import uuid
-    new_review = Review(
-        id=uuid.uuid4(),
-        customer_id=appt.customer_id,
-        branch_id=appt.branch_id,
-        appointment_id=appt.id,
-        rating=payload.rating,
-        comment=payload.comment,
-        status=ReviewStatus.PENDING
-    )
-    db.add(new_review)
-    db.commit()
-    return {"success": True, "message": "Review submitted successfully."}
+# Reviews routing is now handled by api/routes/review_routes.py (Reputation Agent module)
 
 
 @router.post(

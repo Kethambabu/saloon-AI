@@ -37,7 +37,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
       try {
         // Query database for active branches using public route or direct access
         // We fall back to static list if endpoint fails
-        const response = await apiClient.get('/agent/chat', { 
+        await apiClient.get('/agent/chat', { 
           params: { message: "list branches", "session id": "signup-probe" }
         });
         // Or fetch branches dynamically

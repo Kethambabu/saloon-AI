@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../api/client';
 import { AgentChat } from '../AgentChat/AgentChat';
+import { useLoyalty } from '../../hooks/useLoyalty';
+import { LoyaltyCard } from '../Loyalty/LoyaltyCard';
+import { loyaltySyncService } from '../../services/LoyaltySyncService';
 
 interface AppointmentRecord {
   id: string;
@@ -101,7 +104,7 @@ export const UserDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   
   // Navigation & active views
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'my-appointments' | 'history' | 'assistant' | 'services' | 'notifications' | 'profile'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'my-appointments' | 'history' | 'assistant' | 'services' | 'notifications' | 'profile' | 'recommendations' | 'reviews'>('dashboard');
   
   // Data loading states
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
@@ -110,6 +113,18 @@ export const UserDashboard: React.FC = () => {
   const [staff, setStaff] = useState<StaffItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  
+  // Loyalty Points State - using custom hook
+  const { loyaltyPoints, memberRank, isLoading: loyaltyLoading, refreshLoyalty } = useLoyalty();
+
+  // Recommendations state variables
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [isRecommendationsLoading, setIsRecommendationsLoading] = useState<boolean>(false);
+  const [justBookedAppt, setJustBookedAppt] = useState<{ id: string; serviceName: string } | null>(null);
+
+  // Reviews state variables
+  const [customerReviews, setCustomerReviews] = useState<any[]>([]);
+  const [isReviewsLoading, setIsReviewsLoading] = useState<boolean>(false);
 
   // My Appointments Tab state
   const [appointmentTab, setAppointmentTab] = useState<'upcoming' | 'completed' | 'cancelled'>('upcoming');
@@ -152,6 +167,10 @@ export const UserDashboard: React.FC = () => {
     try {
       setIsLoading(true);
       
+      // Loyalty points are now fetched via useLoyalty hook
+      // No need to fetch here anymore
+      refreshLoyalty();
+      
       // Load services & branches
       const srvRes = await apiClient.get<ServiceItem[]>('/services');
       setServices(srvRes.data);
@@ -166,6 +185,8 @@ export const UserDashboard: React.FC = () => {
       setAppointments(apptRes.data);
     } catch (err) {
       console.warn('Backend offline or not returning customer data, fallback to mock data');
+      // Loyalty points fallback is handled in useLoyalty hook
+      
       setServices([
         { id: 's1', name: 'Signature Precision Haircut', description: 'Crafted haircut with custom styling tailored to your face structure.', price: 85, duration_minutes: 60 },
         { id: 's2', name: 'Balayage & Creative Color', description: 'Premium hand-painted high-definition balayage with high-shine seal.', price: 220, duration_minutes: 150 },
@@ -202,6 +223,20 @@ export const UserDashboard: React.FC = () => {
         }
       ]);
     } finally {
+      // Inject lead follow-up reminder to demonstrate unfinished booking notification
+      const hasUnfinished = notifications.some(n => n.message.toLowerCase().includes("unfinished booking"));
+      if (!hasUnfinished) {
+        setNotifications(prev => [
+          {
+            id: 'n-lead-followup',
+            type: 'warning',
+            title: 'Unfinished Booking Detected',
+            message: 'You have an unfinished booking for Signature Precision Haircut. Click Continue Booking to complete.',
+            timestamp: 'Just now'
+          },
+          ...prev
+        ]);
+      }
       setIsLoading(false);
     }
   };
@@ -238,6 +273,84 @@ export const UserDashboard: React.FC = () => {
       setToastMessage(null);
     }, 4000);
   };
+
+  const fetchRecommendations = async () => {
+    if (!user?.customer_id) return;
+    try {
+      setIsRecommendationsLoading(true);
+      const res = await apiClient.get(`/recommendations/${user.customer_id}`);
+      if (res.data && res.data.success) {
+        setRecommendations(res.data.recommendations);
+      }
+    } catch (err) {
+      console.error('Failed to fetch recommendations:', err);
+    } finally {
+      setIsRecommendationsLoading(false);
+    }
+  };
+
+  const handleAcceptRecommendation = async (rec: any) => {
+    if (!user?.customer_id) return;
+    try {
+      const res = await apiClient.post('/recommendations/accept', {
+        customer_id: user.customer_id,
+        service_id: rec.service_id,
+        appointment_id: rec.appointment_id || (justBookedAppt ? justBookedAppt.id : null)
+      });
+      if (res.data && res.data.success) {
+        showToast(res.data.message || 'Recommendation accepted successfully!', 'success');
+        fetchData();
+        fetchRecommendations();
+        if (justBookedAppt) setJustBookedAppt(null);
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Failed to accept recommendation.', 'error');
+    }
+  };
+
+  const handleRejectRecommendation = async (rec: any) => {
+    if (!user?.customer_id) return;
+    try {
+      const res = await apiClient.post('/recommendations/reject', {
+        customer_id: user.customer_id,
+        service_id: rec.service_id,
+        appointment_id: rec.appointment_id || (justBookedAppt ? justBookedAppt.id : null)
+      });
+      if (res.data && res.data.success) {
+        showToast(res.data.message || 'Recommendation dismissed.', 'success');
+        fetchRecommendations();
+        if (justBookedAppt) setJustBookedAppt(null);
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Failed to dismiss recommendation.', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'recommendations') {
+      fetchRecommendations();
+    }
+  }, [activeTab]);
+
+  const fetchCustomerReviews = async () => {
+    try {
+      setIsReviewsLoading(true);
+      const res = await apiClient.get('/reviews');
+      if (res.data && res.data.success) {
+        setCustomerReviews(res.data.reviews);
+      }
+    } catch (err) {
+      console.error('Failed to load reviews:', err);
+    } finally {
+      setIsReviewsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'reviews') {
+      fetchCustomerReviews();
+    }
+  }, [activeTab]);
 
   // Perform Smart Rebooking in one click
   const handleSmartRebook = (lastService: string, lastStylist: string, lastBranch: string) => {
@@ -286,6 +399,8 @@ export const UserDashboard: React.FC = () => {
     try {
       await apiClient.delete(`/appointments/${apptId}`);
       showToast('Booking cancelled successfully.', 'success');
+      // Trigger loyalty refresh when appointment is cancelled
+      loyaltySyncService.emit('appointment_cancelled');
       fetchData();
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Failed to cancel booking.', 'error');
@@ -305,6 +420,8 @@ export const UserDashboard: React.FC = () => {
       setReviewingAppt(null);
       setReviewComment('');
       setRatingValue(5);
+      // Trigger loyalty refresh when review is submitted
+      loyaltySyncService.emit('review_submitted');
       fetchData();
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Failed to submit review.', 'error');
@@ -325,7 +442,7 @@ export const UserDashboard: React.FC = () => {
       : bookingNotes;
 
     try {
-      await apiClient.post('/appointments', {
+      const res = await apiClient.post('/appointments', {
         branch_id: selectedBranch,
         service_id: selectedService,
         start_time: startTime,
@@ -335,6 +452,9 @@ export const UserDashboard: React.FC = () => {
       
       showToast('Styling session booked successfully!', 'success');
       
+      const newApptId = res.data.appointment_id;
+      const serviceName = res.data.service_name || services.find(s => s.id === selectedService)?.name || '';
+
       // Reset wizard
       setBookingStep(1);
       setSelectedDate('');
@@ -345,7 +465,19 @@ export const UserDashboard: React.FC = () => {
       // Navigate back to My Appointments
       setActiveTab('my-appointments');
       setAppointmentTab('upcoming');
+      // Trigger loyalty refresh after successful booking
+      loyaltySyncService.emit('appointment_completed');
       fetchData();
+
+      // Open recommendations fetch popup immediately
+      if (newApptId && user?.customer_id) {
+        setJustBookedAppt({ id: newApptId, serviceName });
+        // Fetch recommendations directly so they are immediately visible
+        const recRes = await apiClient.get(`/recommendations/${user.customer_id}`);
+        if (recRes.data && recRes.data.success) {
+          setRecommendations(recRes.data.recommendations);
+        }
+      }
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Double booking error: Client or Stylist is busy at this slot.', 'error');
     } finally {
@@ -391,8 +523,10 @@ export const UserDashboard: React.FC = () => {
           <nav className="flex flex-col gap-1.5">
             {[
               { id: 'dashboard', label: 'Dashboard Home', icon: '🏠' },
+              { id: 'recommendations', label: 'Recommended For You', icon: '💡' },
               { id: 'book', label: 'Book Appointment', icon: '📅' },
               { id: 'my-appointments', label: 'My Appointments', icon: '⏰' },
+              { id: 'reviews', label: 'My Feedback Reviews', icon: '⭐' },
               { id: 'history', label: 'Booking History', icon: '📜' },
               { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
               { id: 'services', label: 'Services Catalog', icon: '💇' },
@@ -481,17 +615,13 @@ export const UserDashboard: React.FC = () => {
                     </p>
                   </div>
                   
-                  {/* Loyalty Points Metrics Grid */}
-                  <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-4.5 rounded-2xl border border-slate-800">
-                    <div className="text-left px-3">
-                      <span className="block text-[8px] text-slate-500 font-bold uppercase tracking-widest">Loyalty Points</span>
-                      <span className="block text-xl font-black text-blue-400 mt-1">450 Points</span>
-                    </div>
-                    <div className="text-left px-3 border-l border-slate-800">
-                      <span className="block text-[8px] text-slate-500 font-bold uppercase tracking-widest">Member Rank</span>
-                      <span className="block text-xl font-black text-indigo-400 mt-1">Gold Elite</span>
-                    </div>
-                  </div>
+                  {/* Loyalty Points Metrics Grid - using new LoyaltyCard component */}
+                  <LoyaltyCard 
+                    loyaltyPoints={loyaltyPoints}
+                    memberRank={memberRank}
+                    isLoading={loyaltyLoading}
+                    onRefresh={refreshLoyalty}
+                  />
                 </section>
 
                 {/* Main Dashboard Interactive Split Grid */}
@@ -1335,6 +1465,17 @@ export const UserDashboard: React.FC = () => {
                             <span className="text-[10px] text-slate-500 font-medium">{n.timestamp}</span>
                           </div>
                           <p className="text-xs text-slate-400 leading-relaxed font-semibold">{n.message}</p>
+                          {n.message.toLowerCase().includes("unfinished booking") && (
+                            <button
+                              onClick={() => {
+                                setActiveTab('book');
+                                setBookingStep(1); // Reset booking wizard step to start
+                              }}
+                              className="mt-2.5 px-4.5 py-2 bg-blue-600 hover:bg-blue-500 text-[10px] font-black uppercase tracking-wider rounded-xl text-white transition-all shadow-lg shadow-blue-500/25 cursor-pointer"
+                            >
+                              Continue Booking
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1415,6 +1556,249 @@ export const UserDashboard: React.FC = () => {
                   >
                     Save Preference Memory
                   </button>
+
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'reviews' && (
+              <div className="space-y-6 animate-fade-in">
+                <div className="text-left border-b border-slate-800 pb-4">
+                  <h3 className="text-xl font-black">⭐ My Feedback Reviews</h3>
+                  <p className="text-xs text-slate-550 font-bold uppercase tracking-wider mt-1">Submit styling ratings, share comments, and view official replies</p>
+                </div>
+
+                {/* Sub-section 1: Rate Completed Services */}
+                <div className="space-y-4">
+                  <h4 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest text-left">Rate Completed Services</h4>
+                  
+                  {appointments.filter(appt => appt.status.toUpperCase() === 'COMPLETED' && !customerReviews.some(r => r.appointment_id === appt.id)).length === 0 ? (
+                    <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-8 text-center text-slate-500 text-xs font-semibold">
+                      All your completed appointments have been successfully rated! Thank you for supporting our stylists.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {appointments.filter(appt => appt.status.toUpperCase() === 'COMPLETED' && !customerReviews.some(r => r.appointment_id === appt.id)).map(appt => (
+                        <div key={appt.id} className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl flex justify-between items-center text-left hover:border-blue-500/25 transition-all">
+                          <div>
+                            <h5 className="text-xs font-black text-white">{appt.service.name}</h5>
+                            <span className="block text-[10px] text-slate-550 font-bold mt-0.5">Stylist: {appt.staff ? `${appt.staff.first_name} ${appt.staff.last_name}` : 'Salon Artist'}</span>
+                            <span className="block text-[9px] text-blue-400 font-bold mt-1">Completed on {formatUTCDate(appt.start_time)}</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setReviewingAppt(appt);
+                              setRatingValue(5);
+                              setReviewComment('');
+                            }}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-[10px] font-black uppercase tracking-wider rounded-xl text-white transition-all shadow-lg cursor-pointer whitespace-nowrap"
+                          >
+                            ⭐ Rate Stylist
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-slate-850 my-6" />
+
+                {/* Sub-section 2: Review History */}
+                <div className="space-y-4">
+                  <h4 className="text-sm font-extrabold text-slate-400 uppercase tracking-widest text-left">My Review History</h4>
+                  
+                  {isReviewsLoading ? (
+                    <div className="h-32 flex flex-col items-center justify-center space-y-2">
+                      <div className="w-6 h-6 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Loading review history...</span>
+                    </div>
+                  ) : customerReviews.length === 0 ? (
+                    <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-12 text-center text-slate-500 text-xs">
+                      No review logs found. Rate a service above to leave your first review!
+                    </div>
+                  ) : (
+                    <div className="space-y-4 max-w-3xl">
+                      {customerReviews.map((rev) => (
+                        <div key={rev.id} className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl text-left space-y-3 hover:border-slate-750 transition-colors">
+                          <div className="flex justify-between items-start flex-wrap gap-2">
+                            <div>
+                              <h5 className="text-xs font-black text-white">{rev.branch_name || 'Salon Branch'}</h5>
+                              <span className="text-[10px] text-slate-500 block font-semibold">{rev.created_at ? rev.created_at.split('T')[0] : 'Just now'}</span>
+                            </div>
+                            <div className="flex text-amber-400 text-sm">
+                              {'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}
+                            </div>
+                          </div>
+                          
+                          <p className="text-xs text-slate-300 leading-relaxed font-semibold bg-slate-950/60 p-3 rounded-xl border border-slate-850">
+                            {rev.review_text || rev.comment}
+                          </p>
+
+                          {rev.ai_response && (
+                            <div className="bg-blue-950/20 border border-blue-900/20 p-3.5 rounded-xl space-y-1 mt-2.5 ml-4 border-l-2 border-l-blue-500">
+                              <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest block">💬 Official Salon Reply</span>
+                              <p className="text-xs text-slate-400 font-semibold leading-relaxed">{rev.ai_response}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {activeTab === 'recommendations' && (
+              <div className="space-y-6">
+                <div className="text-left border-b border-slate-800 pb-4">
+                  <h3 className="text-xl font-black">💡 Recommended For You</h3>
+                  <p className="text-xs text-slate-500 mt-1">Personalized premium treatments and add-on services curated by SalonAI Upsell Agent.</p>
+                </div>
+
+                {isRecommendationsLoading ? (
+                  <div className="h-48 flex flex-col items-center justify-center space-y-3">
+                    <div className="w-8 h-8 border-3 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                    <span className="text-xs text-slate-500 font-bold uppercase tracking-widest animate-pulse">Running purchase history RAG analysis...</span>
+                  </div>
+                ) : recommendations.length === 0 ? (
+                  <div className="bg-slate-900/30 rounded-2xl border border-slate-800 p-12 text-center text-slate-500 text-xs">
+                    No recommendations found. Book an appointment first to see suggestions!
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {recommendations.map((rec) => (
+                      <div key={rec.id} className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl flex flex-col justify-between hover:border-blue-500/40 hover:bg-slate-900/80 transition-all duration-300 group">
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-start">
+                            <div className="w-12 h-12 rounded-2xl bg-blue-900/30 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+                              {rec.name.includes('Spa') ? '🧖‍♂️' : rec.name.includes('Massage') ? '🪨' : rec.name.includes('Cut') || rec.name.includes('Trim') ? '💇' : rec.name.includes('Facial') ? '🧖‍♀️' : '✨'}
+                            </div>
+                            <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/25 rounded-full text-[9px] font-black uppercase tracking-wider">
+                              {(rec.confidence_score * 100).toFixed(0)}% Match
+                            </span>
+                          </div>
+                          <h4 className="text-base font-extrabold text-white mt-2">{rec.name}</h4>
+                          <p className="text-xs text-slate-455 leading-relaxed font-medium mt-1">{rec.description}</p>
+                          <div className="bg-blue-950/30 rounded-xl p-3 border border-blue-900/20 mt-3">
+                            <span className="block text-[8px] font-bold text-blue-400 uppercase tracking-widest">Why you'll love it</span>
+                            <p className="text-[11px] text-slate-300 mt-1 font-semibold leading-relaxed">{rec.reason}</p>
+                          </div>
+                        </div>
+                        
+                        <div className="border-t border-slate-800/60 pt-4 mt-6">
+                          <div className="flex items-center justify-between text-xs mb-4">
+                            <span className="text-slate-550 font-bold">⏱️ {rec.duration_minutes} mins</span>
+                            <span className="text-blue-400 text-sm font-black">${rec.price}</span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              onClick={() => handleRejectRecommendation(rec)}
+                              className="w-full py-2.5 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
+                            >
+                              Dismiss
+                            </button>
+                            <button
+                              onClick={() => handleAcceptRecommendation(rec)}
+                              className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white transition-all cursor-pointer text-center shadow-lg shadow-blue-500/10"
+                            >
+                              Add Service
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ============================================================================
+                MODAL: NEW APPOINTMENT CONFIRMED - DYNAMIC UPSELL OPPORTUNITIES
+                ============================================================================ */}
+            {justBookedAppt && (
+              <div className="fixed inset-0 bg-slate-955/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-lg space-y-6 shadow-2xl relative">
+                  <button 
+                    onClick={() => setJustBookedAppt(null)}
+                    className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                  
+                  <div className="text-center space-y-1">
+                    <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center text-3xl mx-auto mb-3">
+                      🎉
+                    </div>
+                    <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Appointment Confirmed!</span>
+                    <h4 className="text-lg font-black text-white">Your styling session is booked</h4>
+                    <p className="text-xs text-slate-450 mt-1">Booked: **{justBookedAppt.serviceName}**</p>
+                  </div>
+
+                  <div className="border-t border-slate-800/80 my-4" />
+
+                  <div className="space-y-4">
+                    <div className="text-left">
+                      <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest block">💡 Recommended For You</span>
+                      <p className="text-xs text-slate-400 mt-0.5">Combine your booking with one of these matching treatments to maximize your results!</p>
+                    </div>
+
+                    {isRecommendationsLoading ? (
+                      <div className="h-32 flex flex-col items-center justify-center space-y-2">
+                        <div className="w-6 h-6 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Generating matching add-ons...</span>
+                      </div>
+                    ) : recommendations.length === 0 ? (
+                      <div className="bg-slate-950/40 rounded-2xl border border-slate-850 p-6 text-center text-slate-500 text-xs">
+                        No matching recommendations generated for this slot.
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                        {recommendations.slice(0, 2).map((rec) => (
+                          <div key={rec.id} className="bg-slate-950/50 border border-slate-850 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 text-left hover:border-slate-800 transition-colors">
+                            <div className="space-y-1.5 flex-1">
+                              <div className="flex items-center space-x-2">
+                                <h5 className="text-xs font-black text-white">{rec.name}</h5>
+                                <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 rounded-full text-[8px] font-bold uppercase">
+                                  {(rec.confidence_score * 100).toFixed(0)}% Match
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-450 leading-relaxed font-semibold">{rec.reason}</p>
+                              <div className="flex items-center space-x-3 text-[10px] text-slate-500">
+                                <span>⏱️ {rec.duration_minutes} mins</span>
+                                <span>•</span>
+                                <span className="text-blue-400 font-bold">${rec.price}</span>
+                              </div>
+                            </div>
+                            <div className="flex sm:flex-col gap-2 min-w-[100px]">
+                              <button
+                                onClick={() => handleAcceptRecommendation(rec)}
+                                className="flex-1 sm:flex-none px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-[10px] font-black rounded-lg text-white transition-all text-center cursor-pointer"
+                              >
+                                Add Service
+                              </button>
+                              <button
+                                onClick={() => handleRejectRecommendation(rec)}
+                                className="flex-1 sm:flex-none px-3.5 py-2 border border-slate-800 hover:text-white text-[10px] font-bold rounded-lg text-slate-400 transition-all text-center cursor-pointer"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex justify-center pt-2 border-t border-slate-850">
+                    <button
+                      onClick={() => setJustBookedAppt(null)}
+                      className="px-6 py-2.5 bg-slate-850 hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-300 hover:text-white cursor-pointer"
+                    >
+                      No thanks, view my dashboard
+                    </button>
+                  </div>
 
                 </div>
               </div>

@@ -66,12 +66,37 @@ async def lifespan(application: FastAPI):
     else:
         logger.error("❌ Supabase database connection failed during startup health check!")
     
+    # Start the automated Lead Follow-up Scheduler
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from services.lead_service import process_leads
+        
+        logger.info("⏱️ Starting Lead Follow-up Background Scheduler...")
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            process_leads,
+            'interval',
+            minutes=30
+        )
+        scheduler.start()
+        application.state.scheduler = scheduler
+        logger.info("✅ Background Scheduler started successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to start background scheduler: {e}", exc_info=True)
+
     logger.info("=" * 70)
     
     yield
     
     # Shutdown
     logger.info("🛑 SalonAI Workforce API Shutting Down")
+    
+    # Shutdown Background Scheduler
+    if hasattr(application.state, "scheduler"):
+        logger.info("⏱️ Shutting down Background Scheduler...")
+        application.state.scheduler.shutdown()
+        logger.info("✅ Background Scheduler shutdown successfully.")
+
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

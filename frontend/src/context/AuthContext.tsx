@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { apiClient } from '../api/client';
 
 export type UserRole = 'Admin' | 'Staff' | 'User';

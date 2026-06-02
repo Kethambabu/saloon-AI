@@ -6,7 +6,6 @@
 import React from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
 } from 'recharts';
 import type { StaffAnalytics } from '../../types/analytics';
 
@@ -14,7 +13,6 @@ interface StaffPerformanceProps {
   data: StaffAnalytics;
 }
 
-const RANK_COLORS = ['#f59e0b', '#94a3b8', '#b45309', '#6366f1', '#8b5cf6'];
 const RANK_BADGES = ['🥇', '🥈', '🥉', '', ''];
 
 const CustomBarTooltip = ({ active, payload, label }: any) => {
@@ -34,13 +32,6 @@ export const StaffPerformance: React.FC<StaffPerformanceProps> = ({ data }) => {
     name: m.name.split(' ')[0],
     revenue: m.revenue_generated,
     bookings: m.completed_bookings,
-  }));
-
-  const radarData = data.staff_metrics.slice(0, 5).map((m) => ({
-    subject: m.name.split(' ')[0],
-    rating: m.average_rating * 20, // scale to 0-100
-    utilization: m.utilization_rate_pct,
-    bookings: Math.min(100, (m.completed_bookings / 200) * 100),
   }));
 
   return (

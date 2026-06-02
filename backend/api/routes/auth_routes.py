@@ -399,7 +399,8 @@ def signup(
                 last_name=payload.last_name,
                 email=email_clean,
                 phone=payload.phone,
-                is_active=True
+                is_active=True,
+                loyalty_points=0  # Initialize loyalty points to 0 for new customer
             )
             db.add(customer_record)
             db.flush()

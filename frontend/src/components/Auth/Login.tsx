@@ -47,13 +47,13 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
       // Use setTimeout to ensure state updates complete before navigation
       setTimeout(() => {
         const role = userProfile.role;
-        if (role === 'Admin' || role === 'ADMIN') {
+        if (role === 'Admin') {
           console.log('[DEBUG] [Login] Navigating to /admin/dashboard');
           navigate('/admin/dashboard', { replace: true });
-        } else if (role === 'Staff' || role === 'STAFF') {
+        } else if (role === 'Staff') {
           console.log('[DEBUG] [Login] Navigating to /staff/dashboard');
           navigate('/staff/dashboard', { replace: true });
-        } else if (role === 'User' || role === 'CUSTOMER' || role === 'USER') {
+        } else if (role === 'User') {
           console.log('[DEBUG] [Login] Navigating to /user/dashboard');
           navigate('/user/dashboard', { replace: true });
         } else {

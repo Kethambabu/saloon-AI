@@ -120,11 +120,10 @@ async def chat_with_agent(
         else:
             context_prefix += f"[SYSTEM USER CONTEXT: The user chatting with you is logged in with email: '{current_user.email}' (Role: {current_user.role.value if hasattr(current_user.role, 'value') else current_user.role}).]\n"
             
-    # 1. Format conversational history as LLM context prepended to the query
     full_query = context_prefix + "\n"
     if payload.chat_history:
         full_query += "Here is the conversation history so far for context:\n"
-        for idx, msg in enumerate(payload.chat_history):
+        for idx, msg in enumerate(payload.chat_history[-5:]):
             role = msg.get("role", "user").capitalize()
             content = msg.get("content", "")
             full_query += f"- {role}: {content}\n"

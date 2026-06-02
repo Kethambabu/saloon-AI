@@ -1077,7 +1077,7 @@ class ReceptionistAgent(Agent):
                 sys_msg = SystemMessage(content=extraction_sys_prompt)
                 user_msg = UserMessage(content=f"User Query:\n{query}", source="user")
                 
-                res = await asyncio.wait_for(client.create(messages=[sys_msg, user_msg]), timeout=8.0)
+                res = await asyncio.wait_for(client.create(messages=[sys_msg, user_msg], max_tokens=150), timeout=8.0)
                 res_content = res.content.strip()
                 
                 import json
@@ -1425,7 +1425,7 @@ class ReceptionistAgent(Agent):
                         user_msg = UserMessage(content=f"Raw System Result:\n{response_stripped}", source="user")
                         
                         try:
-                            fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg]), timeout=10.0)
+                            fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg], max_tokens=250), timeout=10.0)
                             formatted_response = fmt_result.content.strip()
                             
                             # Validate formatter response - ensure it's not truncated or incomplete

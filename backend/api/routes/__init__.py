@@ -32,6 +32,19 @@ router.include_router(analytics_router)
 from api.routes.storage_routes import router as storage_router
 router.include_router(storage_router)
 
+# Include lead sub-routes
+from routes.lead_routes import router as lead_router
+router.include_router(lead_router)
+
+# Include recommendation/upsell sub-routes
+from api.routes.recommendation_routes import router as recommendation_router
+router.include_router(recommendation_router)
+
+# Include reputation/review sub-routes
+from api.routes.review_routes import router as review_router
+router.include_router(review_router)
+
+
 
 
 # Health check endpoint

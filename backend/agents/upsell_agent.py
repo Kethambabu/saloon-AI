@@ -1,5 +1,5 @@
 """
-Reputation Management Agent for SalonAI Workforce Platform.
+Upsell & Recommendation Agent for SalonAI Workforce Platform.
 Built using Microsoft AutoGen (agentchat v0.4+ / v0.10+).
 """
 
@@ -23,48 +23,47 @@ except ImportError:
 from agents import Agent
 from core.config import get_settings
 from core.llm_config import get_llm_config
-from tools.review_tools import (
-    get_reviews_tool,
-    analyze_sentiment_tool,
-    generate_response_tool,
-    escalate_review_tool,
-    get_review_analytics_tool,
+from tools.recommendation_tools import (
+    get_customer_recommendations_tool,
+    accept_recommendation_tool,
+    reject_recommendation_tool,
+    get_upsell_analytics_tool,
 )
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-REPUTATION_SYSTEM_PROMPT = """
-You are SalonAI Reputation Agent.
+UPSELL_SYSTEM_PROMPT = """
+You are SalonAI Upsell Agent.
 
 Responsibilities:
 
-- Monitor customer reviews
-- Analyze review sentiment
-- Generate professional responses
-- Escalate critical complaints
-- Track reputation metrics
+- Increase revenue per booking
+- Suggest add-on services
+- Analyze customer purchase history
+- Recommend premium upgrades
+- Track recommendation performance
 
-Always use tools.
+Always use available tools.
 """
 
 
-class ReputationAgent(Agent):
+class UpsellAgent(Agent):
     """
-    Reputation Management Agent powered by Microsoft AutoGen.
-    Manages customer reviews, analyzes sentiment, drafts responses, and escalates complaints.
+    Upsell & Recommendation Agent powered by Microsoft AutoGen.
+    Suggests high-value service add-ons and benchmarks upsell conversion metrics.
     """
 
-    def __init__(self, name: str = "Olivia", role: str = "Reputation Manager"):
+    def __init__(self, name: str = "Mia", role: str = "Upsell Specialist"):
         super().__init__(name=name, role=role)
-        logger.info(f"Initializing Reputation Agent '{name}'...")
+        logger.info(f"Initializing Upsell & Recommendation Agent '{name}'...")
 
         self._conversation_memory: Dict[str, List[Dict[str, str]]] = {}
         self._analytics: Dict[str, int] = {
-            "reviews_analyzed": 0,
-            "responses_generated": 0,
-            "escalations_logged": 0,
+            "queries_processed": 0,
+            "recommendations_served": 0,
+            "recommendations_accepted": 0,
             "analytics_viewed": 0,
         }
 
@@ -74,7 +73,7 @@ class ReputationAgent(Agent):
         
         logger.info(f"Using model: {config['model']}")
 
-        # 2. Instantiate AutoGen AssistantAgent with model client
+        # 2. Instantiate AutoGen AssistantAgent with system prompt and tools
         self.model_client = OpenAIChatCompletionClient(
             model=config["model"],
             api_key=config["api_key"],
@@ -82,21 +81,20 @@ class ReputationAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full review tool suite
+        # 3. Build AutoGen AssistantAgent with full upsell tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
-            system_message=REPUTATION_SYSTEM_PROMPT,
+            system_message=UPSELL_SYSTEM_PROMPT,
             tools=[
-                get_reviews_tool,
-                analyze_sentiment_tool,
-                generate_response_tool,
-                escalate_review_tool,
-                get_review_analytics_tool,
+                get_customer_recommendations_tool,
+                accept_recommendation_tool,
+                reject_recommendation_tool,
+                get_upsell_analytics_tool,
             ],
         )
 
-        logger.info(f"Reputation Agent '{name}' initialized with 5 tools.")
+        logger.info(f"Upsell Agent '{name}' initialized with 4 recommendation tools.")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""
@@ -105,7 +103,7 @@ class ReputationAgent(Agent):
             return ""
 
         context_lines = ["Here is the conversation history so far for context:"]
-        for entry in history[-5:]:  # Bounded to last 5 messages to avoid token overflow
+        for entry in history[-5:]:  # Kept bounded to manage prompt tokens
             role = entry.get("role", "user").capitalize()
             content = entry.get("content", "")
             context_lines.append(f"- {role}: {content}")
@@ -126,7 +124,7 @@ class ReputationAgent(Agent):
         """Clear conversation memory for a specific session."""
         if session_id in self._conversation_memory:
             del self._conversation_memory[session_id]
-            logger.info(f"[ReputationAgent] Cleared memory for session: {session_id}")
+            logger.info(f"[UpsellAgent] Cleared memory for session: {session_id}")
 
     def _track_analytics(self, category: str) -> None:
         """Increment an analytics counter."""
@@ -145,7 +143,7 @@ class ReputationAgent(Agent):
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Standardized entrypoint to process natural language reputation queries.
+        Standardized entrypoint to process natural language recommendation/upsell queries.
         """
         query = input_data.get("query")
         if not query:
@@ -154,22 +152,22 @@ class ReputationAgent(Agent):
         session_id = input_data.get("session_id", "default")
         chat_history = input_data.get("chat_history", [])
 
-        logger.info(f"[ReputationAgent] Processing query (session={session_id}): '{query[:100]}'")
-        self._track_analytics("reviews_analyzed")
+        logger.info(f"[UpsellAgent] Processing query (session={session_id}): '{query[:100]}'")
+        self._track_analytics("queries_processed")
 
-        # Telemetry tracking
+        # Telemetry tracking based on query keywords
         query_lower = query.lower()
-        if any(kw in query_lower for kw in ["respond", "reply", "answer"]):
-            self._track_analytics("responses_generated")
-        if any(kw in query_lower for kw in ["escalate", "flag", "manager"]):
-            self._track_analytics("escalations_logged")
-        if any(kw in query_lower for kw in ["analytics", "distribution", "scorecard", "stats"]):
+        if any(kw in query_lower for kw in ["recommend", "suggest", "offer"]):
+            self._track_analytics("recommendations_served")
+        if any(kw in query_lower for kw in ["accept", "add service", "yes"]):
+            self._track_analytics("recommendations_accepted")
+        if any(kw in query_lower for kw in ["analytics", "revenue", "acceptance"]):
             self._track_analytics("analytics_viewed")
 
         try:
             full_query = ""
 
-            # Sliced chat history
+            # Prepend chat history limited to last 5 messages to avoid token overflow
             if chat_history:
                 full_query += "Here is the conversation history so far for context:\n"
                 for msg in chat_history[-5:]:
@@ -178,24 +176,26 @@ class ReputationAgent(Agent):
                     full_query += f"- {role}: {content}\n"
                 full_query += "\n"
 
-            # Session memory
+            # Prepend session memory
             memory_context = self._get_memory_context(session_id)
             if memory_context and not chat_history:
                 full_query += memory_context + "\n"
 
             full_query += f"Latest User Message: {query}"
 
-            # Store query
+            # Store user query in memory
             self._store_memory(session_id, "user", query)
 
-            # AutoGen run
+            # Execute AutoGen run task
             result = await self.assistant.run(task=full_query)
+
+            # Extract response text
             response_text = result.messages[-1].content
 
-            # Store assistant response
+            # Store assistant response in memory
             self._store_memory(session_id, "assistant", response_text)
 
-            logger.info(f"[ReputationAgent] Query processed successfully (session={session_id})")
+            logger.info(f"[UpsellAgent] Query processed successfully (session={session_id})")
 
             return {
                 "success": True,
@@ -206,40 +206,8 @@ class ReputationAgent(Agent):
             }
 
         except Exception as e:
-            logger.error(f"[ReputationAgent] Error processing query: {str(e)}", exc_info=True)
+            logger.error(f"[UpsellAgent] Error processing query: {str(e)}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Reputation Agent processing failed: {str(e)}",
+                "error": f"Upsell Agent processing failed: {str(e)}",
             }
-
-
-# ---- Orchestrator Compatibility Aliases ----
-
-def view_customer_reviews(
-    customer_id: Optional[str] = None,
-    staff_id: Optional[str] = None,
-    sentiment: Optional[str] = None,
-    rating: Optional[int] = None,
-) -> str:
-    """Retrieve customer reviews matching filter parameters."""
-    return get_reviews_tool(customer_id=customer_id, staff_id=staff_id, sentiment=sentiment, rating=rating)
-
-
-def view_review_analytics() -> str:
-    """Generate comprehensive reputation analytics."""
-    return get_review_analytics_tool()
-
-
-def find_critical_reviews() -> str:
-    """Retrieve all critical sentiment reviews requiring manager review."""
-    return get_reviews_tool(sentiment="CRITICAL")
-
-
-def draft_review_response(review_id: str, custom_response: Optional[str] = None) -> str:
-    """Draft or register a salon response to a specific customer review."""
-    return generate_response_tool(review_id=review_id, custom_response=custom_response)
-
-
-def view_reputation_scorecard() -> str:
-    """Generate the overall reputation metrics scorecard."""
-    return get_review_analytics_tool()

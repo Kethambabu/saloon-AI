@@ -33,16 +33,6 @@ interface StaffRecord {
   is_active: boolean;
 }
 
-interface LeadRecord {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  source: string;
-  status: string;
-  last_contact: string;
-}
-
 interface ReviewRecord {
   id: string;
   customer_name: string;
@@ -57,7 +47,35 @@ export const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   
   // Navigation State
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'staff' | 'customers' | 'leads' | 'reports' | 'agents' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'staff' | 'customers' | 'leads' | 'reports' | 'agents' | 'settings' | 'upsell-analytics' | 'reputation'>('dashboard');
+  
+  // Live Upsell Analytics states
+  const [upsellStats, setUpsellStats] = useState<any>({
+    generated: 0,
+    accepted: 0,
+    revenue: 0,
+    acceptance_rate: 0,
+    top_addons: []
+  });
+  const [isUpsellStatsLoading, setIsUpsellStatsLoading] = useState<boolean>(false);
+
+  // Live Reputation Analytics states
+  const [reputationStats, setReputationStats] = useState<any>({
+    total_reviews: 0,
+    average_rating: 0.0,
+    sentiment_distribution: { positive: 0, neutral: 0, negative: 0, critical: 0 },
+    ratings_distribution: { "1_star": 0, "2_star": 0, "3_star": 0, "4_star": 0, "5_star": 0 },
+    top_complaints: [],
+    most_praised: [],
+    escalated_count: 0,
+    responded_count: 0
+  });
+  const [isReputationStatsLoading, setIsReputationStatsLoading] = useState<boolean>(false);
+  const [reputationReviews, setReputationReviews] = useState<any[]>([]);
+  const [isReputationReviewsLoading, setIsReputationReviewsLoading] = useState<boolean>(false);
+  const [reputationFilter, setReputationFilter] = useState<'ALL' | 'NEGATIVE' | 'CRITICAL'>('ALL');
+  const [replyingReviewId, setReplyingReviewId] = useState<string | null>(null);
+  const [responseText, setResponseText] = useState<string>('');
   
   // Sub-tab state for AI Agents
   const [activeAgentTab, setActiveAgentTab] = useState<'receptionist' | 'bi' | 'reputation' | 'lead' | 'upsell'>('receptionist');
@@ -68,7 +86,18 @@ export const AdminDashboard: React.FC = () => {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
   const [staff, setStaff] = useState<StaffRecord[]>([]);
-  const [leads, setLeads] = useState<LeadRecord[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
+  const [leadAnalytics, setLeadAnalytics] = useState<any>({
+    total_leads: 200,
+    new_leads: 45,
+    converted_leads: 120,
+    lost_leads: 35,
+    conversion_rate: 60.0,
+    top_recoverable_leads: []
+  });
+  const [leadsSearch, setLeadsSearch] = useState<string>('');
+  const [leadsFilter, setLeadsFilter] = useState<string>('ALL');
+  const [leadsSort, setLeadsSort] = useState<string>('SCORE');
   const [reviews, setReviews] = useState<ReviewRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
@@ -76,7 +105,6 @@ export const AdminDashboard: React.FC = () => {
   const [biQuery, setBiQuery] = useState<string>('');
   const [biAnswer, setBiAnswer] = useState<string>('');
   const [isBiLoading, setIsBiLoading] = useState<boolean>(false);
-  const [upsellRule, setUpsellRule] = useState<string>('If client books Balayage, offer Hydrating Facial with 20% discount.');
   const [rules, setRules] = useState<string[]>([
     'If client books Balayage, offer Hydrating Facial with 20% discount.',
     'Send $10 birthday voucher to clients with over 3 completed bookings.'
@@ -98,7 +126,7 @@ export const AdminDashboard: React.FC = () => {
       try {
         setIsLoading(true);
         // Attempt dynamic load or fallback
-        const [usersRes, apptsRes] = await Promise.all([
+        const [usersRes, _apptsRes] = await Promise.all([
           apiClient.get<UserRecord[]>('/auth/users').catch(() => ({ data: [] })),
           apiClient.get<AppointmentRecord[]>('/appointments/my').catch(() => ({ data: [] }))
         ]);
@@ -119,10 +147,31 @@ export const AdminDashboard: React.FC = () => {
           { id: 'staff-2', first_name: 'Alexandra', last_name: 'Chen', email: 'alexandra@salonai.com', phone: '+1 (555) 0133', role: 'Color Expert', is_active: true }
         ]);
 
-        setLeads([
-          { id: 'lead-1', name: 'Brittany Meyers', email: 'britt.m@example.com', phone: '+1 (555) 0244', source: 'Facebook Ad', status: 'Follow-up Sent', last_contact: '2026-05-29' },
-          { id: 'lead-2', name: 'Jonathan Ross', email: 'jross@example.com', phone: '+1 (555) 0255', source: 'Google Search', status: 'Pending Clara Agent', last_contact: '2026-05-28' }
-        ]);
+        try {
+          const [leadsRes, analyticsRes] = await Promise.all([
+            apiClient.get<any[]>('/leads'),
+            apiClient.get<any>('/leads/analytics')
+          ]);
+          setLeads(leadsRes.data);
+          setLeadAnalytics(analyticsRes.data);
+        } catch (err) {
+          console.warn('API Leads offline, falling back to mock dashboard content', err);
+          setLeads([
+            { id: 'lead-1', customer_name: 'Balu', customer_email: 'balu@example.com', customer_phone: '+919999999999', service_name: 'Hair Spa', source: 'Website', status: 'NEW', lead_score: 80, last_contacted: null, created_at: new Date().toISOString() },
+            { id: 'lead-2', customer_name: 'Vamsi Krishna', customer_email: 'vamsi@example.com', customer_phone: '+918888888888', service_name: 'Balayage & Creative Color', source: 'Facebook Ad', status: 'CONTACTED', lead_score: 60, last_contacted: new Date().toISOString(), created_at: new Date().toISOString() },
+            { id: 'lead-3', customer_name: 'Jennifer Taylor', customer_email: 'jennifer@example.com', customer_phone: '+1-212-555-6001', service_name: 'Hydrating Deep-Cleansing Facial', source: 'Instagram Ad', status: 'CONVERTED', lead_score: 100, last_contacted: new Date().toISOString(), created_at: new Date().toISOString() }
+          ]);
+          setLeadAnalytics({
+            total_leads: 3,
+            new_leads: 1,
+            contacted_leads: 1,
+            interested_leads: 0,
+            converted_leads: 1,
+            lost_leads: 0,
+            conversion_rate: 33.3,
+            top_recoverable_leads: []
+          });
+        }
 
         setReviews([
           { id: 'rev-1', customer_name: 'Sarah Jenkins', rating: 5, comment: 'Clara booked me instantly with Marcus. The Signature Precision Haircut was spectacular!', status: 'APPROVED', sentiment: 'POSITIVE', ai_response: 'Thank you Sarah! We are thrilled Marcus delivered a spectacular style for you. Look forward to seeing you again!' },
@@ -137,6 +186,121 @@ export const AdminDashboard: React.FC = () => {
     };
     fetchAllData();
   }, []);
+
+  const fetchUpsellStats = async () => {
+    try {
+      setIsUpsellStatsLoading(true);
+      const res = await apiClient.get('/recommendations/analytics/stats');
+      if (res.data && res.data.success) {
+        setUpsellStats(res.data.analytics);
+      }
+    } catch (err) {
+      console.error('Failed to load upsell analytics:', err);
+      setUpsellStats({
+        generated: 500,
+        accepted: 120,
+        revenue: 75000,
+        acceptance_rate: 24,
+        top_addons: [
+          { name: 'Hair Spa', count: 100, revenue: 50000 },
+          { name: 'Beard Trim', count: 15, revenue: 2250 },
+          { name: 'Head Massage', count: 5, revenue: 1500 }
+        ]
+      });
+    } finally {
+      setIsUpsellStatsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'upsell-analytics') {
+      fetchUpsellStats();
+    }
+  }, [activeTab]);
+
+  const fetchReputationData = async () => {
+    try {
+      setIsReputationStatsLoading(true);
+      setIsReputationReviewsLoading(true);
+      const [statsRes, reviewsRes] = await Promise.all([
+        apiClient.get('/reviews/analytics/stats'),
+        apiClient.get('/reviews')
+      ]);
+      if (statsRes.data && statsRes.data.success) {
+        setReputationStats(statsRes.data.analytics);
+      }
+      if (reviewsRes.data && reviewsRes.data.success) {
+        setReputationReviews(reviewsRes.data.reviews);
+      }
+    } catch (err) {
+      console.error('Failed to load reputation data:', err);
+      // Fallback mocks
+      setReputationStats({
+        total_reviews: 800,
+        average_rating: 4.6,
+        sentiment_distribution: { positive: 700, neutral: 50, negative: 42, critical: 8 },
+        ratings_distribution: { "1_star": 10, "2_star": 20, "3_star": 70, "4_star": 200, "5_star": 500 },
+        top_complaints: [
+          { category: "Waiting Time", count: 25 },
+          { category: "Staff Availability", count: 12 },
+          { category: "Pricing", count: 5 }
+        ],
+        most_praised: [
+          { category: "Hair Styling", count: 450 },
+          { category: "Customer Service", count: 210 },
+          { category: "Cleanliness", count: 40 }
+        ],
+        escalated_count: 3,
+        responded_count: 785
+      });
+      setReputationReviews([
+        { id: 'rev-1', customer_name: 'Sarah Jenkins', rating: 5, comment: 'Clara booked me instantly with Marcus. The Signature Precision Haircut was spectacular!', status: 'APPROVED', sentiment: 'POSITIVE', ai_response: 'Thank you Sarah! We are thrilled Marcus delivered a spectacular style for you. Look forward to seeing you again!', escalation_required: false, responded: true, created_at: new Date().toISOString() },
+        { id: 'rev-2', customer_name: 'Michael Miller', rating: 2, comment: 'The haircut was fine but my appointment started 45 minutes late. Very disappointed.', status: 'PENDING', sentiment: 'NEGATIVE', ai_response: null, escalation_required: false, responded: false, created_at: new Date().toISOString() },
+        { id: 'rev-3', customer_name: 'David Jones', rating: 1, comment: 'Staff behavior was rude and I believe they tried to overcharge/scam me!', status: 'PENDING', sentiment: 'CRITICAL', ai_response: null, escalation_required: true, responded: false, created_at: new Date().toISOString() }
+      ]);
+    } finally {
+      setIsReputationStatsLoading(false);
+      setIsReputationReviewsLoading(false);
+    }
+  };
+
+  const handleRespondToReview = async (reviewId: string, text: string) => {
+    if (!text.trim()) return;
+    try {
+      const res = await apiClient.post('/reviews/respond', {
+        review_id: reviewId,
+        custom_response: text
+      });
+      if (res.data && res.data.success) {
+        window.alert('Response registered successfully!');
+        setReplyingReviewId(null);
+        setResponseText('');
+        fetchReputationData();
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to submit response.');
+    }
+  };
+
+  const handleEscalateReview = async (reviewId: string) => {
+    try {
+      const res = await apiClient.post('/reviews/escalate', {
+        review_id: reviewId
+      });
+      if (res.data && res.data.success) {
+        window.alert('Review escalated to manager successfully!');
+        fetchReputationData();
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to escalate review.');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'reputation') {
+      fetchReputationData();
+    }
+  }, [activeTab]);
 
   const handleToggleActive = (userId: string) => {
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: !u.is_active } : u));
@@ -220,6 +384,8 @@ export const AdminDashboard: React.FC = () => {
             {[
               { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
               { id: 'analytics', label: 'Analytics', icon: '📈' },
+              { id: 'upsell-analytics', label: 'Upsell Analytics', icon: '⚡' },
+              { id: 'reputation', label: 'Reputation Management', icon: '🛡️' },
               { id: 'staff', label: 'Staff Roster', icon: '💇' },
               { id: 'customers', label: 'Customers', icon: '👥' },
               { id: 'leads', label: 'Lead Management', icon: '🎯' },
@@ -437,62 +603,206 @@ export const AdminDashboard: React.FC = () => {
             )}
 
             {/* 5. Leads Tab */}
-            {activeTab === 'leads' && (
-              <div className="space-y-6">
-                <div className="border-b border-slate-800 pb-3">
-                  <h2 className="text-xl font-black">🎯 Lead Follow-up campaigns</h2>
-                  <p className="text-xs text-slate-500">Autonomous campaign supervisor for customer acquisition funnel.</p>
-                </div>
+            {activeTab === 'leads' && (() => {
+              const filteredLeads = leads
+                .filter(l => {
+                  const s = leadsSearch.toLowerCase();
+                  const matchSearch = 
+                    (l.customer_name || '').toLowerCase().includes(s) ||
+                    (l.customer_email || '').toLowerCase().includes(s) ||
+                    (l.customer_phone || '').toLowerCase().includes(s) ||
+                    (l.service_name || '').toLowerCase().includes(s) ||
+                    (l.source || '').toLowerCase().includes(s);
+                  
+                  if (leadsFilter === 'ALL') return matchSearch;
+                  return matchSearch && l.status === leadsFilter;
+                })
+                .sort((a, b) => {
+                  if (leadsSort === 'SCORE') return (b.lead_score || 0) - (a.lead_score || 0);
+                  if (leadsSort === 'DATE') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+                  if (leadsSort === 'NAME') return (a.customer_name || '').localeCompare(b.customer_name || '');
+                  return 0;
+                });
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800 text-center">
-                    <span className="text-2xl block">📈</span>
-                    <span className="block text-xs font-black text-slate-400 uppercase mt-2">Conversion Rate</span>
-                    <span className="text-xl font-black block mt-1">32.4%</span>
-                  </div>
-                  <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800 text-center">
-                    <span className="text-2xl block">💬</span>
-                    <span className="block text-xs font-black text-slate-400 uppercase mt-2">Active Chats</span>
-                    <span className="text-xl font-black block mt-1">12 Funnels</span>
-                  </div>
-                  <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800 text-center">
-                    <span className="text-2xl block">⚡</span>
-                    <span className="block text-xs font-black text-slate-400 uppercase mt-2">Leads Captured</span>
-                    <span className="text-xl font-black block mt-1">45 Leads</span>
-                  </div>
-                </div>
+              const topRecoverable = [...leads]
+                .filter(l => l.status === 'NEW' || l.status === 'CONTACTED' || l.status === 'INTERESTED')
+                .sort((a, b) => (b.lead_score || 0) - (a.lead_score || 0))
+                .slice(0, 5);
 
-                <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-                  <h3 className="text-sm font-extrabold text-white">Lead Catalog</h3>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-800 text-sm">
-                      <thead>
-                        <tr className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                          <th className="px-4 py-3 text-left">Lead Name</th>
-                          <th className="px-4 py-3 text-left">Source Campaign</th>
-                          <th className="px-4 py-3 text-center">Funnel State</th>
-                          <th className="px-4 py-3 text-right">Captured</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60">
-                        {leads.map(lead => (
-                          <tr key={lead.id} className="hover:bg-slate-850/30 transition-colors">
-                            <td className="px-4 py-4 whitespace-nowrap font-bold text-white">{lead.name}</td>
-                            <td className="px-4 py-4 whitespace-nowrap text-slate-400">{lead.source}</td>
-                            <td className="px-4 py-4 whitespace-nowrap text-center">
-                              <span className="px-2.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase">
-                                {lead.status}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4 whitespace-nowrap text-right text-slate-500 text-xs">{lead.last_contact}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              return (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+                    <div>
+                      <h2 className="text-xl font-black">🎯 Lead Follow-up Management</h2>
+                      <p className="text-xs text-slate-500">Autonomous campaign supervisor for customer acquisition funnel.</p>
+                    </div>
+                  </div>
+
+                  {/* Analytics Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="bg-slate-900/60 p-4.5 rounded-2xl border border-slate-800 text-center">
+                      <span className="text-xl block">🎯</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase mt-1">Total Leads</span>
+                      <span className="text-lg font-black block mt-0.5">{leadAnalytics.total_leads}</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-4.5 rounded-2xl border border-slate-800 text-center">
+                      <span className="text-xl block">✨</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase mt-1">New Leads</span>
+                      <span className="text-lg font-black block mt-0.5">{leadAnalytics.new_leads}</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-4.5 rounded-2xl border border-slate-800 text-center">
+                      <span className="text-xl block">🎉</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase mt-1">Converted</span>
+                      <span className="text-lg font-black block mt-0.5 text-emerald-400">{leadAnalytics.converted_leads}</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-4.5 rounded-2xl border border-slate-800 text-center">
+                      <span className="text-xl block">🛑</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase mt-1">Lost Leads</span>
+                      <span className="text-lg font-black block mt-0.5 text-red-400">{leadAnalytics.lost_leads}</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-4.5 rounded-2xl border border-slate-800 text-center col-span-2 md:col-span-1">
+                      <span className="text-xl block">📈</span>
+                      <span className="block text-[10px] font-black text-slate-400 uppercase mt-1">Conversion Rate</span>
+                      <span className="text-lg font-black block mt-0.5 text-blue-400">{leadAnalytics.conversion_rate}%</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Main Lead Table */}
+                    <div className="lg:col-span-2 space-y-4">
+                      {/* Search & Filters */}
+                      <div className="bg-slate-900/40 p-4 border border-slate-800 rounded-2xl flex flex-col sm:flex-row gap-3 justify-between items-center">
+                        <input
+                          type="text"
+                          value={leadsSearch}
+                          onChange={e => setLeadsSearch(e.target.value)}
+                          placeholder="Search name, phone, service..."
+                          className="w-full sm:max-w-xs px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs focus:outline-none"
+                        />
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          <select
+                            value={leadsFilter}
+                            onChange={e => setLeadsFilter(e.target.value)}
+                            className="flex-1 sm:flex-none px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 focus:outline-none"
+                          >
+                            <option value="ALL">All Statuses</option>
+                            <option value="NEW">New</option>
+                            <option value="CONTACTED">Contacted</option>
+                            <option value="INTERESTED">Interested</option>
+                            <option value="CONVERTED">Converted</option>
+                            <option value="LOST">Lost</option>
+                          </select>
+                          <select
+                            value={leadsSort}
+                            onChange={e => setLeadsSort(e.target.value)}
+                            className="flex-1 sm:flex-none px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 focus:outline-none"
+                          >
+                            <option value="SCORE">Sort by Score</option>
+                            <option value="DATE">Sort by Date</option>
+                            <option value="NAME">Sort by Name</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Lead Table card */}
+                      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 text-left">
+                        <h3 className="text-sm font-extrabold text-white">Lead Catalog ({filteredLeads.length})</h3>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-slate-800 text-sm">
+                            <thead>
+                              <tr className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                <th className="px-4 py-3 text-left">Lead Details</th>
+                                <th className="px-4 py-3 text-left">Interested Service</th>
+                                <th className="px-4 py-3 text-center">Score</th>
+                                <th className="px-4 py-3 text-center">Status</th>
+                                <th className="px-4 py-3 text-right">Acquisition</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60">
+                              {filteredLeads.map(lead => (
+                                <tr key={lead.id} className="hover:bg-slate-850/30 transition-colors">
+                                  <td className="px-4 py-4 whitespace-nowrap font-bold text-white">
+                                    {lead.customer_name}
+                                    <span className="block text-[10px] text-slate-500 font-semibold">{lead.customer_email || lead.email}</span>
+                                  </td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-slate-300 font-medium">{lead.service_name || 'General Inquiry'}</td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-center font-black">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] ${
+                                      (lead.lead_score || 0) >= 80 ? 'bg-red-500/10 text-red-400 font-bold' : 'bg-slate-800 text-slate-400'
+                                    }`}>
+                                      {lead.lead_score || 0} pts
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-center">
+                                    <span className={`px-2.5 py-0.5 rounded text-[9px] font-bold border uppercase ${
+                                      lead.status === 'NEW'
+                                        ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                                        : lead.status === 'CONTACTED'
+                                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                                        : lead.status === 'INTERESTED'
+                                        ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                                        : lead.status === 'CONVERTED'
+                                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                                        : 'bg-slate-900 border-slate-800 text-slate-500'
+                                    }`}>
+                                      {lead.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-right text-slate-500 text-xs">
+                                    {lead.source || 'Website'}
+                                    <span className="block text-[9px] text-slate-600 mt-0.5">{lead.created_at ? new Date(lead.created_at).toLocaleDateString() : ''}</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {filteredLeads.length === 0 && (
+                                <tr>
+                                  <td colSpan={5} className="text-center py-12 text-slate-500 text-xs font-semibold">
+                                    No leads matched your search query or filters.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Top Recoverable Leads Sidebar */}
+                    <div className="space-y-4">
+                      <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4 text-left">
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                            <span>🔥</span> Top Recoverable Leads
+                          </h3>
+                          <p className="text-[11px] text-slate-500">Unconverted leads with the highest customer intent scores.</p>
+                        </div>
+
+                        <div className="space-y-3">
+                          {topRecoverable.map(lead => (
+                            <div key={lead.id} className="bg-slate-950/60 p-4 border border-slate-850 rounded-2xl flex items-center justify-between gap-3 hover:border-blue-500/30 transition-colors">
+                              <div className="space-y-1 overflow-hidden">
+                                <h4 className="text-xs font-extrabold text-white truncate">{lead.customer_name}</h4>
+                                <span className="text-[10px] text-blue-400 block font-semibold truncate">{lead.service_name}</span>
+                                <span className="inline-flex text-[9px] font-black bg-purple-500/10 text-purple-400 px-1.5 py-0.2 rounded uppercase mt-0.5">{lead.status}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-xs font-black text-red-400 block">{lead.lead_score} pts</span>
+                                <span className="text-[9px] text-slate-600 block mt-0.5 font-bold uppercase">{lead.source || 'Ad'}</span>
+                              </div>
+                            </div>
+                          ))}
+                          {topRecoverable.length === 0 && (
+                            <div className="text-center py-8 text-slate-600 text-xs font-semibold">
+                              All leads successfully converted!
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* 6. Reports Tab */}
             {activeTab === 'reports' && (
@@ -890,6 +1200,414 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                 )}
 
+              </div>
+            )}
+
+            {activeTab === 'upsell-analytics' && (
+              <div className="space-y-6 animate-fade-in">
+                <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+                  <div>
+                    <h2 className="text-xl font-black">⚡ Automated Upsell & Revenue Analytics</h2>
+                    <p className="text-xs text-slate-500">Live operational throughput, acceptance conversions, and total incremental yield generated by Upsell Agent.</p>
+                  </div>
+                  <button
+                    onClick={fetchUpsellStats}
+                    className="px-4 py-2 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-400 cursor-pointer"
+                  >
+                    🔄 Refresh Stats
+                  </button>
+                </div>
+
+                {isUpsellStatsLoading ? (
+                  <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
+                    Aggregating upsell yield ledger...
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* 4 KPI Metrics Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-blue-900/10 border border-blue-500/15 flex items-center justify-center text-2xl text-blue-400">
+                          📢
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Recommendations Generated</span>
+                          <span className="text-2xl font-black text-white block mt-0.5">{upsellStats.generated}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Total offers presented</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-emerald-900/10 border border-emerald-500/15 flex items-center justify-center text-2xl text-emerald-400">
+                          🎯
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Recommendations Accepted</span>
+                          <span className="text-2xl font-black text-white block mt-0.5">{upsellStats.accepted}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Conversions logged</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-amber-900/10 border border-amber-500/15 flex items-center justify-center text-2xl text-amber-400">
+                          💰
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Revenue Generated</span>
+                          <span className="text-2xl font-black text-amber-400 block mt-0.5">${upsellStats.revenue.toLocaleString()}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Incremental booking yield</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-purple-900/10 border border-purple-500/15 flex items-center justify-center text-2xl text-purple-400">
+                          📈
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Acceptance Rate</span>
+                          <span className="text-2xl font-black text-white block mt-0.5">{upsellStats.acceptance_rate}%</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Conversion efficiency</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Top Add-ons Table */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-wider">🏆 Top Add-on Services</h3>
+                        <span className="px-2 py-0.5 bg-blue-500/10 text-blue-450 border border-blue-500/20 rounded text-[9px] font-black uppercase tracking-widest">
+                          Best Performing Services
+                        </span>
+                      </div>
+                      
+                      {(!upsellStats.top_addons || upsellStats.top_addons.length === 0) ? (
+                        <div className="text-center text-slate-500 py-8 text-xs font-semibold">
+                          No add-on services converted yet.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-slate-800 text-sm">
+                            <thead>
+                              <tr className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                                <th className="px-4 py-3 text-left">Recommended Service Name</th>
+                                <th className="px-4 py-3 text-center">Conversions Count</th>
+                                <th className="px-4 py-3 text-right">Revenue Generated</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60">
+                              {upsellStats.top_addons.map((addon: any, idx: number) => (
+                                <tr key={idx} className="hover:bg-slate-850/30 transition-colors">
+                                  <td className="px-4 py-4 whitespace-nowrap font-bold text-white flex items-center space-x-2">
+                                    <span className="text-slate-500 font-black">#{idx + 1}</span>
+                                    <span>{addon.name}</span>
+                                  </td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-center text-slate-300 font-extrabold">
+                                    {addon.count} times
+                                  </td>
+                                  <td className="px-4 py-4 whitespace-nowrap text-right text-emerald-400 font-black">
+                                    ${addon.revenue.toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'reputation' && (
+              <div className="space-y-6 animate-fade-in">
+                <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+                  <div>
+                    <h2 className="text-xl font-black">🛡️ Reputation Shield & Review Management</h2>
+                    <p className="text-xs text-slate-500">Autonomous sentiment moderator, rating scorecard, and manual manager feedback responder.</p>
+                  </div>
+                  <button
+                    onClick={fetchReputationData}
+                    className="px-4 py-2 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-400 cursor-pointer"
+                  >
+                    🔄 Refresh Stats
+                  </button>
+                </div>
+
+                {isReputationStatsLoading ? (
+                  <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
+                    Aggregating brand reputation scorecard...
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* 4 KPI Scorecard Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-blue-900/10 border border-blue-500/15 flex items-center justify-center text-2xl text-blue-400">
+                          📊
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Reviews</span>
+                          <span className="text-2xl font-black text-white block mt-0.5">{reputationStats.total_reviews}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">All submitted feedback</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-amber-900/10 border border-amber-500/15 flex items-center justify-center text-2xl text-amber-400">
+                          🏆
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Average Rating</span>
+                          <span className="text-2xl font-black text-white block mt-0.5">{reputationStats.average_rating} ★</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Out of 5.0 stars</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-red-900/10 border border-red-500/15 flex items-center justify-center text-2xl text-red-400">
+                          ⚠️
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Negative Reviews</span>
+                          <span className="text-2xl font-black text-red-400 block mt-0.5">{reputationStats.sentiment_distribution?.negative || 0}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Rating &lt;= 2 stars</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
+                        <div className="w-12 h-12 rounded-xl bg-purple-900/10 border border-purple-500/15 flex items-center justify-center text-2xl text-purple-400">
+                          🚨
+                        </div>
+                        <div>
+                          <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Critical Reviews</span>
+                          <span className="text-2xl font-black text-purple-400 block mt-0.5">{reputationStats.escalated_count}</span>
+                          <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">Escalated to Manager</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Analytics panels */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      
+                      {/* Ratings Distribution Bar list */}
+                      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">⭐ Ratings Distribution</h3>
+                        <div className="space-y-3 pt-2">
+                          {[5, 4, 3, 2, 1].map((stars) => {
+                            const count = reputationStats.ratings_distribution?.[`${stars}_star`] || 0;
+                            const total = reputationStats.total_reviews || 1;
+                            const pct = Math.round((count / total) * 100);
+                            return (
+                              <div key={stars} className="flex items-center gap-3 text-xs">
+                                <span className="w-10 text-slate-400 font-bold whitespace-nowrap text-left">{stars} ★</span>
+                                <div className="flex-1 h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
+                                  <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="w-8 text-slate-500 text-right font-semibold">{count}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Top Complaints Card */}
+                      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">👎 Top Complaints</h3>
+                        <div className="space-y-3 pt-2">
+                          {reputationStats.top_complaints?.length === 0 ? (
+                            <p className="text-xs text-slate-500 py-4 font-semibold text-center">No complaints flagged. Great job stylist team!</p>
+                          ) : (
+                            reputationStats.top_complaints?.map((comp: any, idx: number) => (
+                              <div key={idx} className="bg-slate-955 border border-slate-850 p-3.5 rounded-2xl flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-350">{comp.category}</span>
+                                <span className="px-2 py-0.5 bg-red-950/40 border border-red-900/40 text-red-400 rounded text-[10px] font-black">{comp.count} mentions</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Most Praised Card */}
+                      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">👍 Most Praised Aspects</h3>
+                        <div className="space-y-3 pt-2">
+                          {reputationStats.most_praised?.length === 0 ? (
+                            <p className="text-xs text-slate-500 py-4 font-semibold text-center">Praise comments are still processing...</p>
+                          ) : (
+                            reputationStats.most_praised?.map((praise: any, idx: number) => (
+                              <div key={idx} className="bg-slate-955 border border-slate-850 p-3.5 rounded-2xl flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-350">{praise.category}</span>
+                                <span className="px-2 py-0.5 bg-emerald-950/40 border border-emerald-900/45 text-emerald-400 rounded text-[10px] font-black">+{praise.count} mentions</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Review Feed Scoped list */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5 text-left">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-4">
+                        <h3 className="text-sm font-extrabold text-white">Client Reviews Ledger</h3>
+                        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850 text-xs">
+                          {[
+                            { id: 'ALL', label: 'All Reviews' },
+                            { id: 'NEGATIVE', label: 'Negative Feedback' },
+                            { id: 'CRITICAL', label: 'Critical Escalations' }
+                          ].map((subTab) => (
+                            <button
+                              key={subTab.id}
+                              onClick={() => setReputationFilter(subTab.id as any)}
+                              className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                                reputationFilter === subTab.id
+                                  ? 'bg-blue-600 text-white shadow-md'
+                                  : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {subTab.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {isReputationReviewsLoading ? (
+                        <div className="py-12 text-center text-slate-500 font-bold animate-pulse text-xs">
+                          Fetching latest feedback feed...
+                        </div>
+                      ) : (
+                        (() => {
+                          const filtered = reputationReviews.filter((rev) => {
+                            if (reputationFilter === 'NEGATIVE') return rev.sentiment === 'NEGATIVE' || rev.rating <= 2;
+                            if (reputationFilter === 'CRITICAL') return rev.sentiment === 'CRITICAL' || rev.escalation_required;
+                            return true;
+                          });
+
+                          return (
+                            <div className="space-y-4">
+                              {filtered.length === 0 ? (
+                                <p className="text-xs text-slate-500 py-12 font-semibold text-center">No customer reviews matching this status filter.</p>
+                              ) : (
+                                filtered.map((rev) => (
+                                  <div key={rev.id} className="bg-slate-950 border border-slate-850 p-5 rounded-2xl space-y-3 relative hover:border-slate-800 transition-colors">
+                                    <div className="flex justify-between items-start flex-wrap gap-2 text-xs">
+                                      <div className="space-y-0.5">
+                                        <h4 className="font-extrabold text-white flex items-center gap-2">
+                                          <span>{rev.customer_name}</span>
+                                          {rev.staff_name && (
+                                            <span className="px-2 py-0.5 bg-slate-900 border border-slate-850 text-slate-450 rounded text-[9px] font-medium font-sans">Stylist: {rev.staff_name}</span>
+                                          )}
+                                        </h4>
+                                        <span className="text-[10px] text-slate-500 block font-semibold">{rev.created_at ? rev.created_at.split('T')[0] : 'Just now'}</span>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex text-amber-400 text-sm mr-2">
+                                          {'★'.repeat(rev.rating)}{'☆'.repeat(5 - rev.rating)}
+                                        </div>
+                                        <span className={`px-2 py-0.5 rounded text-[9px] font-black border tracking-wider ${
+                                          rev.sentiment === 'POSITIVE'
+                                            ? 'bg-emerald-950/20 text-emerald-450 border-emerald-900/35'
+                                            : rev.sentiment === 'NEUTRAL'
+                                            ? 'bg-blue-900/20 text-blue-350 border-blue-800/40'
+                                            : rev.sentiment === 'NEGATIVE'
+                                            ? 'bg-red-950/20 text-red-400 border-red-900/35'
+                                            : 'bg-purple-950/30 text-purple-400 border-purple-900/35'
+                                        }`}>
+                                          {rev.sentiment}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <p className="text-xs text-slate-300 leading-relaxed font-semibold bg-slate-950/40 p-3.5 rounded-xl border border-slate-850">
+                                      {rev.review_text || rev.comment}
+                                    </p>
+
+                                    {/* Action button rows */}
+                                    <div className="flex flex-wrap items-center justify-between gap-4 pt-2.5 border-t border-slate-850/65 mt-4">
+                                      <div className="flex gap-2">
+                                        {rev.escalation_required ? (
+                                          <span className="px-2.5 py-1 bg-purple-950/40 border border-purple-900/45 text-purple-400 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 shadow-md shadow-purple-950/15">
+                                            🚨 Escalated To Manager
+                                          </span>
+                                        ) : (
+                                          <button
+                                            onClick={() => handleEscalateReview(rev.id)}
+                                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-850 hover:border-slate-750 text-slate-400 hover:text-white rounded-lg text-[10px] font-extrabold uppercase transition-all cursor-pointer animate-fade-in"
+                                          >
+                                            Escalate To Manager
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      <div className="flex gap-2">
+                                        {rev.ai_response && replyingReviewId !== rev.id && (
+                                          <span className="text-[10px] text-slate-500 font-bold bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-850">
+                                            Response Registered
+                                          </span>
+                                        )}
+                                        {replyingReviewId !== rev.id && (
+                                          <button
+                                            onClick={() => {
+                                              setReplyingReviewId(rev.id);
+                                              setResponseText(rev.ai_response || '');
+                                            }}
+                                            className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-black uppercase transition-all shadow-md shadow-blue-500/10 cursor-pointer"
+                                          >
+                                            {rev.ai_response ? 'Edit Response' : 'Write Response'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Inline response editor */}
+                                    {replyingReviewId === rev.id && (
+                                      <div className="bg-slate-900 p-4 border border-slate-850 rounded-2xl space-y-3.5 mt-3 animate-fade-in text-left">
+                                        <div className="flex flex-col gap-1.5">
+                                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Salon Reply Draft</label>
+                                          <textarea
+                                            value={responseText}
+                                            onChange={(e) => setResponseText(e.target.value)}
+                                            placeholder="Write your review reply or use dynamic Brand Guidelines guidelines..."
+                                            rows={3}
+                                            className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                                          />
+                                        </div>
+                                        <div className="flex justify-end gap-2 text-xs">
+                                          <button
+                                            onClick={() => setReplyingReviewId(null)}
+                                            className="px-3.5 py-1.5 border border-slate-800 text-slate-400 hover:text-white rounded-lg font-bold cursor-pointer"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            onClick={() => handleRespondToReview(rev.id, responseText)}
+                                            className="px-4.5 py-1.5 bg-blue-650 hover:bg-blue-500 text-white rounded-lg font-black shadow-md cursor-pointer"
+                                          >
+                                            Send Response
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Official Reply block */}
+                                    {rev.ai_response && replyingReviewId !== rev.id && (
+                                      <div className="bg-blue-950/20 border border-blue-900/20 p-4 rounded-xl space-y-1 mt-3 ml-4 border-l-2 border-l-blue-500 animate-fade-in">
+                                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest block">💬 Official Salon Reply</span>
+                                        <p className="text-xs text-slate-400 font-semibold leading-relaxed">{rev.ai_response}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          );
+                        })()
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -37,6 +37,7 @@ class AgentOrchestrator:
 from agents.receptionist_agent import ReceptionistAgent
 from agents.lead_followup_agent import LeadFollowupAgent
 from agents.reputation_agent import ReputationAgent
+from agents.upsell_agent import UpsellAgent
 from agents.orchestrator import MultiAgentOrchestrator
 
-__all__ = ["Agent", "AgentOrchestrator", "ReceptionistAgent", "LeadFollowupAgent", "ReputationAgent", "MultiAgentOrchestrator"]
+__all__ = ["Agent", "AgentOrchestrator", "ReceptionistAgent", "LeadFollowupAgent", "ReputationAgent", "UpsellAgent", "MultiAgentOrchestrator"]

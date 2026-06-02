@@ -300,7 +300,7 @@ class BIAgent(Agent):
             # Prepend chat history if provided
             if chat_history:
                 full_query += "Here is the conversation history so far for context:\n"
-                for msg in chat_history:
+                for msg in chat_history[-5:]:
                     role = msg.get("role", "user").capitalize()
                     content = msg.get("content", "")
                     full_query += f"- {role}: {content}\n"

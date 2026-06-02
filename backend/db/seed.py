@@ -33,6 +33,8 @@ from db.models import (
     UserRole,
     Admin,
     AnalyticsRecord,
+    ServiceRecommendation,
+    CustomerRecommendation,
 )
 
 # Setup logging
@@ -86,6 +88,11 @@ def seed_database():
             ("Balayage & Creative Color", "Hand-painted highlighting technique with custom color blending", Decimal("220.00"), 150),
             ("Hydrating Deep-Cleansing Facial", "Luxurious 75-minute facial with premium skincare products", Decimal("120.00"), 75),
             ("Himalayan Hot Stone Massage", "Soothing massage with warm stone therapy and aromatherapy", Decimal("150.00"), 90),
+            ("Hair Spa", "Rejuvenating conditioning treatment for hair health", Decimal("50.00"), 45),
+            ("Beard Trim", "Precision beard trimming and styling", Decimal("15.00"), 20),
+            ("Head Massage", "Relieving head and neck massage with essential oils", Decimal("30.00"), 30),
+            ("Foot Spa", "Relaxing foot soak and massage treatment", Decimal("40.00"), 40),
+            ("Classic Pedicure", "Detailed pedicure treatment with foot massage", Decimal("45.00"), 45),
         ]
         for name, desc, price, dur in service_data:
             existing = db.query(Service).filter(Service.name == name).first()
@@ -97,6 +104,54 @@ def seed_database():
             else:
                 services.append(existing)
         db.flush()
+
+        # ====================================================================
+        # 2b. CREATE SERVICE RECOMMENDATIONS (if not exist)
+        # ====================================================================
+        logger.info("Checking and creating service recommendations...")
+        if db.query(ServiceRecommendation).count() == 0:
+            # Map names to services for easy lookup
+            service_map = {s.name: s for s in services}
+            
+            recs_to_add = []
+            
+            # Signature Precision Haircut -> Hair Spa
+            if "Signature Precision Haircut" in service_map and "Hair Spa" in service_map:
+                recs_to_add.append(ServiceRecommendation(
+                    id=uuid.uuid4(),
+                    service_id=service_map["Signature Precision Haircut"].id,
+                    recommended_service_id=service_map["Hair Spa"].id,
+                    confidence_score=0.9
+                ))
+            # Signature Precision Haircut -> Beard Trim
+            if "Signature Precision Haircut" in service_map and "Beard Trim" in service_map:
+                recs_to_add.append(ServiceRecommendation(
+                    id=uuid.uuid4(),
+                    service_id=service_map["Signature Precision Haircut"].id,
+                    recommended_service_id=service_map["Beard Trim"].id,
+                    confidence_score=0.8
+                ))
+            # Hydrating Deep-Cleansing Facial -> Head Massage
+            if "Hydrating Deep-Cleansing Facial" in service_map and "Head Massage" in service_map:
+                recs_to_add.append(ServiceRecommendation(
+                    id=uuid.uuid4(),
+                    service_id=service_map["Hydrating Deep-Cleansing Facial"].id,
+                    recommended_service_id=service_map["Head Massage"].id,
+                    confidence_score=0.85
+                ))
+            # Classic Pedicure -> Foot Spa
+            if "Classic Pedicure" in service_map and "Foot Spa" in service_map:
+                recs_to_add.append(ServiceRecommendation(
+                    id=uuid.uuid4(),
+                    service_id=service_map["Classic Pedicure"].id,
+                    recommended_service_id=service_map["Foot Spa"].id,
+                    confidence_score=0.95
+                ))
+                
+            for rec in recs_to_add:
+                db.add(rec)
+            db.flush()
+            logger.info(f"   ✓ Seeded {len(recs_to_add)} service recommendations")
 
         # ====================================================================
         # 3. CREATE STAFF (if not exist)
