@@ -25,9 +25,10 @@ interface ChatSession {
 
 interface AgentChatProps {
   onRefreshAppointments?: () => void;
+  intentOverride?: string;
 }
 
-export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) => {
+export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, intentOverride }) => {
   // --- States ---
   const { user } = useAuth();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -43,10 +44,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
 
   // Get user-specific localStorage key
   const getStorageKey = (): string => {
+    const prefix = intentOverride === 'business_intelligence' ? 'salonai_bi_sessions' : 'salonai_sessions';
     if (!user || !user.id) {
-      return 'salonai_sessions_anonymous';
+      return `${prefix}_anonymous`;
     }
-    return `salonai_sessions_${user.id}`;
+    return `${prefix}_${user.id}`;
   };
 
   // --- Load Initial Sessions & Restore State ---
@@ -89,13 +91,17 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
     const newSessionId = `sess_${Math.random().toString(36).substring(2, 11)}`;
     const newSession: ChatSession = {
       id: newSessionId,
-      title: `Booking Session - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      title: intentOverride === 'business_intelligence'
+        ? `BI Analysis - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        : `Booking Session - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       lastActive: new Date().toLocaleDateString(),
       messages: [
         {
           id: `msg_welcome_${Date.now()}`,
           role: 'assistant',
-          content: "Hello! I'm Clara, your AI Salon Receptionist. How can I style your schedule today? I can help you check available slots, book haircuts or stone massages, reschedule, or review your historical bookings.",
+          content: intentOverride === 'business_intelligence'
+            ? "Welcome to SalonAI Business Assistant. I'm Atlas, your corporate growth analyst and operational consultant. Ask me any analytical questions about revenue performance, top stylists, customer retention cohorts, lead conversions, reviews complaints, or forecasts."
+            : "Hello! I'm Clara, your AI Salon Receptionist. How can I style your schedule today? I can help you check available slots, book haircuts or stone massages, reschedule, or review your historical bookings.",
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]
@@ -174,11 +180,16 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
           content: msg.content
         }));
 
-      const response = await apiClient.post('/agent/chat', {
+      const payload: any = {
         message: text,
         'session id': activeSessionId,
         'chat history': chatHistoryForBackend
-      });
+      };
+      if (intentOverride) {
+        payload['intent override'] = intentOverride;
+      }
+
+      const response = await apiClient.post('/agent/chat', payload);
 
       if (response.data && response.data.success) {
         if (onRefreshAppointments) {
@@ -227,7 +238,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
   };
 
   // --- Predefined Suggestions Cards ---
-  const suggestions = [
+  const suggestions = intentOverride === 'business_intelligence' ? [
+    { title: "Revenue Analysis", prompt: "How much revenue did we earn this month? Which branch or service earns the most?" },
+    { title: "Staff Performance", prompt: "Who are our top performing stylists? Who deserves a bonus or has the highest rating?" },
+    { title: "Forecast & Growth", prompt: "Forecast next month's expected revenue and appointments." },
+    { title: "Business Metrics RAG", prompt: "Why is revenue decreasing? Compare with last 3 months performance." }
+  ] : [
     { title: "Haircut Availability", prompt: "What slots are available for a Signature Haircut tomorrow?" },
     { title: "My History", prompt: "Can you check my booking history? My Customer ID is FefffEEb-AE98-4BB2-BFF7-E4DaA09B4Fa5." },
     { title: "Book Hot Stone", prompt: "I'd like to book a Himalayan Hot Stone Massage tomorrow. Branch: Downtown Elite, Customer: Alice Smith (6b09fca3-c8a5-46a1-88dc-72c081668be9)." },
@@ -320,13 +336,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
 
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-blue-100 border border-blue-200 flex items-center justify-center font-bold text-blue-600 shadow-sm">
-                C
+                {intentOverride === 'business_intelligence' ? 'A' : 'C'}
               </div>
               <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white animate-pulse" title="Online" />
             </div>
             <div>
-              <h2 className="text-slate-800 font-bold leading-tight">Clara - AI Receptionist</h2>
-              <span className="text-xs text-slate-500 font-medium">SalonAI Workforce Co-pilot</span>
+              <h2 className="text-slate-800 font-bold leading-tight">{intentOverride === 'business_intelligence' ? 'Atlas - AI Business Analyst' : 'Clara - AI Receptionist'}</h2>
+              <span className="text-xs text-slate-500 font-medium">{intentOverride === 'business_intelligence' ? 'Executive Analytics Advisor' : 'SalonAI Workforce Co-pilot'}</span>
             </div>
           </div>
           <div className="flex items-center space-x-2">
@@ -428,7 +444,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments }) =
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleSendMessage(inputMessage);
             }}
-            placeholder="Type a booking query (e.g., 'book a haircut tomorrow for Alice Smith')..."
+            placeholder={intentOverride === 'business_intelligence' 
+              ? "Ask Atlas a business question (e.g., 'Why is revenue decreasing? Compare with last 3 months')..." 
+              : "Type a booking query (e.g., 'book a haircut tomorrow for Alice Smith')..."}
             disabled={isLoading}
             className="flex-1 px-4 py-3 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 rounded-xl text-sm focus:outline-none transition-all disabled:bg-slate-100 disabled:text-slate-400"
           />

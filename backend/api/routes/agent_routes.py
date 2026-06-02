@@ -58,6 +58,12 @@ class ChatRequest(BaseModel):
         serialization_alias="chat history",
         description="Historical messages context: [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]"
     )
+    intent_override: Optional[str] = Field(
+        default=None,
+        validation_alias="intent override",
+        serialization_alias="intent override",
+        description="Optional intent override (e.g. 'business_intelligence')"
+    )
 
 
 class ChatResponse(BaseModel):
@@ -96,6 +102,45 @@ async def chat_with_agent(
     
     from datetime import datetime
     import asyncio
+
+    # Route to Orchestrator if intent_override is specified
+    if payload.intent_override:
+        logger.info(f"Routing to Multi-Agent Orchestrator with intent override: {payload.intent_override}")
+        try:
+            from agents.orchestrator import MultiAgentOrchestrator
+            global _orchestrator
+            if "_orchestrator" not in globals() or globals()["_orchestrator"] is None:
+                globals()["_orchestrator"] = MultiAgentOrchestrator()
+            
+            orch = globals()["_orchestrator"]
+            agent_response = await orch.process({
+                "query": payload.message,
+                "intent_override": payload.intent_override,
+                "session_id": payload.session_id,
+                "chat_history": payload.chat_history
+            })
+            
+            if not agent_response.get("success"):
+                logger.error(f"Orchestration failed: {agent_response.get('error')}")
+                return ChatResponse(
+                    success=False,
+                    session_id=payload.session_id,
+                    response="I encountered an issue processing your request through the analytics supervisor.",
+                    agent_name="Atlas_BI"
+                )
+                
+            return ChatResponse(
+                success=True,
+                session_id=payload.session_id,
+                response=agent_response.get("response", ""),
+                agent_name=agent_response.get("agent_name", "Atlas_BI")
+            )
+        except Exception as ex:
+            logger.error(f"Orchestrator processing crashed: {ex}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Orchestrator processing failed: {str(ex)}"
+            )
     
     # Role-based agent enforcement
     if current_user.role.value == "CUSTOMER" and not current_user.customer_id:

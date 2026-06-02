@@ -35,6 +35,7 @@ from db.models import (
     AnalyticsRecord,
     ServiceRecommendation,
     CustomerRecommendation,
+    BusinessMetricsHistory,
 )
 
 # Setup logging
@@ -271,6 +272,43 @@ def seed_database():
             for a in analytics:
                 db.add(a)
             logger.info("   ✓ Created analytics records")
+
+        # Seed daily snapshots for Business Metrics RAG history (last 10 days)
+        if db.query(BusinessMetricsHistory).count() == 0:
+            logger.info("Checking and creating business metrics history snapshots...")
+            base_date = datetime.now().date()
+            snapshots = []
+            
+            # Formulate realistic historical trends
+            historical_data = [
+                (timedelta(days=10), Decimal("14200.00"), 32, 0.65, 4.8, Decimal("3100.00"), "Signature Precision Haircut", "Alexandra Chen"),
+                (timedelta(days=9), Decimal("15100.00"), 35, 0.64, 4.7, Decimal("3200.00"), "Signature Precision Haircut", "Alexandra Chen"),
+                (timedelta(days=8), Decimal("13900.00"), 29, 0.66, 4.8, Decimal("2900.00"), "Balayage & Creative Color", "Marcus Johnson"),
+                (timedelta(days=7), Decimal("16500.00"), 38, 0.68, 4.6, Decimal("3800.00"), "Himalayan Hot Stone Massage", "Alexandra Chen"),
+                (timedelta(days=6), Decimal("15800.00"), 37, 0.67, 4.9, Decimal("3500.00"), "Signature Precision Haircut", "Marcus Johnson"),
+                (timedelta(days=5), Decimal("17200.00"), 41, 0.70, 4.8, Decimal("4100.00"), "Balayage & Creative Color", "Priya Sharma"),
+                (timedelta(days=4), Decimal("16900.00"), 39, 0.69, 4.7, Decimal("3900.00"), "Himalayan Hot Stone Massage", "Priya Sharma"),
+                (timedelta(days=3), Decimal("18100.00"), 43, 0.72, 4.8, Decimal("4500.00"), "Signature Precision Haircut", "Priya Sharma"),
+                (timedelta(days=2), Decimal("17600.00"), 40, 0.71, 4.9, Decimal("4200.00"), "Balayage & Creative Color", "Marcus Johnson"),
+                (timedelta(days=1), Decimal("18500.00"), 42, 0.68, 4.7, Decimal("4200.00"), "Hair Spa", "Priya Sharma"),
+            ]
+            
+            for offset, rev, appts, conv, rating, upsell, service, staff in historical_data:
+                snap = BusinessMetricsHistory(
+                    id=uuid.uuid4(),
+                    metric_date=base_date - offset,
+                    revenue=rev,
+                    appointments=appts,
+                    lead_conversion=conv,
+                    average_rating=rating,
+                    upsell_revenue=upsell,
+                    top_service=service,
+                    top_staff=staff,
+                    created_at=datetime.now(timezone.utc)
+                )
+                db.add(snap)
+            
+            logger.info("   ✓ Seeded 10 business metrics history snapshots")
 
         db.commit()
         logger.info("✅ Database seeding completed successfully!")

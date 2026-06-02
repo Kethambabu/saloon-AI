@@ -736,6 +736,25 @@ class CustomerRecommendation(BaseModel):
         return f"<CustomerRecommendation customer_id={self.customer_id} service={self.recommended_service_id} accepted={self.accepted}>"
 
 
+class BusinessMetricsHistory(BaseModel):
+    """
+    Stores historical daily business intelligence aggregates for Business Metrics RAG.
+    """
+    __tablename__ = "business_metrics_history"
+
+    metric_date = Column(Date, nullable=False, unique=True, index=True)
+    revenue = Column(Numeric(10, 2), default=0.0, nullable=False)
+    appointments = Column(Integer, default=0, nullable=False)
+    lead_conversion = Column(Float, default=0.0, nullable=False)
+    average_rating = Column(Float, default=0.0, nullable=False)
+    upsell_revenue = Column(Numeric(10, 2), default=0.0, nullable=False)
+    top_service = Column(Text, nullable=True)
+    top_staff = Column(Text, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<BusinessMetricsHistory date={self.metric_date} revenue={self.revenue}>"
+
+
 # Export all models and enums
 __all__ = [
     "BaseModel",
@@ -753,6 +772,7 @@ __all__ = [
     "AnalyticsRecord",
     "ServiceRecommendation",
     "CustomerRecommendation",
+    "BusinessMetricsHistory",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
