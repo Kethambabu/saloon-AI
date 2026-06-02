@@ -221,7 +221,7 @@ def seed_database():
         # Customer
         existing_cust_user = db.query(User).filter(User.email == "customer@example.com").first()
         if not existing_cust_user and len(customers) > 0:
-            customer_user = User(id=uuid.uuid4(), email="customer@example.com", hashed_password=hashed_password, role=UserRole.USER, is_active=True, customer_id=customers[0].id)
+            customer_user = User(id=uuid.uuid4(), email="customer@example.com", hashed_password=hashed_password, role=UserRole.CUSTOMER, is_active=True, customer_id=customers[0].id)
             db.add(customer_user)
             logger.info("   ✓ Created customer user")
         db.flush()

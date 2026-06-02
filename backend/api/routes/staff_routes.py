@@ -6,7 +6,7 @@ Ensures data isolation and role-based access control.
 
 import logging
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -120,7 +120,7 @@ def get_staff_dashboard(
     """
     logger.info(f"Fetching dashboard for staff {staff.id}")
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     
@@ -129,17 +129,30 @@ def get_staff_dashboard(
         Appointment.staff_id == staff.id
     ).all()
     
+    # Helper to compare timezone-aware and naive datetimes safely
+    def is_between(dt, start, end):
+        if dt is None:
+            return False
+        dt_aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        return start <= dt_aware < end
+
+    def is_after(dt, reference):
+        if dt is None:
+            return False
+        dt_aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        return dt_aware > reference
+
     # Today's appointments
     today_appointments = [
         a for a in all_appointments
-        if today_start <= a.start_time < today_end
+        if is_between(a.start_time, today_start, today_end)
     ]
     
     # Upcoming appointments (confirmed/pending in future)
     from db.models import AppointmentStatus
     upcoming_appointments = [
         a for a in all_appointments
-        if a.start_time > now
+        if is_after(a.start_time, now)
         and a.status in [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
     ]
     
@@ -154,7 +167,7 @@ def get_staff_dashboard(
     month_end = (month_start + timedelta(days=32)).replace(day=1)
     month_appointments = [
         a for a in all_appointments
-        if month_start <= a.created_at < month_end
+        if is_between(a.created_at, month_start, month_end)
     ]
     
     # Calculate metrics
@@ -243,7 +256,7 @@ def get_today_appointments(
     """Get all appointments scheduled for today."""
     logger.info(f"Fetching today's appointments for staff {staff.id}")
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     
@@ -284,7 +297,7 @@ def get_upcoming_appointments(
     
     from db.models import AppointmentStatus
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     
     appointments = db.query(Appointment).filter(
         Appointment.staff_id == staff.id,

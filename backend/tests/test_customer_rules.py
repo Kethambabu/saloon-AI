@@ -127,6 +127,8 @@ def test_duplicate_appointment_detection(db_session):
 
 def test_lazy_reminders(db_session):
     """Rule 11: Appointment Reminder System (lazy creation)."""
+    from unittest.mock import patch
+    
     branch = db_session.query(Branch).first()
     service = db_session.query(Service).first()
     customer = db_session.query(Customer).first()
@@ -142,14 +144,15 @@ def test_lazy_reminders(db_session):
     assert len(notifs) == 0
 
     # Book the appointment
-    res = create_appointment(
-        customer_id=customer.id,
-        branch_id=branch.id,
-        service_id=service.id,
-        start_time=appt_time.isoformat(),
-        staff_id=stylist.id,
-        db=db_session
-    )
+    with patch("tools.booking_tools._is_within_business_hours", return_value=True):
+        res = create_appointment(
+            customer_id=customer.id,
+            branch_id=branch.id,
+            service_id=service.id,
+            start_time=appt_time.isoformat(),
+            staff_id=stylist.id,
+            db=db_session
+        )
     assert res["success"] is True
 
     # Trigger reminders

@@ -36,18 +36,47 @@ settings = get_settings()
 
 
 REPUTATION_SYSTEM_PROMPT = """
-You are SalonAI Reputation Agent.
+You are SalonAI Reputation Agent (Olivia, Reputation & Review Manager).
 
-Responsibilities:
+Responsibilities and Capabilities:
+- Monitor customer reviews using view_customer_reviews
+- Analyze review sentiment and analytics using view_review_analytics
+- Find critical reviews requiring escalation using find_critical_reviews
+- Generate and draft professional responses using draft_review_response
+- Track reputation metrics scorecard using view_reputation_scorecard
 
-- Monitor customer reviews
-- Analyze review sentiment
-- Generate professional responses
-- Escalate critical complaints
-- Track reputation metrics
-
-Always use tools.
+Always use these tools.
 """
+
+# ---- Wrapper functions defined before class so they can be bound as tools ----
+def view_customer_reviews(
+    customer_id: Optional[str] = None,
+    staff_id: Optional[str] = None,
+    sentiment: Optional[str] = None,
+    rating: Optional[int] = None,
+) -> str:
+    """Retrieve customer reviews matching filter parameters."""
+    return get_reviews_tool(customer_id=customer_id, staff_id=staff_id, sentiment=sentiment, rating=rating)
+
+
+def view_review_analytics() -> str:
+    """Generate comprehensive reputation analytics."""
+    return get_review_analytics_tool()
+
+
+def find_critical_reviews() -> str:
+    """Retrieve all critical sentiment reviews requiring manager review."""
+    return get_reviews_tool(sentiment="CRITICAL")
+
+
+def draft_review_response(review_id: str, custom_response: Optional[str] = None) -> str:
+    """Draft or register a salon response to a specific customer review."""
+    return generate_response_tool(review_id=review_id, custom_response=custom_response)
+
+
+def view_reputation_scorecard() -> str:
+    """Generate the overall reputation metrics scorecard."""
+    return get_review_analytics_tool()
 
 
 class ReputationAgent(Agent):
@@ -56,12 +85,14 @@ class ReputationAgent(Agent):
     Manages customer reviews, analyzes sentiment, drafts responses, and escalates complaints.
     """
 
-    def __init__(self, name: str = "Olivia", role: str = "Reputation Manager"):
+    def __init__(self, name: str = "Olivia", role: str = "Reputation & Review Manager"):
         super().__init__(name=name, role=role)
         logger.info(f"Initializing Reputation Agent '{name}'...")
 
         self._conversation_memory: Dict[str, List[Dict[str, str]]] = {}
         self._analytics: Dict[str, int] = {
+            "queries_processed": 0,
+            "critical_detections": 0,
             "reviews_analyzed": 0,
             "responses_generated": 0,
             "escalations_logged": 0,
@@ -88,11 +119,11 @@ class ReputationAgent(Agent):
             model_client=self.model_client,
             system_message=REPUTATION_SYSTEM_PROMPT,
             tools=[
-                get_reviews_tool,
-                analyze_sentiment_tool,
-                generate_response_tool,
-                escalate_review_tool,
-                get_review_analytics_tool,
+                view_customer_reviews,
+                view_review_analytics,
+                find_critical_reviews,
+                draft_review_response,
+                view_reputation_scorecard,
             ],
         )
 
@@ -155,10 +186,13 @@ class ReputationAgent(Agent):
         chat_history = input_data.get("chat_history", [])
 
         logger.info(f"[ReputationAgent] Processing query (session={session_id}): '{query[:100]}'")
+        self._track_analytics("queries_processed")
         self._track_analytics("reviews_analyzed")
 
         # Telemetry tracking
         query_lower = query.lower()
+        if any(kw in query_lower for kw in ["critical", "negative", "bad", "1-star", "1 star", "complaint", "worst", "terrible", "rude"]):
+            self._track_analytics("critical_detections")
         if any(kw in query_lower for kw in ["respond", "reply", "answer"]):
             self._track_analytics("responses_generated")
         if any(kw in query_lower for kw in ["escalate", "flag", "manager"]):

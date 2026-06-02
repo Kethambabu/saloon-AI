@@ -226,11 +226,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         });
         saveSessions(finalSessions);
       } else {
-        throw new Error(response.data?.error || 'Failed to receive a valid response from Clara.');
+        throw new Error(response.data?.error || `Failed to receive a valid response from ${intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'}.`);
       }
     } catch (err: any) {
       console.error('Error sending chat query:', err);
-      const errorMsg = err.response?.data?.detail || err.message || 'Connecting to Clara timed out or failed. Is the backend API running?';
+      const errorMsg = err.response?.data?.detail || err.message || `Connecting to ${intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'} timed out or failed. Is the backend API running?`;
       setError(errorMsg);
     } finally {
       setIsLoading(false);
@@ -367,7 +367,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
                   ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white'
                   : 'bg-white border-slate-200 text-blue-600'
               }`}>
-                {msg.role === 'user' ? 'U' : 'C'}
+                {msg.role === 'user' ? 'U' : (intentOverride === 'business_intelligence' ? 'A' : 'C')}
               </div>
 
               {/* Chat Bubble */}
@@ -390,7 +390,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
           {isLoading && (
             <div className="flex items-start space-x-3.5 mr-auto max-w-[85%]">
               <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center font-bold text-sm text-blue-600 shadow-sm">
-                C
+                {intentOverride === 'business_intelligence' ? 'A' : 'C'}
               </div>
               <div className="flex flex-col">
                 <div className="p-4 bg-white border border-slate-200 rounded-2xl rounded-tl-none shadow-sm flex items-center space-x-1.5">
@@ -398,7 +398,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
                   <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                   <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                 </div>
-                <span className="text-[10px] text-slate-400 mt-1 text-left">Clara is thinking...</span>
+                <span className="text-[10px] text-slate-400 mt-1 text-left">{intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'} is thinking...</span>
               </div>
             </div>
           )}

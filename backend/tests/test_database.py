@@ -216,7 +216,9 @@ def test_enums_serialization(db_session):
     db_session.commit()
 
     # Retrieve lead and check enum parsing
-    retrieved = db_session.query(Lead).filter_by(first_name="Bob").first()
+    retrieved = db_session.query(Lead).filter_by(customer_name="Bob Inquirer").first()
     assert retrieved is not None
     assert retrieved.status == LeadStatus.CONTACTED
     assert isinstance(retrieved.status, LeadStatus)
+    assert retrieved.first_name == "Bob"
+    assert retrieved.last_name == "Inquirer"

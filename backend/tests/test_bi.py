@@ -201,15 +201,21 @@ def test_bi_agent_initialization():
     assert "appointments" in sys_msg
     assert "SELECT" in sys_msg
 
-    # Check 5 BI tools are bound
+    # Check 11 BI tools are bound
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 5
+    assert len(bound_tools) == 11
     
     names = [t.name for t in bound_tools]
-    assert "view_revenue_report" in names
-    assert "view_staff_performance" in names
-    assert "view_customer_retention" in names
-    assert "view_service_popularity" in names
+    assert "get_dashboard_summary" in names
+    assert "get_revenue_summary" in names
+    assert "get_customer_summary" in names
+    assert "get_staff_summary" in names
+    assert "get_lead_summary" in names
+    assert "get_review_summary" in names
+    assert "get_upsell_summary" in names
+    assert "generate_ai_insights" in names
+    assert "forecast_revenue" in names
+    assert "retrieve_business_context" in names
     assert "query_raw_analytics_database" in names
 
 

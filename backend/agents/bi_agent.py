@@ -269,6 +269,7 @@ class BIAgent(Agent):
         self._conversation_memory: Dict[str, List[Dict[str, str]]] = {}
         self._analytics: Dict[str, int] = {
             "queries_processed": 0,
+            "revenue_queries": 0,
             "insights_generated": 0,
             "rag_lookups": 0,
             "forecast_queries": 0,
@@ -372,6 +373,8 @@ class BIAgent(Agent):
 
         # Telemetry updates
         query_lower = query.lower()
+        if "revenue" in query_lower:
+            self._track_analytics("revenue_queries")
         if any(kw in query_lower for kw in ["insight", "suggest", "compare", "why"]):
             self._track_analytics("insights_generated")
         if any(kw in query_lower for kw in ["history", "rag", "past", "last", "context"]):
@@ -426,3 +429,32 @@ class BIAgent(Agent):
                 "success": False,
                 "error": f"Business Intelligence Agent processing failed: {str(e)}",
             }
+
+
+# ---- Backward Compatibility Aliases ----
+
+def view_revenue_report() -> str:
+    """Retrieve detailed revenue intelligence aggregates."""
+    return get_revenue_summary()
+
+
+def view_staff_performance() -> str:
+    """Retrieve stylist performance benchmarks."""
+    return get_staff_summary()
+
+
+def view_customer_retention() -> str:
+    """Retrieve customer intelligence aggregates."""
+    return get_customer_summary()
+
+
+def view_service_popularity() -> str:
+    """Retrieve service popularity analytics."""
+    logger.info("[BIAgent] Tool call: view_service_popularity()")
+    db = SessionLocal()
+    try:
+        from tools.bi_tools import get_service_popularity_analytics
+        res = get_service_popularity_analytics()
+        return str(res)
+    finally:
+        db.close()

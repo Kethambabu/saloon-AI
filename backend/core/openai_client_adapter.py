@@ -110,28 +110,106 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         )
 
     def _convert_messages(self, messages: List[Any]) -> List[Dict[str, Any]]:
-        """Convert AutoGen message format to OpenAI format."""
+        """Convert AutoGen message format to OpenAI format using official to_oai_type when possible."""
+        from autogen_ext.models.openai._openai_client import to_oai_type
         result = []
         for msg in messages:
             if isinstance(msg, dict):
                 result.append(msg)
             else:
-                # Convert message object to dict
-                msg_dict = {
-                    "role": getattr(msg, "role", "user"),
-                    "content": getattr(msg, "content", str(msg)),
-                }
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    msg_dict["tool_calls"] = msg.tool_calls
-                result.append(msg_dict)
+                try:
+                    converted = to_oai_type(
+                        msg,
+                        prepend_name=False,
+                        model=self.model,
+                        model_family=self.model_info.get("family", "unknown"),
+                    )
+                    # Convert to list of dicts
+                    for item in converted:
+                        if isinstance(item, dict):
+                            result.append(item)
+                        elif hasattr(item, "model_dump"):
+                            result.append(item.model_dump())
+                        else:
+                            result.append(dict(item))
+                except Exception as e:
+                    logger.warning(f"Failed to use official to_oai_type: {e}. Falling back.")
+                    # Convert message object to dict
+                    role = getattr(msg, "role", getattr(msg, "source", "user"))
+                    if role == "assistant":
+                        role_str = "assistant"
+                    elif role == "system":
+                        role_str = "system"
+                    else:
+                        role_str = "user"
+
+                    msg_dict = {
+                        "role": role_str,
+                        "content": getattr(msg, "content", str(msg)),
+                    }
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        msg_dict["tool_calls"] = msg.tool_calls
+                    result.append(msg_dict)
         return result
 
     def _filter_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter out unsupported parameters before passing to OpenAI API."""
         return {k: v for k, v in kwargs.items() if k not in UNSUPPORTED_PARAMS}
 
+    def _generate_schema_from_function(self, func: Any) -> Dict[str, Any]:
+        """Generate JSON schema from a Python function's signature."""
+        import inspect
+        try:
+            sig = inspect.signature(func)
+            parameters = {}
+            required = []
+            
+            for param_name, param in sig.parameters.items():
+                if param_name in ("self", "cls"):
+                    continue
+                
+                param_schema = {"type": "string"}  # Default type
+                
+                # Infer type from annotation
+                if param.annotation != inspect.Parameter.empty:
+                    annotation = param.annotation
+                    if annotation == int:
+                        param_schema["type"] = "integer"
+                    elif annotation == float:
+                        param_schema["type"] = "number"
+                    elif annotation == bool:
+                        param_schema["type"] = "boolean"
+                    elif annotation in (list, List):
+                        param_schema["type"] = "array"
+                    elif annotation in (dict, Dict):
+                        param_schema["type"] = "object"
+                    else:
+                        param_schema["type"] = "string"
+                
+                # Add parameter description if available
+                if param.annotation != inspect.Parameter.empty:
+                    param_schema["description"] = f"Parameter of type {param.annotation.__name__ if hasattr(param.annotation, '__name__') else str(param.annotation)}"
+                
+                # Check if parameter has a default
+                if param.default == inspect.Parameter.empty:
+                    required.append(param_name)
+                else:
+                    param_schema["description"] = f"Optional parameter (default: {param.default})"
+                
+                parameters[param_name] = param_schema
+            
+            schema = {
+                "type": "object",
+                "properties": parameters,
+                "required": required
+            }
+            return schema
+        except Exception as e:
+            logger.debug(f"Failed to generate schema from function: {e}")
+            return {"type": "object", "properties": {}}
+
     def _convert_tools(
-        self, tools: Optional[List[Dict[str, Any]]]
+        self, tools: Optional[List[Any]]
     ) -> Optional[List[Dict[str, Any]]]:
         """Convert AutoGen tool format to OpenAI format with Gemini-specific schema conversions."""
         if not tools:
@@ -141,71 +219,66 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         for i, tool in enumerate(tools):
             logger.debug(f"Processing tool {i}: {type(tool).__name__}")
             if isinstance(tool, dict):
-                logger.debug(f"  Dict tool keys: {tool.keys()}")
-                # Ensure it has the 'type' field
-                if "type" not in tool:
-                    tool = {**tool, "type": "function"}
-                
-                # Ensure function has required fields
-                if "function" in tool and isinstance(tool["function"], dict):
-                    func = tool["function"]
-                    logger.debug(f"    Function keys: {func.keys()}")
-                    if "name" not in func or not func["name"]:
-                        func["name"] = tool.get("name", "unknown_function")
-                    if "description" not in func:
-                        func["description"] = tool.get("description", "")
-                elif "function" not in tool:
-                    # Create function object if missing
-                    tool["function"] = {
-                        "name": tool.get("name", "unknown_function"),
-                        "description": tool.get("description", ""),
-                    }
-                
-                # Clean tool schema specifically for Gemini compatibility
-                if "gemini" in self.model.lower():
-                    logger.info(f"Converting tool schema '{tool['function'].get('name')}' for Gemini compatibility")
-                    def clean_schema_for_gemini(schema):
-                        if not isinstance(schema, dict):
-                            return schema
-                        cleaned = {}
-                        for k, v in schema.items():
-                            if k == "additionalProperties":
-                                continue
-                            if isinstance(v, dict):
-                                cleaned[k] = clean_schema_for_gemini(v)
-                            elif isinstance(v, list):
-                                cleaned[k] = [clean_schema_for_gemini(item) if isinstance(item, dict) else item for item in v]
-                            else:
-                                cleaned[k] = v
-                        return cleaned
-
-                    if "parameters" in tool["function"]:
-                        tool["function"]["parameters"] = clean_schema_for_gemini(tool["function"]["parameters"])
-
-                logger.debug(f"  Final tool: type={tool.get('type')}, name={tool.get('function', {}).get('name')}")
-                result.append(tool)
+                name = tool.get("name") or tool.get("function", {}).get("name") or "unknown_function"
+                desc = tool.get("description") or tool.get("function", {}).get("description") or ""
+                params = tool.get("parameters") or tool.get("function", {}).get("parameters") or {"type": "object", "properties": {}}
+                strict = tool.get("strict") if tool.get("strict") is not None else tool.get("function", {}).get("strict")
             else:
-                # Handle function objects - convert to OpenAI format
-                func_name = getattr(tool, "__name__", "unknown_function")
-                if not func_name:
-                    func_name = "unknown_function"
-                logger.debug(f"  Function object: {func_name}")
+                name = getattr(tool, "name", "unknown_function")
+                desc = getattr(tool, "description", "")
+                schema = getattr(tool, "schema", None)
                 
-                tool_dict = {
-                    "type": "function",
-                    "function": {
-                        "name": func_name,
-                        "description": getattr(tool, "__doc__", ""),
-                    },
-                }
+                # Try to extract parameters from schema first
+                if isinstance(schema, dict):
+                    params = schema.get("parameters", None)
+                    strict = schema.get("strict")
+                else:
+                    params = None
+                    strict = None
+                
+                # If no parameters found, try to generate from callable function
+                if params is None or (isinstance(params, dict) and not params.get("properties")):
+                    func = getattr(tool, "func", None) or getattr(tool, "function", None) or getattr(tool, "callable", None)
+                    if callable(func):
+                        logger.debug(f"Generating schema from callable for tool '{name}'")
+                        params = self._generate_schema_from_function(func)
+                    else:
+                        params = {"type": "object", "properties": {}}
 
-                # Clean parameters for Gemini compatibility if the function object has parameters defined
-                if "gemini" in self.model.lower() and hasattr(tool, "parameters"):
-                    logger.info(f"Converting function object '{func_name}' parameters for Gemini compatibility")
-                    # Note: AutoGen AssistantAgent generally builds schemas itself, but if we pass raw tool_dicts
-                    # or function objects, we ensure clean conversion here.
-                
-                result.append(tool_dict)
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": desc,
+                    "parameters": params
+                }
+            }
+            if strict is not None:
+                openai_tool["function"]["strict"] = strict
+
+            # Clean tool schema specifically for Gemini compatibility
+            if "gemini" in self.model.lower():
+                logger.info(f"Converting tool schema '{name}' for Gemini compatibility")
+                def clean_schema_for_gemini(schema_dict):
+                    if not isinstance(schema_dict, dict):
+                        return schema_dict
+                    cleaned = {}
+                    for k, v in schema_dict.items():
+                        if k == "additionalProperties":
+                            continue
+                        if isinstance(v, dict):
+                            cleaned[k] = clean_schema_for_gemini(v)
+                        elif isinstance(v, list):
+                            cleaned[k] = [clean_schema_for_gemini(item) if isinstance(item, dict) else item for item in v]
+                        else:
+                            cleaned[k] = v
+                    return cleaned
+
+                openai_tool["function"]["parameters"] = clean_schema_for_gemini(openai_tool["function"]["parameters"])
+
+            logger.debug(f"  Final tool: type=function, name={name}")
+            result.append(openai_tool)
+
         logger.debug(f"Converted {len(result)} tools")
         return result if result else None
 
@@ -225,7 +298,10 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             logger.info(f"Sending {len(converted_tools)} tools to OpenAI:")
             for tool in converted_tools:
                 func = tool.get("function", {})
-                logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (type: {tool.get('type')})")
+                params = func.get("parameters", {})
+                param_names = list(params.get("properties", {}).keys()) if params.get("properties") else []
+                param_str = f"[{', '.join(param_names)}]" if param_names else "[]"
+                logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (type: {tool.get('type')}, params: {param_str})")
 
         try:
             response = self._client.chat.completions.create(
@@ -251,7 +327,8 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
                 # Handle tool calls if present
                 if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
-                    sanitized_calls = []
+                    from autogen_core._types import FunctionCall
+                    content = []
                     for tc in choice.message.tool_calls:
                         func_name = tc.function.name
                         raw_args = tc.function.arguments
@@ -279,14 +356,13 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             logger.error(f"Error sanitizing tool arguments for {func_name}: {e}")
                             sanitized_args = raw_args
                             
-                        sanitized_calls.append({
-                            "id": tc.id,
-                            "function": {
-                                "name": func_name,
-                                "arguments": sanitized_args,
-                            }
-                        })
-                    content = json.dumps(sanitized_calls)
+                        content.append(
+                            FunctionCall(
+                                id=tc.id,
+                                arguments=sanitized_args,
+                                name=func_name,
+                            )
+                        )
 
                 # Safely map finish reason to FinishReasons literal values
                 choice_reason = choice.finish_reason

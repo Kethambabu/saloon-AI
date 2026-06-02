@@ -47,6 +47,17 @@ async def get_revenue_summary(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/revenue", summary="Revenue Intelligence Breakdown (Admin Only)", dependencies=[Depends(RoleChecker([UserRole.ADMIN]))])
+async def get_revenue(db: Session = Depends(get_db)):
+    """Returns detailed revenue aggregates. Restricted to Admin/Owner."""
+    try:
+        revenue = AnalyticsService.get_revenue_summary(db)
+        return {"success": True, "revenue": revenue}
+    except Exception as e:
+        logger.error(f"Revenue endpoint error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/customer-summary", summary="Customer Intelligence Metrics")
 async def get_customer_summary(db: Session = Depends(get_db)):
     """Returns customer cohort metrics, vip active counts, and CLV aggregates."""

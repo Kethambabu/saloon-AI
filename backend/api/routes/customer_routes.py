@@ -159,13 +159,17 @@ def get_customer_dashboard(
     
     # Count appointment statuses
     from db.models import AppointmentStatus
-    from datetime import datetime
+    from datetime import datetime, timezone
     
     completed_count = sum(1 for a in all_appointments if a.status == AppointmentStatus.COMPLETED)
     upcoming_count = sum(
         1 for a in all_appointments 
         if a.status in [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
-        and a.start_time > datetime.utcnow()
+        and (
+            a.start_time.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc) 
+            if a.start_time.tzinfo is None 
+            else a.start_time > datetime.now(timezone.utc)
+        )
     )
     
     # Format recent appointments
