@@ -36,6 +36,10 @@ router.include_router(storage_router)
 from routes.lead_routes import router as lead_router
 router.include_router(lead_router)
 
+# Include notification sub-routes
+from api.routes.notification_routes import router as notification_router
+router.include_router(notification_router)
+
 # Include recommendation/upsell sub-routes
 from api.routes.recommendation_routes import router as recommendation_router
 router.include_router(recommendation_router)

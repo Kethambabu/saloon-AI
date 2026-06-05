@@ -272,8 +272,8 @@ def get_today_appointments(
             "customer_name": apt.customer.full_name if apt.customer else "N/A",
             "customer_phone": apt.customer.phone if apt.customer else None,
             "service": apt.service.name if apt.service else "N/A",
-            "start_time": apt.start_time.isoformat(),
-            "end_time": apt.end_time.isoformat(),
+            "start_time": apt.start_time.isoformat() if apt.start_time.tzinfo else f"{apt.start_time.isoformat()}Z",
+            "end_time": apt.end_time.isoformat() if apt.end_time.tzinfo else f"{apt.end_time.isoformat()}Z",
             "status": apt.status.value,
             "notes": apt.notes
         }
@@ -314,7 +314,7 @@ def get_upcoming_appointments(
             "id": str(apt.id),
             "customer_name": apt.customer.full_name if apt.customer else "N/A",
             "service": apt.service.name if apt.service else "N/A",
-            "start_time": apt.start_time.isoformat(),
+            "start_time": apt.start_time.isoformat() if apt.start_time.tzinfo else f"{apt.start_time.isoformat()}Z",
             "duration_minutes": apt.service.duration_minutes if apt.service else 0,
             "status": apt.status.value
         }

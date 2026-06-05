@@ -21,9 +21,35 @@ interface AppointmentRecord {
   customer: { first_name: string; last_name: string; email: string } | null;
   staff: { first_name: string; last_name: string } | null;
 }
-
-
-
+const formatUTCDateTime = (isoString: string): string => {
+  try {
+    let normalized = isoString;
+    if (isoString && !isoString.endsWith('Z') && !isoString.includes('+')) {
+      const parts = isoString.split(/T|\s/);
+      const hasTimeOffset = parts.length > 1 && parts[1].includes('-');
+      if (!hasTimeOffset) {
+        normalized = isoString + 'Z';
+      }
+    }
+    const date = new Date(normalized);
+    const year = date.getUTCFullYear();
+    const month = date.getUTCMonth();
+    const day = date.getUTCDate();
+    const hours = date.getUTCHours();
+    const minutes = date.getUTCMinutes();
+    
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    
+    return `${monthNames[month]} ${day}, ${year} at ${displayHours}:${displayMinutes} ${ampm}`;
+  } catch (err) {
+    return 'Invalid date';
+  }
+};
 interface ReviewRecord {
   id: string;
   customer_name: string;
@@ -75,93 +101,83 @@ export const AdminDashboard: React.FC = () => {
 
   // --- BI Agent State Trackers with Premium Fallback Defaults ---
   const [dashboardSummary, setDashboardSummary] = useState<any>({
-    revenue_today: 18500.0,
-    appointments_today: 42,
-    new_customers: 12,
-    lead_conversion_rate: 68.0,
-    average_rating: 4.7,
-    upsell_revenue: 4200.0
+    revenue_today: 0,
+    appointments_today: 0,
+    new_customers: 0,
+    lead_conversion_rate: 0.0,
+    average_rating: 0.0,
+    upsell_revenue: 0.0
   });
 
   const [revenueSummary, setRevenueSummary] = useState<any>({
     cards: {
-      today_revenue: 18500.0,
-      weekly_revenue: 129500.0,
-      monthly_revenue: 518000.0,
-      yearly_revenue: 6200000.0
+      today_revenue: 0.0,
+      weekly_revenue: 0.0,
+      monthly_revenue: 0.0,
+      yearly_revenue: 0.0
     },
     charts: {
-      labels: ["2026-05-24", "2026-05-26", "2026-05-28", "2026-05-30", "2026-06-01"],
-      revenue_over_time: [14200.0, 13900.0, 15800.0, 17200.0, 18500.0],
-      by_service: {"Signature Precision Haircut": 45000.0, "Balayage & Creative Color": 72000.0, "Hydrating Deep-Cleansing Facial": 28000.0, "Hair Spa": 15000.0},
-      by_branch: {"Downtown Elite": 98000.0, "Westside Boutique": 62000.0, "Midtown Luxe": 45000.0},
-      by_staff: {"Priya Sharma": 120000.0, "Alexandra Chen": 85000.0, "Marcus Johnson": 64000.0}
+      labels: [],
+      revenue_over_time: [],
+      by_service: {},
+      by_branch: {},
+      by_staff: {}
     }
   });
 
   const [customerSummary, setCustomerSummary] = useState<any>({
-    total_customers: 184,
-    returning_customers: 125,
-    inactive_customers: 46,
-    vip_customers: 22,
-    customer_lifetime_value: 185.50
+    total_customers: 0,
+    returning_customers: 0,
+    inactive_customers: 0,
+    vip_customers: 0,
+    customer_lifetime_value: 0.0
   });
 
   const [staffSummary, setStaffSummary] = useState<any>({
-    top_performer: "Priya Sharma",
-    top_revenue: 120000.0,
-    top_appointments: 140,
-    top_rating: 4.9,
-    top_upsells: 25000.0,
-    lowest_performer: "Carlos Reyes",
-    roster: [
-      {name: "Priya Sharma", role: "Senior Stylist", appointments: 140, revenue: 120000.0, rating: 4.9, upsells: 25000.0},
-      {name: "Alexandra Chen", role: "Senior Stylist", appointments: 98, revenue: 85000.0, rating: 4.8, upsells: 15000.0},
-      {name: "Marcus Johnson", role: "Color Specialist", appointments: 65, revenue: 64000.0, rating: 4.7, upsells: 12000.0}
-    ]
+    top_performer: "None",
+    top_revenue: 0.0,
+    top_appointments: 0,
+    top_rating: 0.0,
+    top_upsells: 0.0,
+    lowest_performer: "None",
+    roster: []
   });
 
   const [leadSummary, setLeadSummary] = useState<any>({
-    new_leads: 45,
-    converted_leads: 120,
-    lost_leads: 35,
-    pending_leads: 20,
-    conversion_rate: 60.0
+    new_leads: 0,
+    converted_leads: 0,
+    lost_leads: 0,
+    pending_leads: 0,
+    conversion_rate: 0.0
   });
 
   const [reviewSummary, setReviewSummary] = useState<any>({
-    total_reviews: 800,
-    average_rating: 4.7,
-    positive_reviews: 700,
-    neutral_reviews: 50,
-    negative_reviews: 42,
-    critical_complaints: 8,
-    primary_complaint: "Waiting Time"
+    total_reviews: 0,
+    average_rating: 0.0,
+    positive_reviews: 0,
+    neutral_reviews: 0,
+    negative_reviews: 0,
+    critical_complaints: 0,
+    primary_complaint: "None"
   });
 
   const [upsellSummary, setUpsellSummary] = useState<any>({
-    upsell_revenue: 75000.0,
-    acceptance_rate: 24.0,
-    accepted_count: 120,
-    total_offers: 500,
-    most_accepted: "Hair Spa"
+    upsell_revenue: 0.0,
+    acceptance_rate: 0.0,
+    accepted_count: 0,
+    total_offers: 0,
+    most_accepted: "None"
   });
 
-  const [aiInsights, setAiInsights] = useState<string[]>([
-    "Revenue increased 12% compared to last week's cohort.",
-    "Hair Spa generated 41% of total transacted revenue today.",
-    "Lead conversion dropped after 7:00 PM due to lower scheduling staff availability.",
-    "Waiting-time complaints increased in the late afternoon. Optimize staff chairs.",
-    "Priya Sharma is today's top-performing stylist with 4.9★ rating."
-  ]);
+  const [aiInsights, setAiInsights] = useState<string[]>([]);
 
   const [forecastSummary, setForecastSummary] = useState<any>({
-    expected_revenue: 620000.0,
-    expected_appointments: 1360,
-    expected_leads: 1458,
-    expected_conversion: 68.0,
-    expected_upsell_revenue: 136000.0,
-    growth_rate_pct: 8.0
+    expected_revenue: 0.0,
+    expected_appointments: 0,
+    expected_leads: 0,
+    expected_conversion: 0.0,
+    expected_upsell_revenue: 0.0,
+    growth_rate_pct: 0.0
   });
 
   const [isBIDataLoading, setIsBIDataLoading] = useState<boolean>(false);
@@ -227,28 +243,11 @@ export const AdminDashboard: React.FC = () => {
           apiClient.get<any>('/reviews').catch(() => ({ data: { success: false, reviews: [] } }))
         ]);
 
-        setUsers(usersRes.data.length ? usersRes.data : [
-          { id: '8c3f1d64-1', email: 'owner@salonai.com', role: 'Admin', is_active: true, staff_id: null, customer_id: null },
-          { id: '8c3f1d64-2', email: 'marcus@salonai.com', role: 'Staff', is_active: true, staff_id: '1', customer_id: null },
-          { id: '8c3f1d64-3', email: 'customer@example.com', role: 'User', is_active: true, staff_id: null, customer_id: '1' }
-        ]);
-
-        setAppointments(apptsRes.data.length ? apptsRes.data : [
-          { id: 'appt-1', start_time: new Date(Date.now() + 3600000).toISOString(), status: 'CONFIRMED', notes: 'Wants quiet experience', service: { name: 'Signature Precision Haircut', price: 85 }, customer: { first_name: 'Sarah', last_name: 'Jenkins', email: 'sarah.j@example.com' }, staff: { first_name: 'Marcus', last_name: 'Johnson' } },
-          { id: 'appt-2', start_time: new Date(Date.now() + 7200000).toISOString(), status: 'CONFIRMED', notes: 'First time client', service: { name: 'Balayage & Creative Color', price: 220 }, customer: { first_name: 'Emily', last_name: 'Davis', email: 'emily.d@example.com' }, staff: { first_name: 'Marcus', last_name: 'Johnson' } }
-        ]);
-
-        setLeads(leadsRes.data.length ? leadsRes.data : [
-          { id: 'lead-1', customer_name: 'Balu', customer_email: 'balu@example.com', customer_phone: '+919999999999', service_name: 'Hair Spa', source: 'Website', status: 'NEW', lead_score: 80, last_contacted: null, created_at: new Date().toISOString() },
-          { id: 'lead-2', customer_name: 'Vamsi Krishna', customer_email: 'vamsi@example.com', customer_phone: '+918888888888', service_name: 'Balayage', source: 'Facebook Ad', status: 'CONTACTED', lead_score: 60, last_contacted: new Date().toISOString(), created_at: new Date().toISOString() }
-        ]);
-
+        setUsers(usersRes.data || []);
+        setAppointments(apptsRes.data || []);
+        setLeads(leadsRes.data || []);
         const reviewArray = reviewsRes.data?.reviews || reviewsRes.data || [];
-        setReviews(reviewArray.length ? reviewArray : [
-          { id: 'rev-1', customer_name: 'Sarah Jenkins', rating: 5, comment: 'spectacular style haircut with Marcus!', status: 'APPROVED', sentiment: 'POSITIVE', ai_response: 'Thank you Sarah!', escalation_required: false, responded: true, created_at: new Date().toISOString() },
-          { id: 'rev-2', customer_name: 'Michael Miller', rating: 2, comment: 'Waited 45 minutes, appointment started late.', status: 'PENDING', sentiment: 'NEGATIVE', ai_response: null, escalation_required: false, responded: false, created_at: new Date().toISOString() },
-          { id: 'rev-3', customer_name: 'David Jones', rating: 1, comment: 'Staff behavior was rude.', status: 'PENDING', sentiment: 'CRITICAL', ai_response: null, escalation_required: true, responded: false, created_at: new Date().toISOString() }
-        ]);
+        setReviews(reviewArray);
 
         await fetchBIData();
       } catch (err) {
@@ -458,7 +457,7 @@ export const AdminDashboard: React.FC = () => {
                         {appointments.map((appt) => (
                           <tr key={appt.id} className="hover:bg-slate-850/20 transition-colors">
                             <td className="px-4 py-3.5 whitespace-nowrap text-blue-400">
-                              {new Date(appt.start_time).toLocaleString()}
+                              {formatUTCDateTime(appt.start_time)}
                             </td>
                             <td className="px-4 py-3.5 whitespace-nowrap text-white">
                               {appt.customer ? `${appt.customer.first_name} ${appt.customer.last_name}` : 'Anonymous Guest'}
@@ -591,7 +590,9 @@ export const AdminDashboard: React.FC = () => {
                 <section className="bg-slate-900/60 backdrop-blur-xl border border-slate-850 p-5 rounded-2xl space-y-2">
                   <span className="text-xs font-black text-indigo-455 block">💡 Revenue AI Insight</span>
                   <p className="text-xs font-semibold text-slate-350 leading-relaxed">
-                    Revenue increased 15% month-over-month. Hair Spa contributes 42% of upsells, and Facial contributes 25% of overall tickets. Strong expectation of revenue increases next month across all branches.
+                    {aiInsights && aiInsights.length > 0 
+                      ? `${aiInsights[0]} ${aiInsights[1] || ''}` 
+                      : 'Retrieving live revenue analytics...'}
                   </p>
                 </section>
               </div>
@@ -628,7 +629,9 @@ export const AdminDashboard: React.FC = () => {
                     <h4 className="text-xs font-black uppercase text-indigo-400 tracking-wider">Cohort Attrition Alert</h4>
                   </div>
                   <p className="text-xs font-semibold text-slate-350 leading-relaxed">
-                    25% of our registered customers have not booked an appointment in the last 90 days. We highly recommend launching a dynamic email and SMS outreach re-engagement campaign with a 15% discount code to recover this dormant segment.
+                    {customerSummary?.total_customers > 0 
+                      ? `${Math.round((customerSummary?.inactive_customers / customerSummary?.total_customers) * 100)}% of our registered customers (${customerSummary?.inactive_customers} out of {customerSummary?.total_customers}) have not booked an appointment in the last 90 days. We recommend launching a targeted re-engagement campaign.`
+                      : 'No customer cohort attrition detected.'}
                   </p>
                 </section>
               </div>
@@ -696,7 +699,9 @@ export const AdminDashboard: React.FC = () => {
 
                 <section className="bg-slate-900/60 border border-slate-855 p-5 rounded-2xl text-xs font-semibold text-slate-350">
                   <span className="text-indigo-400 font-black block mb-1">💡 Performance AI Insight</span>
-                  Priya Sharma generates 28% more revenue than average staff due to a higher upsell acceptance rate on complimentary deep conditioning bundles. Recommend scheduling Priya for peak hours to maximize ticket sizes.
+                  {aiInsights && aiInsights.length > 4 
+                    ? aiInsights[4] 
+                    : 'No stylist transactions completed yet today.'}
                 </section>
               </div>
             )}
@@ -736,7 +741,9 @@ export const AdminDashboard: React.FC = () => {
                 <section className="bg-slate-900/60 border border-slate-850 p-5 rounded-3xl space-y-2">
                   <span className="text-xs font-black text-amber-400 block uppercase">💬 CRM Funnel Bottleneck Detected</span>
                   <p className="text-xs font-semibold text-slate-350 leading-relaxed">
-                    Most lost leads and cart abandonments occur between 7:00 PM and 10:00 PM. We strongly recommend increasing digital receptionist scheduling staff or Clara automation parameters during evening hours to answer instantly and secure booking deposits.
+                    {aiInsights && aiInsights.length > 2 
+                      ? `${aiInsights[2]} We recommend optimizing styling and scheduling response speeds during peak bottleneck hours.`
+                      : 'No active CRM funnel bottlenecks detected.'}
                   </p>
                 </section>
 
@@ -809,7 +816,9 @@ export const AdminDashboard: React.FC = () => {
                 <section className="bg-slate-900/60 border border-slate-850 p-5 rounded-3xl space-y-2">
                   <span className="text-xs font-black text-indigo-400 block">💡 Upsell AI Insight</span>
                   <p className="text-xs font-semibold text-slate-350 leading-relaxed">
-                    Hair Spa generates 52% of total upsell revenue. Recommending Hair Spa immediately following high-value Balayage treatments increases average customer basket sizes by ₹1,500.
+                    {aiInsights && aiInsights.length > 1 
+                      ? `${aiInsights[1]} Recommending high-performing services dynamically to customers helps maximize overall ticket sizes.`
+                      : 'Retrieving live upsell analytics...'}
                   </p>
                 </section>
               </div>
@@ -845,7 +854,9 @@ export const AdminDashboard: React.FC = () => {
 
                 <section className="bg-slate-900/60 border border-slate-850 p-5 rounded-3xl text-xs font-semibold text-slate-350">
                   <span className="text-indigo-400 font-black block mb-1">💡 Reputation AI Insight</span>
-                  Waiting Time is the most common customer complaint category. Implementing stylist occupancy alerts and standardizing guest service checklists can mitigate high wait metrics.
+                  {aiInsights && aiInsights.length > 3 
+                    ? aiInsights[3] 
+                    : 'No waiting-time complaints recorded today.'}
                 </section>
 
                 {/* Review Feed Scoped list */}

@@ -83,10 +83,8 @@ class RAGService:
         
         if not history:
             return (
-                "Historical Context RAG Ledger is empty. "
-                "Base business benchmarks: Average Monthly Revenue: ₹5,18,000, "
-                "Lead Conversion: 68.0%, Average customer rating: 4.7★, "
-                "Upsell acceptance: 24.0%. Main complaint: Waiting Time."
+                "Historical Context RAG Ledger is empty. No historical daily snapshots recorded yet. "
+                "All performance values are initially zero."
             )
             
         context_lines = [

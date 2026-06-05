@@ -10,6 +10,7 @@ interface AppointmentRecord {
   customer_name: string;
   service_name: string;
   notes: string;
+  status: string;
 }
 
 interface CustomerHistoryItem {
@@ -40,10 +41,11 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
 
   // Stylist performance aggregates
   const [personalStats, setPersonalStats] = useState<any>({
-    appointments: 120,
-    revenue: 80000.0,
-    rating: 4.8,
-    upsells: 15000.0
+    appointments: 0,
+    revenue: 0.0,
+    rating: 0.0,
+    upsells: 0.0,
+    role: 'Stylist'
   });
 
   // Upsell Agent helper
@@ -59,73 +61,109 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
   const [staffReviews, setStaffReviews] = useState<any[]>([]);
   const [isStaffReviewsLoading, setIsStaffReviewsLoading] = useState<boolean>(false);
 
-  useEffect(() => {
-    const loadStaffData = async () => {
-      try {
-        setIsLoading(true);
-        // Simulate loading database data
-        setAppointments([
-          { id: 'appt-s1', start_time: '10:00 AM - 11:00 AM', end_time: '11:00 AM', customer_name: 'Alice Smith', service_name: 'Signature Precision Haircut', notes: 'Requests layering, prefers organic hair products' },
-          { id: 'appt-s2', start_time: '01:30 PM - 03:00 PM', end_time: '03:00 PM', customer_name: 'David Jones', service_name: 'Balayage & Creative Color', notes: 'First session, wants subtle cool blonde highlights' }
-        ]);
-
-        const custRes = await apiClient.get<any[]>('/customers').catch(() => ({ data: [] }));
-        if (custRes.data && custRes.data.length > 0) {
-          setCustomers(custRes.data.map((c: any) => ({
-            id: c.id,
-            name: `${c.first_name} ${c.last_name}`,
-            email: c.email,
-            last_service: c.phone || 'No Phone',
-            last_date: 'Active',
-            notes: c.is_active ? 'Active Profile' : 'Inactive Profile'
-          })));
-        } else {
-          setCustomers([
-            { id: 'c-1', name: 'Alice Smith', email: 'alice.s@example.com', last_service: 'Signature Precision Haircut', last_date: '2026-05-10', notes: 'Always prefers Alexandra or Marcus. Prefers quiet session.' },
-            { id: 'c-2', name: 'David Jones', email: 'david.j@example.com', last_service: 'Beard Trim & Clean Shave', last_date: '2026-04-18', notes: 'Wants strong moisturizers post-shave.' },
-            { id: 'c-3', name: 'Emily Davis', email: 'emily.d@example.com', last_service: 'Balayage & Creative Color', last_date: '2026-05-02', notes: 'Sensitive scalp, color should stay off root line.' }
-          ]);
-        }
-
-        const leadsRes = await apiClient.get<any[]>('/staff/leads').catch(() => ({ data: [] }));
-        setLeads(leadsRes.data.length ? leadsRes.data : [
-          { id: 'lead-s1', customer_name: 'Balu', customer_email: 'balu@example.com', customer_phone: '+919999999999', service_name: 'Hair Spa', status: 'NEW', lead_score: 80, last_contacted: null, created_at: new Date().toISOString() },
-          { id: 'lead-s2', customer_name: 'Vamsi Krishna', customer_email: 'vamsi@example.com', customer_phone: '+918888888888', service_name: 'Balayage & Creative Color', status: 'CONTACTED', lead_score: 60, last_contacted: new Date().toISOString(), created_at: new Date().toISOString() }
-        ]);
-
-        try {
-          const staffSumRes = await apiClient.get('/analytics/staff-summary');
-          if (staffSumRes.data?.success && staffSumRes.data?.staff?.roster) {
-            const roster = staffSumRes.data.staff.roster;
-            const currentStylistName = user?.email?.includes('marcus') ? 'Marcus Johnson' : user?.email?.includes('alexandra') ? 'Alexandra Chen' : 'Priya Sharma';
-            const matched = roster.find((s: any) => s.name?.toLowerCase().includes(currentStylistName.toLowerCase()));
-            if (matched) {
-              setPersonalStats({
-                appointments: matched.appointments || 120,
-                revenue: matched.revenue || 80000.0,
-                rating: matched.rating || 4.8,
-                upsells: matched.upsells || 15000.0
-              });
+  const loadStaffData = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Load real appointments from the backend
+      const apptRes = await apiClient.get<any[]>('/appointments/my').catch(() => ({ data: [] }));
+      if (apptRes.data && apptRes.data.length > 0) {
+        setAppointments(apptRes.data.map((appt: any) => {
+          let normalized = appt.start_time;
+          if (appt.start_time && !appt.start_time.endsWith('Z') && !appt.start_time.includes('+')) {
+            const parts = appt.start_time.split(/T|\s/);
+            const hasTimeOffset = parts.length > 1 && parts[1].includes('-');
+            if (!hasTimeOffset) {
+              normalized = appt.start_time + 'Z';
             }
           }
-        } catch (err) {
-          console.warn('Failed to load dynamic staff analytics benchmarks, using personal fallbacks.', err);
-        }
-      } catch (e) {
-        console.warn('Failed to load dynamic stylist logs', e);
-      } finally {
-        setIsLoading(false);
+          const start = new Date(normalized);
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const monthStr = monthNames[start.getUTCMonth()];
+          const dayStr = start.getUTCDate();
+          const hours = start.getUTCHours();
+          const minutes = start.getUTCMinutes();
+          const ampm = hours >= 12 ? 'PM' : 'AM';
+          const displayHours = hours % 12 || 12;
+          const displayMinutes = minutes.toString().padStart(2, '0');
+          const timeStr = `${displayHours}:${displayMinutes} ${ampm}`;
+          return {
+            id: appt.id,
+            start_time: `${monthStr} ${dayStr} @ ${timeStr}`,
+            end_time: appt.end_time,
+            customer_name: appt.customer ? `${appt.customer.first_name} ${appt.customer.last_name}` : 'Client',
+            service_name: appt.service?.name || 'Service',
+            notes: appt.notes || 'None',
+            status: appt.status
+          };
+        }));
+      } else {
+        setAppointments([]);
       }
-    };
+
+      const custRes = await apiClient.get<any[]>('/customers').catch(() => ({ data: [] }));
+      if (custRes.data && custRes.data.length > 0) {
+        setCustomers(custRes.data.map((c: any) => ({
+          id: c.id,
+          name: `${c.first_name} ${c.last_name}`,
+          email: c.email,
+          last_service: c.phone || 'No Phone',
+          last_date: 'Active',
+          notes: c.is_active ? 'Active Profile' : 'Inactive Profile'
+        })));
+      } else {
+        setCustomers([]);
+      }
+
+      const leadsRes = await apiClient.get<any[]>('/staff/leads').catch(() => ({ data: [] }));
+      setLeads(leadsRes.data.length ? leadsRes.data : []);
+
+      try {
+        const staffSumRes = await apiClient.get('/analytics/staff-summary');
+        if (staffSumRes.data?.success && staffSumRes.data?.staff?.roster) {
+          const roster = staffSumRes.data.staff.roster;
+          const matched = roster.find((s: any) => s.email === user?.email || s.id === user?.staff_id);
+          if (matched) {
+            setPersonalStats({
+              name: matched.name || 'Stylist',
+              appointments: matched.appointments || 0,
+              revenue: matched.revenue || 0.0,
+              rating: matched.rating || 0.0,
+              upsells: matched.upsells || 0.0,
+              role: matched.role || 'Stylist'
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load dynamic staff analytics benchmarks.', err);
+      }
+    } catch (e) {
+      console.warn('Failed to load dynamic stylist logs', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
     loadStaffData();
   }, []);
 
-  // Compute stats metrics
+  const handleUpdateStatus = async (apptId: string, nextStatus: string) => {
+    try {
+      await apiClient.post(`/appointments/${apptId}/status`, { status: nextStatus });
+      window.alert(`🎉 Success! Status updated to ${nextStatus}.`);
+      loadStaffData();
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to update status.');
+    }
+  };
+
+  // Compute stats metrics dynamically
   const stats = [
-    { title: "Today's Styling Book", value: `${appointments.length} Slots`, desc: 'Starting 10:00 AM', icon: '⏰' },
-    { title: 'Stylist Rating', value: '4.95 ★', desc: 'Top tier precision rating', icon: '📈' },
-    { title: 'Upsell Converts', value: '14 successful', desc: 'Commission bonus active', icon: '⚡' },
-    { title: 'Branch Location', value: 'Downtown Elite', desc: 'Assigned Stylist', icon: '📍' }
+    { title: "Today's Styling Book", value: `${appointments.length} Slots`, desc: 'Active agenda', icon: '⏰' },
+    { title: 'Stylist Rating', value: `${personalStats.rating?.toFixed(1) || '0.0'} ★`, desc: 'Average feedback rating', icon: '📈' },
+    { title: 'Upsell Converts', value: `$${personalStats.upsells?.toFixed(0) || '0'}`, desc: 'Total upsell revenue', icon: '⚡' },
+    { title: 'Assigned Role', value: `${personalStats.role || 'Stylist'}`, desc: 'Specialized role', icon: '📍' }
   ];
 
   // Search filtered customers
@@ -189,12 +227,13 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
 
   // Trigger Upsell recommendation mock matching standard agent rules
   const handleQueryUpsell = () => {
+    const staffName = personalStats.name || user?.email || 'Stylist';
     if (selectedService === 'Signature Precision Haircut') {
-      setUpsellSuggestion("💡 Upsell Agent Recommendation:\nRecommend our 'Hydrating Keratin Leave-in treatment' for $25. Marcus earns a 15% commission ($3.75) upon conversion.");
+      setUpsellSuggestion(`💡 Upsell Agent Recommendation:\nRecommend our 'Hydrating Keratin Leave-in treatment' for $25. ${staffName} earns a 15% commission ($3.75) upon conversion.`);
     } else if (selectedService === 'Balayage & Creative Color') {
-      setUpsellSuggestion("💡 Upsell Agent Recommendation:\nRecommend 'Post-Color UV Protection Shield Treatment' for $45. Marcus earns a 15% commission ($6.75) upon conversion.");
+      setUpsellSuggestion(`💡 Upsell Agent Recommendation:\nRecommend 'Post-Color UV Protection Shield Treatment' for $45. ${staffName} earns a 15% commission ($6.75) upon conversion.`);
     } else {
-      setUpsellSuggestion("💡 Upsell Agent Recommendation:\nRecommend 'Signature Scalp Cleansing Detox Massage' for $30. Marcus earns a 15% commission ($4.50) upon conversion.");
+      setUpsellSuggestion(`💡 Upsell Agent Recommendation:\nRecommend 'Signature Scalp Cleansing Detox Massage' for $30. ${staffName} earns a 15% commission ($4.50) upon conversion.`);
     }
   };
 
@@ -351,18 +390,87 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {appointments.map(appt => (
-                        <div key={appt.id} className="bg-slate-900/80 border border-slate-800/80 p-5 rounded-2xl space-y-3 relative">
-                          <span className="absolute top-4 right-4 px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[9px] font-bold border border-emerald-500/20 uppercase">
-                            {appt.start_time}
-                          </span>
-                          <div className="space-y-1">
-                            <h4 className="text-base font-extrabold text-white">{appt.customer_name}</h4>
-                            <span className="text-xs text-blue-400 font-bold block">{appt.service_name}</span>
+                        <div key={appt.id} className="bg-slate-900/80 border border-slate-800/80 p-5 rounded-2xl space-y-3 relative flex flex-col justify-between hover:border-slate-700 transition-colors">
+                          <div>
+                            <span className="absolute top-4 right-4 px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[9px] font-bold border border-emerald-500/20 uppercase">
+                              {appt.start_time}
+                            </span>
+                            <div className="space-y-1">
+                              <h4 className="text-base font-extrabold text-white">{appt.customer_name}</h4>
+                              <span className="text-xs text-blue-400 font-bold block">{appt.service_name}</span>
+                            </div>
+                            <p className="text-xs text-slate-405 leading-relaxed font-medium bg-slate-950 p-3 rounded-xl border border-slate-850 my-2">
+                              <span className="text-[10px] text-slate-500 font-black block uppercase mb-1">Stylist Notes:</span>
+                              {appt.notes}
+                            </p>
                           </div>
-                          <p className="text-xs text-slate-400 leading-relaxed font-medium bg-slate-950 p-3 rounded-xl border border-slate-850">
-                            <span className="text-[10px] text-slate-500 font-black block uppercase mb-1">Stylist Notes:</span>
-                            {appt.notes}
-                          </p>
+                          <div className="flex justify-between items-center pt-2 border-t border-slate-850/60 mt-2">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black border uppercase ${
+                              appt.status === 'PENDING'
+                                ? 'bg-amber-900/25 text-amber-300 border-amber-800/40'
+                                : appt.status === 'CONFIRMED'
+                                ? 'bg-blue-900/25 text-blue-300 border-blue-800/40'
+                                : appt.status === 'CHECKED_IN'
+                                ? 'bg-purple-900/25 text-purple-300 border-purple-800/40'
+                                : appt.status === 'IN_SERVICE'
+                                ? 'bg-indigo-900/25 text-indigo-300 border-indigo-800/40'
+                                : appt.status === 'COMPLETED'
+                                ? 'bg-emerald-900/25 text-emerald-300 border-emerald-800/40'
+                                : 'bg-red-900/25 text-red-355 border-red-800/40'
+                            }`}>
+                              {appt.status}
+                            </span>
+                            <div className="flex gap-1.5">
+                              {appt.status === 'PENDING' && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'CONFIRMED')}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Confirm
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
+                                    className="px-2.5 py-1 bg-red-950 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {appt.status === 'CONFIRMED' && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
+                                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                                  >
+                                    Check In
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
+                                    className="px-2.5 py-1 bg-red-950 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {appt.status === 'CHECKED_IN' && (
+                                <button
+                                  onClick={() => handleUpdateStatus(appt.id, 'IN_SERVICE')}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                                >
+                                  Start Service
+                                </button>
+                              )}
+                              {appt.status === 'IN_SERVICE' && (
+                                <button
+                                  onClick={() => handleUpdateStatus(appt.id, 'COMPLETED')}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                                >
+                                  Complete
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -388,6 +496,8 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                           <th className="px-4 py-3 text-left">Client Name</th>
                           <th className="px-4 py-3 text-left">Requested Service</th>
                           <th className="px-4 py-3 text-left">Client Special Notes</th>
+                          <th className="px-4 py-3 text-center">Status</th>
+                          <th className="px-4 py-3 text-center">Workflow Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -396,7 +506,79 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                             <td className="px-4 py-4 whitespace-nowrap text-blue-400 font-bold text-xs">{appt.start_time}</td>
                             <td className="px-4 py-4 whitespace-nowrap font-bold text-white">{appt.customer_name}</td>
                             <td className="px-4 py-4 whitespace-nowrap text-slate-350">{appt.service_name}</td>
-                            <td className="px-4 py-4 whitespace-nowrap text-slate-400 italic text-xs">{appt.notes}</td>
+                            <td className="px-4 py-4 whitespace-nowrap text-slate-450 italic text-xs">{appt.notes}</td>
+                            <td className="px-4 py-4 whitespace-nowrap text-center">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-black border uppercase ${
+                                appt.status === 'PENDING'
+                                  ? 'bg-amber-900/25 text-amber-300 border-amber-800/40'
+                                  : appt.status === 'CONFIRMED'
+                                  ? 'bg-blue-900/25 text-blue-300 border-blue-800/40'
+                                  : appt.status === 'CHECKED_IN'
+                                  ? 'bg-purple-900/25 text-purple-300 border-purple-800/40'
+                                  : appt.status === 'IN_SERVICE'
+                                  ? 'bg-indigo-900/25 text-indigo-300 border-indigo-800/40'
+                                  : appt.status === 'COMPLETED'
+                                  ? 'bg-emerald-900/25 text-emerald-300 border-emerald-800/40'
+                                  : 'bg-red-900/25 text-red-350 border-red-800/40'
+                              }`}>
+                                {appt.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 whitespace-nowrap text-center">
+                              <div className="flex gap-2 justify-center">
+                                {appt.status === 'PENDING' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleUpdateStatus(appt.id, 'CONFIRMED')}
+                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs cursor-pointer font-bold"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
+                                      className="px-2.5 py-1 bg-red-950 border border-red-900/30 text-red-400 rounded-lg text-xs cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                )}
+                                {appt.status === 'CONFIRMED' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
+                                      className="px-2.5 py-1 bg-indigo-650 hover:bg-indigo-500 text-white rounded-lg text-xs cursor-pointer font-bold"
+                                    >
+                                      Check In
+                                    </button>
+                                    <button
+                                      onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
+                                      className="px-2.5 py-1 bg-red-950 border border-red-900/30 text-red-400 rounded-lg text-xs cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                )}
+                                {appt.status === 'CHECKED_IN' && (
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'IN_SERVICE')}
+                                    className="px-2.5 py-1 bg-blue-650 hover:bg-blue-500 text-white rounded-lg text-xs cursor-pointer font-bold"
+                                  >
+                                    Start Service
+                                  </button>
+                                )}
+                                {appt.status === 'IN_SERVICE' && (
+                                  <button
+                                    onClick={() => handleUpdateStatus(appt.id, 'COMPLETED')}
+                                    className="px-2.5 py-1 bg-emerald-650 hover:bg-emerald-500 text-white rounded-lg text-xs cursor-pointer font-bold"
+                                  >
+                                    Complete
+                                  </button>
+                                )}
+                                {(appt.status === 'COMPLETED' || appt.status === 'CANCELLED') && (
+                                  <span className="text-slate-500 text-xs">-</span>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

@@ -154,6 +154,11 @@ def test_lazy_reminders(db_session):
             db=db_session
         )
     assert res["success"] is True
+    # Mark appointment as CONFIRMED since new appointments are initialized as PENDING
+    import uuid
+    appt = db_session.query(Appointment).filter_by(id=uuid.UUID(res["appointment_id"])).first()
+    appt.status = AppointmentStatus.CONFIRMED
+    db_session.commit()
 
     # Trigger reminders
     count = send_appointment_reminders(customer.id, db_session)
@@ -161,8 +166,8 @@ def test_lazy_reminders(db_session):
 
     # Verify notification created in DB
     notifs = db_session.query(Notification).filter(Notification.user_id == user.id).all()
-    assert len(notifs) == 1
-    assert "Upcoming Appointment in 2 Hours" in notifs[0].title
+    assert len(notifs) == 2
+    assert any("Upcoming Appointment in 2 Hours" in n.title for n in notifs)
 
 
 def test_waitlist_system(db_session):

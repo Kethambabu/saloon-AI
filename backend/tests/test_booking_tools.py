@@ -108,7 +108,7 @@ def test_create_appointment_success_and_overlap_prevention(db_session):
     )
 
     assert result["success"] is True
-    assert result["status"] == "CONFIRMED"
+    assert result["status"] == "PENDING"
     appt_id = result["appointment_id"]
 
     # 2. Overlap Create (same customer, same time)

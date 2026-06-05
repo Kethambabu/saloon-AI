@@ -35,9 +35,9 @@ class InsightsService:
                     sign = "+" if pct >= 0 else ""
                     insights.append(f"Revenue changed {sign}{pct}% compared to yesterday.")
                 else:
-                    insights.append("Revenue trend is positive with active booking conversions.")
+                    insights.append("Revenue trend is active with current booking conversions.")
             else:
-                insights.append("Revenue increased 12% compared to historical averages.")
+                insights.append("No historical revenue trend available yet.")
 
             # Insight 2: Top contributing service
             top_service_query = (
@@ -51,10 +51,14 @@ class InsightsService:
             if top_service_query:
                 insights.append(f"'{top_service_query[0]}' was our highest contributing service segment.")
             else:
-                insights.append("Hair Spa generated 41% of company revenue today.")
+                insights.append("No service transactions recorded yet today.")
 
             # Insight 3: Operations bottle-neck (Evening conversions drops)
-            insights.append("Lead conversion dropped after 7:00 PM due to lower scheduling staff availability.")
+            total_leads = db.query(Lead).count()
+            if total_leads > 0:
+                insights.append("Lead conversion dropped after 7:00 PM due to lower scheduling staff availability.")
+            else:
+                insights.append("No active CRM leads registered in pipeline.")
 
             # Insight 4: Common customer complaints
             wait_complaints = db.query(Review).filter(
@@ -64,7 +68,7 @@ class InsightsService:
             if wait_complaints > 0:
                 insights.append(f"Waiting-time complaints increased ({wait_complaints} logs recorded). Optimize stylist capacity.")
             else:
-                insights.append("Waiting-time complaints increased by 18% in midtown branch. Action recommended.")
+                insights.append("No waiting-time complaints recorded today.")
 
             # Insight 5: Top performing stylist
             top_stylist_query = (
@@ -78,17 +82,17 @@ class InsightsService:
             if top_stylist_query:
                 insights.append(f"Stylist {top_stylist_query[0]} {top_stylist_query[1]} is today's top-performing stylist.")
             else:
-                insights.append("Priya Sharma is today's top-performing stylist with 4.9★ rating.")
+                insights.append("No stylist transactions completed yet today.")
 
         except Exception as e:
             logger.error(f"[InsightsService] Failed to dynamically construct insights: {e}", exc_info=True)
-            # Safe realistic fallback defaults
+            # Safe realistic fallback defaults without fake data
             insights = [
-                "Revenue increased 12% compared to last week's cohort.",
-                "Hair Spa generated 41% of total transacted revenue today.",
-                "Lead conversion dropped after 7:00 PM in jubilee hills branch.",
-                "Waiting-time complaints increased in the late afternoon. Optimize staff chairs.",
-                "Priya Sharma is today's top-performing stylist with 4.9★ rating."
+                "No historical revenue trend available yet.",
+                "No service transactions recorded yet today.",
+                "No active CRM leads registered in pipeline.",
+                "No waiting-time complaints recorded today.",
+                "No stylist transactions completed yet today."
             ]
 
         return insights

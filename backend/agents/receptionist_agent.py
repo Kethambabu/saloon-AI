@@ -108,6 +108,27 @@ def get_query_customer_id() -> Optional[str]:
     return None
 
 
+def get_query_system_datetime() -> Optional[datetime]:
+    """Extract full system datetime from current query context."""
+    context = getattr(ReceptionistAgent, "CURRENT_QUERY_CONTEXT", "")
+    if "[SYSTEM TIME CONTEXT:" in context:
+        try:
+            parts = context.split("Current system time is ")
+            if len(parts) > 1:
+                tokens = parts[1].split()
+                if len(tokens) > 1:
+                    dt_str = f"{tokens[0]} {tokens[1].split('(')[0].split(')')[0]}"
+                    return datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+    return None
+
+
+def adjust_past_date_today(date_str: str, time_str: str) -> str:
+    """Do not adjust past times/dates to tomorrow. Return the requested date as-is so validation stops the process."""
+    return date_str
+
+
 def repair_date(date_input: Any) -> str:
     """Automatically resolve relative date keywords to YYYY-MM-DD format."""
     if not date_input:
@@ -704,11 +725,13 @@ def book_new_appointment(
             if "t" not in dt_str.lower():
                 rep_d = repair_date(dt_str)
                 rep_t = repair_time(dt_str)
+                rep_d = adjust_past_date_today(rep_d, rep_t)
                 repaired_time_str = f"{rep_d}T{rep_t}:00Z"
             else:
                 parts = dt_str.split("T")
                 rep_d = repair_date(parts[0])
                 rep_t = repair_time(parts[1])
+                rep_d = adjust_past_date_today(rep_d, rep_t)
                 repaired_time_str = f"{rep_d}T{rep_t}:00"
                 if not repaired_time_str.endswith("Z") and not "+" in repaired_time_str:
                     repaired_time_str += "Z"
@@ -755,7 +778,8 @@ def cancel_existing_appointment(appointment_id: str) -> str:
                 finally:
                     db.close()
                     
-        return cancel_appointment(appointment_id=repaired_appt)
+        sys_c = get_query_customer_id()
+        return cancel_appointment(appointment_id=repaired_appt, customer_id=sys_c)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
@@ -793,18 +817,21 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
             if "t" not in dt_str.lower():
                 rep_d = repair_date(dt_str)
                 rep_t = repair_time(dt_str)
+                rep_d = adjust_past_date_today(rep_d, rep_t)
                 repaired_time_str = f"{rep_d}T{rep_t}:00Z"
             else:
                 parts = dt_str.split("T")
                 rep_d = repair_date(parts[0])
                 rep_t = repair_time(parts[1])
+                rep_d = adjust_past_date_today(rep_d, rep_t)
                 repaired_time_str = f"{rep_d}T{rep_t}:00"
                 if not repaired_time_str.endswith("Z") and not "+" in repaired_time_str:
                     repaired_time_str += "Z"
         except Exception:
             repaired_time_str = f"{repair_date(None)}T17:00:00Z"
             
-        return reschedule_appointment(appointment_id=repaired_appt, new_start_time=repaired_time_str)
+        sys_c = get_query_customer_id()
+        return reschedule_appointment(appointment_id=repaired_appt, new_start_time=repaired_time_str, customer_id=sys_c)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
@@ -1144,7 +1171,24 @@ class ReceptionistAgent(Agent):
             
             repaired_date = repair_date(intent_json.get("date"))
             repaired_time = repair_time(intent_json.get("time"))
+            repaired_date = adjust_past_date_today(repaired_date, repaired_time)
             repaired_time_str = f"{repaired_date}T{repaired_time}:00Z"
+
+            # Check if booking is in the past
+            sys_dt = get_query_system_datetime() or datetime.now()
+            if sys_dt.tzinfo is not None:
+                sys_dt = sys_dt.replace(tzinfo=None)
+            try:
+                req_dt = datetime.strptime(f"{repaired_date} {repaired_time}", "%Y-%m-%d %H:%M")
+                if req_dt < sys_dt:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{pref_str}\n\nI apologize, but appointments must be in the future. Please select a future date and time.",
+                        "provider": "booking_engine"
+                    }
+            except Exception as e:
+                logger.warning(f"Error checking past datetime in receptionist process: {e}")
 
             # Check availability directly via Python tool
             slots_data = check_stylist_availability(
@@ -1227,10 +1271,10 @@ class ReceptionistAgent(Agent):
                         stylist_name = f"{st.first_name} {st.last_name}"
                 price_val = db.query(Service).filter(Service.id == repaired_service).first().price
             except Exception:
-                service_name = "Precision Haircut"
-                branch_name = "Vijayawada Benz Circle"
-                stylist_name = "Alexandra Chen"
-                price_val = 85.0
+                service_name = "Styling Session"
+                branch_name = "Main Salon"
+                stylist_name = "Stylist"
+                price_val = 0.0
             finally:
                 db.close()
 
@@ -1322,7 +1366,24 @@ class ReceptionistAgent(Agent):
                 
             new_date = repair_date(intent_json.get("date"))
             new_time = repair_time(intent_json.get("time"))
+            new_date = adjust_past_date_today(new_date, new_time)
             new_start_time = f"{new_date}T{new_time}:00Z"
+
+            # Check if rescheduling is in the past
+            sys_dt = get_query_system_datetime() or datetime.now()
+            if sys_dt.tzinfo is not None:
+                sys_dt = sys_dt.replace(tzinfo=None)
+            try:
+                req_dt = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
+                if req_dt < sys_dt:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{pref_str}\n\nI apologize, but appointments must be in the future. Please select a future date and time.",
+                        "provider": "booking_engine"
+                    }
+            except Exception as e:
+                logger.warning(f"Error checking past datetime in receptionist reschedule: {e}")
             
             resched_res = reschedule_existing_appointment(appointment_id=appt_id, new_start_time=new_start_time)
             formatted_resched = format_receptionist_tool_output("reschedule", resched_res)
@@ -1336,13 +1397,22 @@ class ReceptionistAgent(Agent):
         elif intent == "history":
             repaired_cust = repair_customer(cust_id)
             history_data = check_customer_booking_history(customer_id=repaired_cust)
-            formatted_history = format_receptionist_tool_output("history", history_data)
-            return {
-                "success": True,
-                "agent_name": self.name,
-                "response": f"{pref_str}\n\n{formatted_history}",
-                "provider": "booking_engine"
-            }
+            
+            # Check if this is a specific natural language query about history
+            specific_keywords = ["spend", "cost", "pay", "charge", "last", "recent", "how many", "count", "this month", "this year", "year", "month", "total"]
+            is_specific_query = any(k in query.lower() for k in specific_keywords)
+            
+            if is_specific_query:
+                # Let's route to the LLM agent, but inject the history data into the query so the LLM can see it!
+                query = f"{query}\n\n[USER BOOKING HISTORY DATA: {history_data}]"
+            else:
+                formatted_history = format_receptionist_tool_output("history", history_data)
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": f"{pref_str}\n\n{formatted_history}",
+                    "provider": "booking_engine"
+                }
 
         # Chat / Discovery queries fall back to standard Agent execution
         last_error = None

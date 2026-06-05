@@ -64,7 +64,15 @@ interface NotificationItem {
  */
 const formatUTCDateTime = (isoString: string): string => {
   try {
-    const date = new Date(isoString);
+    let normalized = isoString;
+    if (isoString && !isoString.endsWith('Z') && !isoString.includes('+')) {
+      const parts = isoString.split(/T|\s/);
+      const hasTimeOffset = parts.length > 1 && parts[1].includes('-');
+      if (!hasTimeOffset) {
+        normalized = isoString + 'Z';
+      }
+    }
+    const date = new Date(normalized);
     // Use UTC methods to avoid timezone conversion
     const year = date.getUTCFullYear();
     const month = date.getUTCMonth();
@@ -90,7 +98,15 @@ const formatUTCDateTime = (isoString: string): string => {
  */
 const formatUTCDate = (isoString: string): string => {
   try {
-    const date = new Date(isoString);
+    let normalized = isoString;
+    if (isoString && !isoString.endsWith('Z') && !isoString.includes('+')) {
+      const parts = isoString.split(/T|\s/);
+      const hasTimeOffset = parts.length > 1 && parts[1].includes('-');
+      if (!hasTimeOffset) {
+        normalized = isoString + 'Z';
+      }
+    }
+    const date = new Date(normalized);
     const year = date.getUTCFullYear();
     const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
     const day = date.getUTCDate().toString().padStart(2, '0');
@@ -156,11 +172,7 @@ export const UserDashboard: React.FC = () => {
   const [prefService, setPrefService] = useState<string>('');
 
   // Notification center alerts
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    { id: 'n1', type: 'success', title: 'Loyalty Upgrade', message: 'Congratulations! You have been upgraded to Gold Membership tier.', timestamp: 'Just now' },
-    { id: 'n2', type: 'info', title: 'Season Discount', message: 'Use code LUXSPA20 to get 20% off any massage treatments next week.', timestamp: '2 hours ago' },
-    { id: 'n3', type: 'success', title: 'System Booking Secured', message: 'Your last precision styling session with Marcus Johnson was completed successfully.', timestamp: '1 day ago' }
-  ]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Load backend data
   const fetchData = async () => {
@@ -183,60 +195,27 @@ export const UserDashboard: React.FC = () => {
       // Load client's appointments
       const apptRes = await apiClient.get<AppointmentRecord[]>('/appointments/my');
       setAppointments(apptRes.data);
-    } catch (err) {
-      console.warn('Backend offline or not returning customer data, fallback to mock data');
-      // Loyalty points fallback is handled in useLoyalty hook
-      
-      setServices([
-        { id: 's1', name: 'Signature Precision Haircut', description: 'Crafted haircut with custom styling tailored to your face structure.', price: 85, duration_minutes: 60 },
-        { id: 's2', name: 'Balayage & Creative Color', description: 'Premium hand-painted high-definition balayage with high-shine seal.', price: 220, duration_minutes: 150 },
-        { id: 's3', name: 'Hydrating Deep-Cleansing Facial', description: 'Luxurious 75-minute facial with premium organic skincare.', price: 120, duration_minutes: 75 },
-        { id: 's4', name: 'Himalayan Hot Stone Massage', description: 'Soothing aromatic massage with warm volcanic hot stones.', price: 150, duration_minutes: 90 },
-        { id: 's5', name: 'Luxury Spa Pedicure', description: 'Exfoliating foot massage, sea salt wrap, and professional polish.', price: 75, duration_minutes: 50 },
-        { id: 's6', name: 'Elite Gel Manicure', description: 'Precision cuticle treatment, hand hydration, and shellac polish.', price: 65, duration_minutes: 45 }
-      ]);
-      setBranches([
-        { id: 'b1', name: 'Vijayawada Benz Circle', city: 'Vijayawada' },
-        { id: 'b2', name: 'Jubilee Hills Elite', city: 'Hyderabad' },
-        { id: 'b3', name: 'Indiranagar Premium', city: 'Bengaluru' }
-      ]);
-      setAppointments([
-        {
-          id: 'appt-1',
-          start_time: new Date(Date.now() + 86400000).toISOString(), // Tomorrow
-          end_time: new Date(Date.now() + 90000000).toISOString(),
-          status: 'CONFIRMED',
-          notes: 'Prefers mild lavender oils',
-          service: { name: 'Himalayan Hot Stone Massage', price: 150, duration_minutes: 90 },
-          staff: { first_name: 'Alexandra', last_name: 'Chen' },
-          branch: { name: 'Jubilee Hills Elite', city: 'Hyderabad' }
-        },
-        {
-          id: 'appt-2',
-          start_time: new Date(Date.now() - 172800000).toISOString(), // Completed 2 days ago
-          end_time: new Date(Date.now() - 169200000).toISOString(),
-          status: 'COMPLETED',
-          notes: 'Regular customer session',
-          service: { name: 'Signature Precision Haircut', price: 85, duration_minutes: 60 },
-          staff: { first_name: 'Marcus', last_name: 'Johnson' },
-          branch: { name: 'Vijayawada Benz Circle', city: 'Vijayawada' }
-        }
-      ]);
-    } finally {
-      // Inject lead follow-up reminder to demonstrate unfinished booking notification
-      const hasUnfinished = notifications.some(n => n.message.toLowerCase().includes("unfinished booking"));
-      if (!hasUnfinished) {
-        setNotifications(prev => [
-          {
-            id: 'n-lead-followup',
-            type: 'warning',
-            title: 'Unfinished Booking Detected',
-            message: 'You have an unfinished booking for Signature Precision Haircut. Click Continue Booking to complete.',
-            timestamp: 'Just now'
-          },
-          ...prev
-        ]);
+
+      // Load notifications dynamically
+      const notifRes = await apiClient.get<any[]>('/notifications').catch(() => ({ data: [] }));
+      if (notifRes.data && notifRes.data.length > 0) {
+        setNotifications(notifRes.data.map((n: any) => ({
+          id: n.id,
+          type: n.is_read ? 'info' : 'success',
+          title: n.title,
+          message: n.message,
+          timestamp: new Date(n.created_at).toLocaleTimeString() + ' ' + new Date(n.created_at).toLocaleDateString()
+        })));
+      } else {
+        setNotifications([]);
       }
+    } catch (err) {
+      console.warn('Backend offline or not returning customer data');
+      setNotifications([]);
+      setServices([]);
+      setBranches([]);
+      setAppointments([]);
+    } finally {
       setIsLoading(false);
     }
   };
@@ -257,11 +236,8 @@ export const UserDashboard: React.FC = () => {
         const staffRes = await apiClient.get<StaffItem[]>(`/branches/${selectedBranch}/staff`);
         setStaff(staffRes.data);
       } catch (err) {
-        console.warn('Failed to load branch stylists, falling back to mock staff');
-        setStaff([
-          { id: 'st1', first_name: 'Alexandra', last_name: 'Chen', role: 'Senior Stylist' },
-          { id: 'st2', first_name: 'Marcus', last_name: 'Johnson', role: 'Color Specialist' }
-        ]);
+        console.warn('Failed to load branch stylists');
+        setStaff([]);
       }
     };
     fetchStaff();
@@ -301,28 +277,27 @@ export const UserDashboard: React.FC = () => {
         showToast(res.data.message || 'Recommendation accepted successfully!', 'success');
         fetchData();
         fetchRecommendations();
-        if (justBookedAppt) setJustBookedAppt(null);
       }
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Failed to accept recommendation.', 'error');
+    } finally {
+      if (justBookedAppt) setJustBookedAppt(null);
     }
   };
 
   const handleRejectRecommendation = async (rec: any) => {
     if (!user?.customer_id) return;
     try {
-      const res = await apiClient.post('/recommendations/reject', {
+      await apiClient.post('/recommendations/reject', {
         customer_id: user.customer_id,
         service_id: rec.service_id,
         appointment_id: rec.appointment_id || (justBookedAppt ? justBookedAppt.id : null)
       });
-      if (res.data && res.data.success) {
-        showToast(res.data.message || 'Recommendation dismissed.', 'success');
-        fetchRecommendations();
-        if (justBookedAppt) setJustBookedAppt(null);
-      }
+      fetchRecommendations();
     } catch (err: any) {
-      showToast(err.response?.data?.detail || 'Failed to dismiss recommendation.', 'error');
+      console.warn('Failed to dismiss recommendation in database:', err);
+    } finally {
+      if (justBookedAppt) setJustBookedAppt(null);
     }
   };
 
@@ -380,6 +355,14 @@ export const UserDashboard: React.FC = () => {
     
     const newStartTime = `${newRescheduleDate}T${newRescheduleTime}:00Z`;
     
+    // Check if the selected date and time is in the future
+    const now = new Date();
+    const selectedDateTime = new Date(newStartTime);
+    if (selectedDateTime <= now) {
+      showToast('Appointments must be in the future.', 'error');
+      return;
+    }
+    
     try {
       await apiClient.post(`/appointments/${reschedulingAppt.id}/reschedule`, {
         new_start_time: newStartTime
@@ -435,8 +418,17 @@ export const UserDashboard: React.FC = () => {
       return;
     }
 
-    setIsBookingSubmitting(true);
     const startTime = `${selectedDate}T${selectedTime}:00Z`;
+
+    // Check if the selected date and time is in the future
+    const now = new Date();
+    const selectedDateTime = new Date(startTime);
+    if (selectedDateTime <= now) {
+      showToast('Appointments must be in the future.', 'error');
+      return;
+    }
+
+    setIsBookingSubmitting(true);
     const finalNotes = isUpsellAccepted 
       ? `${bookingNotes ? bookingNotes + ' | ' : ''}Accepted Special head-massage upsell bundle ($25)` 
       : bookingNotes;
@@ -1180,7 +1172,9 @@ export const UserDashboard: React.FC = () => {
                           <button
                             key={star}
                             onClick={() => setRatingValue(star)}
-                            className="text-2xl cursor-pointer hover:scale-115 transition-transform"
+                            className={`text-2xl cursor-pointer hover:scale-115 transition-transform ${
+                              star <= ratingValue ? 'text-amber-400' : 'text-slate-600'
+                            }`}
                           >
                             {star <= ratingValue ? '★' : '☆'}
                           </button>
@@ -1440,9 +1434,16 @@ export const UserDashboard: React.FC = () => {
                   </div>
                   
                   <button 
-                    onClick={() => {
-                      setNotifications([]);
-                      showToast('Notification logs cleared.', 'success');
+                    onClick={async () => {
+                      try {
+                        await apiClient.post('/notifications/read-all');
+                        setNotifications([]);
+                        showToast('Notification logs cleared.', 'success');
+                      } catch (err) {
+                        console.warn('Failed to clear notifications in DB, clearing locally', err);
+                        setNotifications([]);
+                        showToast('Notification logs cleared.', 'success');
+                      }
                     }}
                     className="px-3.5 py-2 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-400 cursor-pointer"
                   >
@@ -1531,8 +1532,9 @@ export const UserDashboard: React.FC = () => {
                       className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none"
                     >
                       <option value="">Select stylist...</option>
-                      <option value="Alexandra Chen">Alexandra Chen (Senior Stylist)</option>
-                      <option value="Marcus Johnson">Marcus Johnson (Color Specialist)</option>
+                      {staff.map(st => (
+                        <option key={st.id} value={`${st.first_name} ${st.last_name}`}>{st.first_name} {st.last_name} ({st.role})</option>
+                      ))}
                     </select>
                   </div>
 

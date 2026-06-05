@@ -107,15 +107,17 @@ async def get_reviews(
     
     # Enforce role-based access scoping
     user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if "UserRole." in user_role:
+        user_role = user_role.split("UserRole.")[1]
     scoped_customer_id = customer_id
     scoped_staff_id = staff_id
 
     if user_role == "CUSTOMER":
-        scoped_customer_id = str(current_user.customer_id)
+        scoped_customer_id = str(current_user.customer_id) if current_user.customer_id else None
         scoped_staff_id = None
     elif user_role == "STAFF":
         # Stylists see all reviews for their assigned chair
-        scoped_staff_id = str(current_user.staff_id)
+        scoped_staff_id = str(current_user.staff_id) if current_user.staff_id else None
         scoped_customer_id = None
 
     try:
@@ -154,6 +156,8 @@ async def generate_response(
     """
     logger.info(f"POST /reviews/respond called by user {current_user.email}")
     user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if "UserRole." in user_role:
+        user_role = user_role.split("UserRole.")[1]
     if user_role not in ["ADMIN", "STAFF", "MANAGER", "OWNER"]:
          raise HTTPException(
              status_code=status.HTTP_403_FORBIDDEN,
@@ -195,6 +199,8 @@ async def escalate_review(
     """
     logger.info(f"POST /reviews/escalate called by user {current_user.email}")
     user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if "UserRole." in user_role:
+        user_role = user_role.split("UserRole.")[1]
     if user_role not in ["ADMIN", "STAFF", "MANAGER", "OWNER"]:
          raise HTTPException(
              status_code=status.HTTP_403_FORBIDDEN,
@@ -233,6 +239,8 @@ async def get_reputation_analytics(
     """
     logger.info(f"GET /reviews/analytics/stats called by user {current_user.email}")
     user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if "UserRole." in user_role:
+        user_role = user_role.split("UserRole.")[1]
     if user_role not in ["ADMIN", "STAFF", "MANAGER", "OWNER"]:
          raise HTTPException(
              status_code=status.HTTP_403_FORBIDDEN,

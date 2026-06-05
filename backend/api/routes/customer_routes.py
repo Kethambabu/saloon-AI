@@ -180,7 +180,7 @@ def get_customer_dashboard(
             "service_name": apt.service.name if apt.service else "N/A",
             "branch_name": apt.branch.name if apt.branch else "N/A",
             "staff_name": apt.staff.full_name if apt.staff else "N/A",
-            "start_time": apt.start_time.isoformat() if apt.start_time else None,
+            "start_time": (apt.start_time.isoformat() if apt.start_time.tzinfo else f"{apt.start_time.isoformat()}Z") if apt.start_time else None,
             "status": apt.status.value,
             "rating": next(
                 (r.rating for r in reviews if r.appointment_id == apt.id),
@@ -356,7 +356,7 @@ def get_customer_appointments(
             service_name=apt.service.name if apt.service else "N/A",
             branch_name=apt.branch.name if apt.branch else "N/A",
             staff_name=apt.staff.full_name if apt.staff else "N/A",
-            start_time=apt.start_time.isoformat() if apt.start_time else None,
+            start_time=(apt.start_time.isoformat() if apt.start_time.tzinfo else f"{apt.start_time.isoformat()}Z") if apt.start_time else None,
             status=apt.status.value,
             rating=None
         )

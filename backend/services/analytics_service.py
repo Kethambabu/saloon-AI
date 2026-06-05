@@ -4,18 +4,15 @@ Aggregates performance data across branches, staff, customers, appointments, lea
 """
 
 import logging
-import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy import func, text, desc
 from sqlalchemy.orm import Session
 
-from db.database import SessionLocal
 from db.models import (
     Appointment, Customer, Service, Staff, Branch, Review, Lead,
-    ServiceRecommendation, CustomerRecommendation, BusinessMetricsHistory,
-    AppointmentStatus, LeadStatus, ReviewStatus
+    CustomerRecommendation, AppointmentStatus, LeadStatus, ReviewStatus
 )
 
 logger = logging.getLogger(__name__)
@@ -59,11 +56,11 @@ class AnalyticsService:
         # Lead conversion rate
         total_leads = db.query(Lead).count()
         converted_leads = db.query(Lead).filter(Lead.status == LeadStatus.CONVERTED).count()
-        lead_conv_rate = round((converted_leads / total_leads * 100.0), 1) if total_leads > 0 else 68.0
+        lead_conv_rate = round((converted_leads / total_leads * 100.0), 1) if total_leads > 0 else 0.0
         
         # Average rating
         avg_rating_val = db.query(func.avg(Review.rating)).filter(Review.status == ReviewStatus.APPROVED).scalar()
-        average_rating = round(float(avg_rating_val), 1) if avg_rating_val is not None else 4.7
+        average_rating = round(float(avg_rating_val), 1) if avg_rating_val is not None else 0.0
         
         # Upsell revenue today (accepted recommendations)
         upsell_rev_today = Decimal("0.00")
@@ -76,14 +73,13 @@ class AnalyticsService:
             if rec.recommended_service:
                 upsell_rev_today += Decimal(str(rec.recommended_service.price))
                 
-        # Return complete snapshot (falling back to realistic standard metrics if database is blank)
         return {
-            "revenue_today": float(revenue_today) if revenue_today > 0 else 18500.0,
-            "appointments_today": total_appts_today if total_appts_today > 0 else 42,
-            "new_customers": new_cust_today if new_cust_today > 0 else 12,
+            "revenue_today": float(revenue_today),
+            "appointments_today": total_appts_today,
+            "new_customers": new_cust_today,
             "lead_conversion_rate": lead_conv_rate,
             "average_rating": average_rating,
-            "upsell_revenue": float(upsell_rev_today) if upsell_rev_today > 0 else 4200.0
+            "upsell_revenue": float(upsell_rev_today)
         }
 
     @staticmethod
@@ -100,9 +96,23 @@ class AnalyticsService:
             if appt.service:
                 total_rev += Decimal(str(appt.service.price))
                 
-        weekly_rev = total_rev * Decimal("0.22")  # weekly share
-        monthly_rev = total_rev * Decimal("0.85") # monthly share
-        yearly_rev = total_rev
+        # Get start dates for boundaries
+        now = datetime.now(timezone.utc)
+        one_day_ago = now - timedelta(days=1)
+        seven_days_ago = now - timedelta(days=7)
+        thirty_days_ago = now - timedelta(days=30)
+        
+        def get_completed_rev(start_date=None):
+            q = db.query(func.sum(Service.price)).join(Appointment, Service.id == Appointment.service_id).filter(Appointment.status == AppointmentStatus.COMPLETED)
+            if start_date:
+                q = q.filter(Appointment.start_time >= start_date)
+            val = q.scalar()
+            return float(val) if val is not None else 0.0
+
+        today_rev = get_completed_rev(one_day_ago)
+        wk_rev = get_completed_rev(seven_days_ago)
+        mo_rev = get_completed_rev(thirty_days_ago)
+        yr_rev = get_completed_rev()
         
         # Dialect-safe date formatter
         if db.bind and db.bind.dialect.name == "sqlite":
@@ -122,11 +132,6 @@ class AnalyticsService:
         labels = [row.date for row in time_query]
         data = [float(row.sum or 0.0) for row in time_query]
         
-        if not labels:
-            # Seed mock historical line chart if database lacks data
-            labels = ["2026-05-24", "2026-05-26", "2026-05-28", "2026-05-30", "2026-06-01"]
-            data = [14200.0, 13900.0, 15800.0, 17200.0, 18500.0]
-
         # Service breakdown
         service_query = (
             db.query(Service.name, func.sum(Service.price).label("sum"))
@@ -136,8 +141,6 @@ class AnalyticsService:
             .all()
         )
         by_service = {row.name: float(row.sum or 0) for row in service_query}
-        if not by_service:
-            by_service = {"Signature Precision Haircut": 45000.0, "Balayage & Creative Color": 72000.0, "Hydrating Deep-Cleansing Facial": 28000.0, "Hair Spa": 15000.0}
 
         # Branch breakdown
         branch_query = (
@@ -149,8 +152,6 @@ class AnalyticsService:
             .all()
         )
         by_branch = {row.name: float(row.sum or 0) for row in branch_query}
-        if not by_branch:
-            by_branch = {"Downtown Elite": 98000.0, "Westside Boutique": 62000.0, "Midtown Luxe": 45000.0}
 
         # Staff breakdown
         staff_query = (
@@ -162,15 +163,13 @@ class AnalyticsService:
             .all()
         )
         by_staff = {f"{row.first_name} {row.last_name}": float(row.sum or 0) for row in staff_query}
-        if not by_staff:
-            by_staff = {"Priya Sharma": 120000.0, "Alexandra Chen": 85000.0, "Marcus Johnson": 64000.0}
 
         return {
             "cards": {
-                "today_revenue": float(total_rev * Decimal("0.08")) if total_rev > 0 else 18500.0,
-                "weekly_revenue": float(weekly_rev) if weekly_rev > 0 else 129500.0,
-                "monthly_revenue": float(monthly_rev) if monthly_rev > 0 else 518000.0,
-                "yearly_revenue": float(yearly_rev) if yearly_rev > 0 else 6200000.0,
+                "today_revenue": today_rev,
+                "weekly_revenue": wk_rev,
+                "monthly_revenue": mo_rev,
+                "yearly_revenue": yr_rev,
             },
             "charts": {
                 "labels": labels,
@@ -203,7 +202,7 @@ class AnalyticsService:
         clv_scalar = db.query(func.avg(Service.price)).join(
             Appointment, Service.id == Appointment.service_id
         ).filter(Appointment.status == AppointmentStatus.COMPLETED).scalar()
-        avg_clv = round(float(clv_scalar), 2) if clv_scalar is not None else 185.50
+        avg_clv = round(float(clv_scalar), 2) if clv_scalar is not None else 0.0
         
         # AI Insight stats (inactive in last 90 days)
         limit_date = datetime.now(timezone.utc) - timedelta(days=90)
@@ -218,12 +217,11 @@ class AnalyticsService:
             if cust.id not in recent_active_ids:
                 inactive_count += 1
                 
-        # Safeguard fallback values
         return {
-            "total_customers": total_customers if total_customers > 0 else 184,
-            "returning_customers": returning_customers if returning_customers > 0 else 125,
-            "inactive_customers": inactive_count if inactive_count > 0 else 46,
-            "vip_customers": vip_customers if vip_customers > 0 else 22,
+            "total_customers": total_customers,
+            "returning_customers": returning_customers,
+            "inactive_customers": inactive_count,
+            "vip_customers": vip_customers,
             "customer_lifetime_value": avg_clv
         }
 
@@ -261,31 +259,40 @@ class AnalyticsService:
             ).scalar()
             
             roster_data.append({
+                "id": str(st.id),
+                "email": st.email,
                 "name": f"{st.first_name} {st.last_name}",
                 "role": st.role,
-                "appointments": len(appts) if len(appts) > 0 else 140,
-                "revenue": float(revenue) if revenue > 0 else 120000.0,
-                "rating": round(float(rating), 2) if rating is not None else 4.9,
-                "upsells": float(upsells) if upsells is not None else 25000.0
+                "appointments": len(appts),
+                "revenue": float(revenue),
+                "rating": round(float(rating), 2) if rating is not None else 0.0,
+                "upsells": float(upsells) if upsells is not None else 0.0
             })
             
-        if not roster_data:
-            roster_data = [
-                {"name": "Priya Sharma", "role": "Senior Stylist", "appointments": 140, "revenue": 120000.0, "rating": 4.9, "upsells": 25000.0},
-                {"name": "Alexandra Chen", "role": "Senior Stylist", "appointments": 98, "revenue": 85000.0, "rating": 4.8, "upsells": 15000.0},
-                {"name": "Marcus Johnson", "role": "Color Specialist", "appointments": 65, "revenue": 64000.0, "rating": 4.7, "upsells": 12000.0}
-            ]
-            
         # Benchmark boundaries
-        roster_data.sort(key=lambda x: x["revenue"], reverse=True)
-        
+        if roster_data:
+            roster_data.sort(key=lambda x: x["revenue"], reverse=True)
+            top_performer = roster_data[0]["name"]
+            top_revenue = roster_data[0]["revenue"]
+            top_appointments = roster_data[0]["appointments"]
+            top_rating = roster_data[0]["rating"]
+            top_upsells = roster_data[0]["upsells"]
+            lowest_performer = roster_data[-1]["name"] if len(roster_data) > 1 else "None"
+        else:
+            top_performer = "None"
+            top_revenue = 0.0
+            top_appointments = 0
+            top_rating = 0.0
+            top_upsells = 0.0
+            lowest_performer = "None"
+            
         return {
-            "top_performer": roster_data[0]["name"],
-            "top_revenue": roster_data[0]["revenue"],
-            "top_appointments": roster_data[0]["appointments"],
-            "top_rating": roster_data[0]["rating"],
-            "top_upsells": roster_data[0]["upsells"],
-            "lowest_performer": roster_data[-1]["name"] if len(roster_data) > 1 else "None",
+            "top_performer": top_performer,
+            "top_revenue": top_revenue,
+            "top_appointments": top_appointments,
+            "top_rating": top_rating,
+            "top_upsells": top_upsells,
+            "lowest_performer": lowest_performer,
             "roster": roster_data
         }
 
@@ -301,13 +308,12 @@ class AnalyticsService:
         converted = db.query(Lead).filter(Lead.status == LeadStatus.CONVERTED).count()
         lost = db.query(Lead).filter(Lead.status == LeadStatus.LOST).count()
         
-        # Fallback mocks if blank
         return {
-            "new_leads": new_leads if total_leads > 0 else 45,
-            "converted_leads": converted if total_leads > 0 else 120,
-            "lost_leads": lost if total_leads > 0 else 35,
-            "pending_leads": contacted if total_leads > 0 else 20,
-            "conversion_rate": round((converted / total_leads * 100.0), 1) if total_leads > 0 else 60.0
+            "new_leads": new_leads,
+            "converted_leads": converted,
+            "lost_leads": lost,
+            "pending_leads": contacted,
+            "conversion_rate": round((converted / total_leads * 100.0), 1) if total_leads > 0 else 0.0
         }
 
     @staticmethod
@@ -324,16 +330,16 @@ class AnalyticsService:
         
         # Average rating
         avg_rating_val = db.query(func.avg(Review.rating)).scalar()
-        average_rating = round(float(avg_rating_val), 2) if avg_rating_val is not None else 4.7
+        average_rating = round(float(avg_rating_val), 2) if avg_rating_val is not None else 0.0
         
         return {
-            "total_reviews": total_reviews if total_reviews > 0 else 800,
+            "total_reviews": total_reviews,
             "average_rating": average_rating,
-            "positive_reviews": pos_count if total_reviews > 0 else 700,
-            "neutral_reviews": neu_count if total_reviews > 0 else 50,
-            "negative_reviews": neg_count if total_reviews > 0 else 42,
-            "critical_complaints": crit_count if total_reviews > 0 else 8,
-            "primary_complaint": "Waiting Time"
+            "positive_reviews": pos_count,
+            "neutral_reviews": neu_count,
+            "negative_reviews": neg_count,
+            "critical_complaints": crit_count,
+            "primary_complaint": "None" if total_reviews == 0 else "Waiting Time"
         }
 
     @staticmethod
@@ -351,12 +357,20 @@ class AnalyticsService:
             if r.recommended_service:
                 upsell_revenue += Decimal(str(r.recommended_service.price))
                 
-        acceptance_rate = round((accepted_recs / total_recs * 100.0), 1) if total_recs > 0 else 24.0
+        acceptance_rate = round((accepted_recs / total_recs * 100.0), 1) if total_recs > 0 else 0.0
         
+        # Find most accepted service
+        most_accepted_service = "None"
+        most_accepted_q = db.query(Service.name, func.count(CustomerRecommendation.id).label("cnt")).join(
+            CustomerRecommendation, Service.id == CustomerRecommendation.recommended_service_id
+        ).filter(CustomerRecommendation.accepted == True).group_by(Service.id).order_by(desc("cnt")).first()
+        if most_accepted_q:
+            most_accepted_service = most_accepted_q.name
+            
         return {
-            "upsell_revenue": float(upsell_revenue) if upsell_revenue > 0 else 75000.0,
+            "upsell_revenue": float(upsell_revenue),
             "acceptance_rate": acceptance_rate,
-            "accepted_count": accepted_recs if accepted_recs > 0 else 120,
-            "total_offers": total_recs if total_recs > 0 else 500,
-            "most_accepted": "Hair Spa"
+            "accepted_count": accepted_recs,
+            "total_offers": total_recs,
+            "most_accepted": most_accepted_service
         }

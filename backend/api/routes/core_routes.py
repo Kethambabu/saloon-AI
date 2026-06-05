@@ -22,6 +22,7 @@ from db import (
     UserRole,
     AppointmentStatus,
     ReviewStatus,
+    Notification,
 )
 from api.deps import RoleChecker, get_current_user
 
@@ -429,8 +430,8 @@ async def get_my_appointments(
     for appt in appointments:
         result.append({
             "id": str(appt.id),
-            "start_time": appt.start_time.isoformat(),
-            "end_time": appt.end_time.isoformat(),
+            "start_time": appt.start_time.isoformat() if appt.start_time.tzinfo else f"{appt.start_time.isoformat()}Z",
+            "end_time": appt.end_time.isoformat() if appt.end_time.tzinfo else f"{appt.end_time.isoformat()}Z",
             "status": appt.status.value if hasattr(appt.status, "value") else str(appt.status),
             "notes": appt.notes,
             "service": {
@@ -445,7 +446,14 @@ async def get_my_appointments(
             "branch": {
                 "name": appt.branch.name,
                 "city": appt.branch.city
-            }
+            },
+            "customer": {
+                "id": str(appt.customer.id),
+                "first_name": appt.customer.first_name,
+                "last_name": appt.customer.last_name,
+                "email": appt.customer.email,
+                "phone": appt.customer.phone
+            } if appt.customer else None
         })
     return result
 
@@ -486,7 +494,7 @@ async def book_appointment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Booking failed.")
         )
-        
+    db.commit()
     return result
 
 
@@ -520,13 +528,13 @@ async def cancel_booking(
         )
         
     from tools.booking_tools import cancel_appointment
-    result = cancel_appointment(appointment_id=appointment_id, db=db)
+    result = cancel_appointment(appointment_id=appointment_id, customer_id=str(current_user.customer_id) if current_user.customer_id else None, db=db)
     if not result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Cancellation failed.")
         )
-        
+    db.commit()
     return result
 
 
@@ -564,6 +572,7 @@ async def reschedule_booking(
     result = reschedule_appointment(
         appointment_id=appointment_id,
         new_start_time=payload.new_start_time,
+        customer_id=str(current_user.customer_id) if current_user.customer_id else None,
         db=db
     )
     
@@ -572,7 +581,7 @@ async def reschedule_booking(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Rescheduling failed.")
         )
-        
+    db.commit()
     return result
 
 
@@ -635,16 +644,57 @@ async def update_appointment_status(
         
     if target == AppointmentStatus.CANCELLED:
         from tools.booking_tools import cancel_appointment
-        result = cancel_appointment(appointment_id=appointment_id, db=db)
+        result = cancel_appointment(appointment_id=appointment_id, customer_id=str(current_user.customer_id) if current_user.customer_id else None, db=db)
         if not result.get("success"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=result.get("error", "Cancellation failed.")
             )
+        db.commit()
         return result
         
     appt.status = target
     db.commit()
+
+    # Dispatch notification to user dynamically
+    try:
+        user = db.query(User).filter(User.customer_id == appt.customer_id).first()
+        if user:
+            import uuid
+            title = "Appointment Status Updated"
+            msg = f"Your appointment for {appt.service.name} status is now {target.value}."
+            
+            if target == AppointmentStatus.CONFIRMED:
+                title = "Appointment Confirmed"
+                msg = f"Your styling session for {appt.service.name} has been confirmed for {appt.start_time.strftime('%Y-%m-%d %H:%M')}."
+            elif target == AppointmentStatus.CHECKED_IN:
+                title = "Checked In"
+                msg = f"Welcome! You have checked in for your {appt.service.name} session."
+            elif target == AppointmentStatus.IN_SERVICE:
+                title = "Service Started"
+                msg = f"Your {appt.service.name} service is now in progress."
+            elif target == AppointmentStatus.COMPLETED:
+                title = "Service Completed"
+                msg = f"Your service {appt.service.name} is completed. Thank you for visiting! Please leave a review."
+                # Auto-award loyalty points
+                try:
+                    from tools.loyalty_service import on_appointment_completed
+                    on_appointment_completed(db=db, appointment_id=appt.id, customer_id=appt.customer_id)
+                except Exception as loyalty_err:
+                    logger.error(f"Failed to auto-award loyalty points: {loyalty_err}")
+                    
+            notif = Notification(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                title=title,
+                message=msg,
+                is_read=False
+            )
+            db.add(notif)
+            db.commit()
+    except Exception as notif_err:
+        logger.error(f"Error creating status transition notification: {notif_err}")
+
     return {"success": True, "appointment_id": str(appt.id), "status": appt.status.value}
 
 

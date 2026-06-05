@@ -242,6 +242,7 @@ class RecommendationService:
                 
                 if not existing_addon:
                     # Create linked appointment
+                    from datetime import timedelta
                     new_appt = Appointment(
                         id=uuid.uuid4(),
                         customer_id=cust_uuid,
@@ -249,7 +250,7 @@ class RecommendationService:
                         staff_id=original_appt.staff_id,
                         service_id=service_uuid,
                         start_time=original_appt.start_time,
-                        end_time=original_appt.start_time + func.cast(f"{rec_service.duration_minutes} minutes", func.INTERVAL) if hasattr(func, 'cast') else original_appt.end_time,
+                        end_time=original_appt.start_time + timedelta(minutes=int(rec_service.duration_minutes)),
                         status=AppointmentStatus.CONFIRMED,
                         notes=f"Linked Add-on from Appointment {original_appt.id}"
                     )

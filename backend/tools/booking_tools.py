@@ -378,7 +378,7 @@ def create_appointment(
 
         # Ensure booking is in the future
         if st_start < datetime.now(timezone.utc):
-            return {"success": False, "error": "Appointment start time must be in the future."}
+            return {"success": False, "error": "Appointments must be in the future."}
 
         # Get entities (all should exist after resolver)
         customer = session.query(Customer).filter(Customer.id == c_id).first()
@@ -391,6 +391,17 @@ def create_appointment(
             return {
                 "success": False, 
                 "error": f"Appointment must fit inside business hours ({BUSINESS_START_HOUR}:00 to {BUSINESS_END_HOUR}:00 UTC)."
+            }
+
+        # Enforce Customer Booking Limits (Item 11)
+        active_bookings_count = session.query(Appointment).filter(
+            Appointment.customer_id == c_id,
+            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED])
+        ).count()
+        if active_bookings_count >= 3:
+            return {
+                "success": False,
+                "error": "You have reached the maximum limit of 3 active bookings. Please cancel or complete an existing booking first."
             }
 
         # Duplicate Appointment Detection (Rule 5)
@@ -493,7 +504,7 @@ def create_appointment(
             service_id=s_id,
             start_time=st_start,
             end_time=st_end,
-            status=AppointmentStatus.CONFIRMED,
+            status=AppointmentStatus.PENDING,
             notes=notes
         )
 
@@ -515,6 +526,27 @@ def create_appointment(
                 assigned_staff = tx.query(Staff).filter(Staff.id == chosen_staff_id).first()
                 assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
 
+        # Dispatch notification to user dynamically
+        try:
+            from db.models import User, Notification
+            user = session.query(User).filter(User.customer_id == c_id).first()
+            if user:
+                import uuid
+                notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title="Appointment Requested",
+                    message=f"Your appointment request for {service.name} has been submitted and is pending staff confirmation.",
+                    is_read=False
+                )
+                session.add(notif)
+                if db:
+                    session.flush()
+                else:
+                    session.commit()
+        except Exception as notif_err:
+            logger.error(f"Error creating booking notification: {notif_err}")
+
         logger.info(f"Appointment created: {appointment_id}")
         return {
             "success": True,
@@ -524,8 +556,8 @@ def create_appointment(
             "assigned_staff": assigned_staff_name,
             "start_time": st_start.isoformat(),
             "end_time": st_end.isoformat(),
-            "status": "CONFIRMED",
-            "message": "Appointment created and confirmed successfully."
+            "status": "PENDING",
+            "message": "Appointment created and is pending confirmation."
         }
 
     except Exception as e:
@@ -536,13 +568,14 @@ def create_appointment(
             session.close()
 
 
-def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dict[str, Any]:
+def cancel_appointment(appointment_id: Any, customer_id: Optional[Any] = None, db: Optional[Session] = None) -> Dict[str, Any]:
     """
     Cancels an existing salon appointment.
     Uses entity resolver to resolve appointment identifier.
     
     Args:
         appointment_id: UUID of appointment
+        customer_id: Optional customer UUID or name/email for ownership validation
         db: Optional database session
     
     Returns:
@@ -571,6 +604,14 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
         if not appointment:
             return {"success": False, "error": f"Appointment not found."}
 
+        if customer_id:
+            try:
+                c_id = resolve_customer(customer_id, session, raise_on_missing=True)
+                if appointment.customer_id != c_id:
+                    return {"success": False, "error": "You are not authorized to cancel this appointment."}
+            except Exception as e:
+                return {"success": False, "error": f"Customer resolution failed: {str(e)}"}
+
         if appointment.status == AppointmentStatus.CANCELLED:
             logger.info(f"Appointment {appt_id} already cancelled")
             return {"success": True, "message": "Appointment is already cancelled."}
@@ -596,6 +637,31 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
 
         appointment.status = AppointmentStatus.CANCELLED
         
+        # Trigger loyalty points deduction
+        try:
+            from tools.loyalty_triggers import trigger_loyalty_update_on_cancellation
+            trigger_loyalty_update_on_cancellation(session, appointment.id, appointment.customer_id)
+        except Exception as loyalty_err:
+            logger.error(f"Error triggering loyalty update on cancellation: {loyalty_err}")
+
+        # Dispatch notification to user dynamically
+        try:
+            from db.models import User, Notification
+            import uuid
+            user = session.query(User).filter(User.customer_id == appointment.customer_id).first()
+            if user:
+                service_name = appointment.service.name if appointment.service else "Styling Treatment"
+                notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title="Appointment Cancelled",
+                    message=f"Your appointment for {service_name} has been cancelled successfully.",
+                    is_read=False
+                )
+                session.add(notif)
+        except Exception as notif_err:
+            logger.error(f"Error creating cancellation notification: {notif_err}")
+
         # Check waitlist notifications (Rule 16)
         try:
             appt_date = appointment.start_time.strftime("%Y-%m-%d")
@@ -657,6 +723,7 @@ def cancel_appointment(appointment_id: Any, db: Optional[Session] = None) -> Dic
 def reschedule_appointment(
     appointment_id: Any,
     new_start_time: Any,
+    customer_id: Optional[Any] = None,
     db: Optional[Session] = None
 ) -> Dict[str, Any]:
     """
@@ -666,6 +733,7 @@ def reschedule_appointment(
     Args:
         appointment_id: UUID of appointment
         new_start_time: New ISO datetime string or datetime object
+        customer_id: Optional customer UUID or name/email for ownership validation
         db: Optional database session
     
     Returns:
@@ -691,12 +759,20 @@ def reschedule_appointment(
         return {"success": False, "error": str(e)}
 
     if new_start < datetime.now(timezone.utc):
-        return {"success": False, "error": "New appointment start time must be in the future."}
+        return {"success": False, "error": "Appointments must be in the future."}
 
     try:
         appointment = session.query(Appointment).filter(Appointment.id == appt_id).first()
         if not appointment:
             return {"success": False, "error": f"Appointment not found."}
+
+        if customer_id:
+            try:
+                c_id = resolve_customer(customer_id, session, raise_on_missing=True)
+                if appointment.customer_id != c_id:
+                    return {"success": False, "error": "You are not authorized to reschedule this appointment."}
+            except Exception as e:
+                return {"success": False, "error": f"Customer resolution failed: {str(e)}"}
 
         if appointment.status == AppointmentStatus.CANCELLED:
             return {"success": False, "error": "Cannot reschedule a cancelled appointment."}
@@ -754,6 +830,25 @@ def reschedule_appointment(
         appointment.start_time = new_start
         appointment.end_time = new_end
         appointment.status = AppointmentStatus.CONFIRMED
+
+        # Dispatch notification to user dynamically
+        try:
+            from db.models import User, Notification
+            import uuid
+            user = session.query(User).filter(User.customer_id == appointment.customer_id).first()
+            if user:
+                service_name = appointment.service.name if appointment.service else "Styling Treatment"
+                formatted_time = new_start.strftime("%Y-%m-%d at %I:%M %p")
+                notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title="Appointment Rescheduled",
+                    message=f"Your appointment request for {service_name} has been rescheduled to {formatted_time}.",
+                    is_read=False
+                )
+                session.add(notif)
+        except Exception as notif_err:
+            logger.error(f"Error creating reschedule notification: {notif_err}")
 
         if db:
             session.flush()

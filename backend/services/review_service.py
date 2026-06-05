@@ -14,6 +14,7 @@ from db.models import (
     Review,
     ReviewStatus,
     Appointment,
+    AppointmentStatus,
     Customer,
     Staff,
     Branch,
@@ -72,7 +73,7 @@ class ReviewService:
                 "escalation_required": r.escalation_required,
                 "responded": r.responded,
                 "status": r.status.value if hasattr(r.status, "value") else str(r.status),
-                "created_at": r.id.time.isoformat() if hasattr(r.id, "time") and r.id.time else datetime.now(timezone.utc).isoformat(),
+                "created_at": r.created_at.isoformat() if r.created_at else datetime.now(timezone.utc).isoformat(),
             })
         return result
 
@@ -144,10 +145,14 @@ class ReviewService:
         branch_uuid = None
         if appt_uuid:
             appt = db.query(Appointment).filter(Appointment.id == appt_uuid).first()
-            if appt:
-                branch_uuid = appt.branch_id
-                if not staff_uuid:
-                    staff_uuid = appt.staff_id
+            if not appt:
+                return {"success": False, "error": "Appointment not found."}
+            status_val = appt.status.value if hasattr(appt.status, "value") else str(appt.status)
+            if status_val != "COMPLETED":
+                return {"success": False, "error": "Only completed appointments can be reviewed."}
+            branch_uuid = appt.branch_id
+            if not staff_uuid:
+                staff_uuid = appt.staff_id
 
         # Fallback branch resolver if no appointment
         if not branch_uuid:
@@ -203,6 +208,13 @@ class ReviewService:
         
         db.add(db_review)
         db.commit()
+
+        # Trigger loyalty points update on review submission
+        try:
+            from tools.loyalty_triggers import trigger_loyalty_update_on_review
+            trigger_loyalty_update_on_review(db, review_id, cust_uuid)
+        except Exception as loyalty_err:
+            logger.error(f"Error triggering loyalty update on review: {loyalty_err}")
 
         return {
             "success": True,
