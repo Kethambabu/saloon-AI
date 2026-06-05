@@ -108,9 +108,32 @@ def _parse_datetime(dt_input: Any) -> datetime:
 
 def is_staff_on_leave(staff_id: Any, date_str: str, session: Session) -> Tuple[bool, Optional[str]]:
     """Check if a staff member is on leave on a given date (Rule 7)."""
-    staff = session.query(Staff).filter(Staff.id == staff_id).first()
+    from db.models import StaffLeave, Staff
+    from uuid import UUID
+    
+    try:
+        s_uuid = UUID(str(staff_id))
+        staff = session.query(Staff).filter(Staff.id == s_uuid).first()
+    except ValueError:
+        staff = session.query(Staff).filter(
+            (Staff.first_name + " " + Staff.last_name == str(staff_id)) |
+            (Staff.email == str(staff_id))
+        ).first()
+        
     if not staff:
         return False, None
+
+    # Check database leaves table first
+    try:
+        ld = datetime.strptime(date_str, "%Y-%m-%d").date()
+        db_leave = session.query(StaffLeave).filter(
+            StaffLeave.staff_id == staff.id,
+            StaffLeave.leave_date == ld
+        ).first()
+        if db_leave:
+            return True, staff.full_name
+    except Exception as e:
+        logger.warning(f"Error checking database leaves: {str(e)}")
     
     # Predefined leaves mapping (e.g. sick leave, holidays)
     leaves = {
@@ -547,6 +570,26 @@ def create_appointment(
         except Exception as notif_err:
             logger.error(f"Error creating booking notification: {notif_err}")
 
+        # Mark active leads as converted
+        try:
+            from db.models import Lead, LeadStatus
+            active_leads = session.query(Lead).filter(
+                Lead.customer_id == c_id,
+                Lead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED])
+            ).all()
+            for lead in active_leads:
+                lead.status = LeadStatus.CONVERTED
+                lead.converted = True
+                lead.converted_at = datetime.now(timezone.utc)
+                lead.notes = (lead.notes or "") + f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Converted to confirmed booking (Appointment ID: {appointment_id})."
+            if db:
+                session.flush()
+            else:
+                session.commit()
+            logger.info(f"Converted {len(active_leads)} active leads for customer {c_id}")
+        except Exception as lead_err:
+            logger.error(f"Error converting lead on appointment creation: {lead_err}")
+
         logger.info(f"Appointment created: {appointment_id}")
         return {
             "success": True,
@@ -810,6 +853,15 @@ def reschedule_appointment(
 
         # Overlap Checking: Staff (exclude self)
         if appointment.staff_id:
+            # Check Staff leave
+            date_str = new_start.strftime("%Y-%m-%d")
+            on_leave, staff_name = is_staff_on_leave(appointment.staff_id, date_str, session)
+            if on_leave:
+                return {
+                    "success": False,
+                    "error": f"{staff_name} is unavailable on {date_str} due to scheduled leave."
+                }
+
             staff_overlap = session.query(Appointment).filter(
                 Appointment.staff_id == appointment.staff_id,
                 Appointment.id != appt_id,

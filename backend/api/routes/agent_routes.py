@@ -187,34 +187,55 @@ async def chat_with_agent(
         )
 
     # 3. Store chat log with customer isolation
-    from db import get_db, ChatLog
-    from sqlalchemy.orm import Session as SQLAlchemySession
+    from db import get_db, ChatLog, SessionLocal
     
-    async def store_chat_log(db_session: SQLAlchemySession, sender: str, message: str):
-        """Store chat interaction with proper customer isolation."""
-        try:
-            chat_log = ChatLog(
-                session_id=payload.session_id,
-                user_id=current_user.id,
-                customer_id=current_user.customer_id if current_user.customer_id else None,
-                staff_id=current_user.staff_id if current_user.staff_id else None,
-                agent_type="RECEPTIONIST",
-                sender=sender,
-                message=message
-            )
-            db_session.add(chat_log)
-            db_session.commit()
-            logger.info(f"Stored chat log for user {current_user.id}, customer_id: {current_user.customer_id}")
-        except Exception as e:
-            logger.error(f"Failed to store chat log: {e}")
-            db_session.rollback()
+    # Store user message first
+    db_sess = SessionLocal()
+    try:
+        chat_log = ChatLog(
+            session_id=payload.session_id,
+            user_id=current_user.id,
+            customer_id=current_user.customer_id if current_user.customer_id else None,
+            staff_id=current_user.staff_id if current_user.staff_id else None,
+            agent_type="RECEPTIONIST",
+            sender="user",
+            message=payload.message
+        )
+        db_sess.add(chat_log)
+        db_sess.commit()
+        logger.info(f"Stored user chat log for user {current_user.id}, customer_id: {current_user.customer_id}")
+    except Exception as e:
+        logger.error(f"Failed to store user chat log: {e}")
+        db_sess.rollback()
+    finally:
+        db_sess.close()
 
     # Helper function to run agent processing in a background task
     async def run_agent_in_background(query_data: Dict[str, Any]):
         try:
             logger.info("Executing agent process in background task...")
-            await agent.process(query_data)
+            agent_res = await agent.process(query_data)
             logger.info("Agent process completed in background task successfully.")
+            # Store agent response
+            db_sess_bg = SessionLocal()
+            try:
+                chat_log = ChatLog(
+                    session_id=payload.session_id,
+                    user_id=current_user.id,
+                    customer_id=current_user.customer_id if current_user.customer_id else None,
+                    staff_id=current_user.staff_id if current_user.staff_id else None,
+                    agent_type="RECEPTIONIST",
+                    sender="assistant",
+                    message=agent_res.get("response", "")
+                )
+                db_sess_bg.add(chat_log)
+                db_sess_bg.commit()
+                logger.info(f"Stored bg agent chat log for user {current_user.id}")
+            except Exception as e:
+                logger.error(f"Failed to store background agent chat log: {e}")
+                db_sess_bg.rollback()
+            finally:
+                db_sess_bg.close()
         except Exception as bg_ex:
             logger.error(f"Error in background agent process execution: {bg_ex}")
 
@@ -238,6 +259,27 @@ async def chat_with_agent(
                 response=f"I encountered an issue processing your request: {error_msg}. Please try again.",
                 agent_name=agent_response.get("agent_name", "Clara")
             )
+
+        # Store agent response
+        db_sess_sync = SessionLocal()
+        try:
+            chat_log = ChatLog(
+                session_id=payload.session_id,
+                user_id=current_user.id,
+                customer_id=current_user.customer_id if current_user.customer_id else None,
+                staff_id=current_user.staff_id if current_user.staff_id else None,
+                agent_type="RECEPTIONIST",
+                sender="assistant",
+                message=agent_response.get("response", "")
+            )
+            db_sess_sync.add(chat_log)
+            db_sess_sync.commit()
+            logger.info(f"Stored sync agent chat log for user {current_user.id}")
+        except Exception as e:
+            logger.error(f"Failed to store sync agent chat log: {e}")
+            db_sess_sync.rollback()
+        finally:
+            db_sess_sync.close()
 
         logger.info(f"Agent successfully processed query within 3 seconds for session {payload.session_id}")
         return ChatResponse(

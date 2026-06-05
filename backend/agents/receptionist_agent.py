@@ -1158,19 +1158,85 @@ class ReceptionistAgent(Agent):
                 finally:
                     db.close()
 
-            # Fallback to preferences on smart rebooking requests (Priority 7)
-            if not service_input and pref_service:
-                service_input = pref_service
+            # Check if this is a repeat/again booking request
+            is_repeat = ("same" in query.lower() or "again" in query.lower() or "repeat" in query.lower())
+            
+            service_input = intent_json.get("service")
+            stylist_input = intent_json.get("stylist")
+            branch_input = intent_json.get("branch")
+            date_input = intent_json.get("date")
+            time_input = intent_json.get("time")
+            
+            # If repeat request, try to load last completed appointment details
+            if is_repeat and cust_id:
+                db = SessionLocal()
+                try:
+                    from db.models import Appointment, AppointmentStatus
+                    last_appt = db.query(Appointment).filter(
+                        Appointment.customer_id == cust_id,
+                        Appointment.status == AppointmentStatus.COMPLETED
+                    ).order_by(Appointment.start_time.desc()).first()
+                    if last_appt:
+                        if not service_input:
+                            service_input = str(last_appt.service_id)
+                        if not stylist_input:
+                            stylist_input = str(last_appt.staff_id)
+                        if not branch_input:
+                            branch_input = str(last_appt.branch_id)
+                except Exception as ex:
+                    logger.warning(f"Error resolving repeat booking: {ex}")
+                finally:
+                    db.close()
+
+            # Identify missing required details
+            missing_fields = []
+            if not service_input or _is_placeholder_value(service_input):
+                missing_fields.append("service")
+            if not branch_input or _is_placeholder_value(branch_input):
+                missing_fields.append("branch")
+            if not date_input or _is_placeholder_value(date_input):
+                missing_fields.append("date")
+            if not time_input or _is_placeholder_value(time_input):
+                missing_fields.append("time")
+                
+            if missing_fields:
+                questions = []
+                if "service" in missing_fields:
+                    questions.append("which service you would like to book")
+                if "branch" in missing_fields:
+                    questions.append("at which branch location")
+                if "date" in missing_fields:
+                    questions.append("on what date")
+                if "time" in missing_fields:
+                    questions.append("at what time")
+                    
+                # Formulate natural response asking for missing details
+                ask_msg = f"{pref_str}\n\nI would be happy to help you book an appointment! Could you please specify "
+                if len(questions) == 1:
+                    ask_msg += questions[0] + "?"
+                elif len(questions) == 2:
+                    ask_msg += f"{questions[0]} and {questions[1]}?"
+                else:
+                    ask_msg += ", ".join(questions[:-1]) + f", and {questions[-1]}?"
+                    
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": ask_msg,
+                    "provider": "booking_engine"
+                }
+
+            # If all required fields are present, fallback to preferences for stylist if not specified
             if not stylist_input and pref_stylist:
                 stylist_input = pref_stylist
                 
             repaired_cust = repair_customer(cust_id)
-            repaired_branch = repair_branch(intent_json.get("branch"))
+            repaired_branch = repair_branch(branch_input)
             repaired_service = repair_service(service_input)
             repaired_staff = repair_staff(stylist_input, repaired_branch)
             
-            repaired_date = repair_date(intent_json.get("date"))
-            repaired_time = repair_time(intent_json.get("time"))
+            repaired_date = repair_date(date_input)
+            repaired_time = repair_time(time_input)
             repaired_date = adjust_past_date_today(repaired_date, repaired_time)
             repaired_time_str = f"{repaired_date}T{repaired_time}:00Z"
 

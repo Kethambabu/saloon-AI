@@ -370,3 +370,121 @@ def get_performance_metrics(
         average_rating=round(avg_rating, 2),
         total_revenue=0.0
     )
+
+
+# --- Leaves Management ---
+from db import StaffLeave
+
+class LeaveCreateRequest(BaseModel):
+    leave_date: str  # YYYY-MM-DD
+    reason: Optional[str] = None
+
+class LeaveResponse(BaseModel):
+    id: str
+    leave_date: str
+    reason: Optional[str]
+
+@router.post(
+    "/leaves",
+    response_model=LeaveResponse,
+    summary="Request Leave",
+    description="Allows staff to put leave for a specific date."
+)
+def create_staff_leave(
+    payload: LeaveCreateRequest,
+    staff: Staff = Depends(get_current_staff),
+    db: Session = Depends(get_db)
+):
+    try:
+        ld = datetime.strptime(payload.leave_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Expected YYYY-MM-DD."
+        )
+
+    # Check if leave already exists
+    existing = db.query(StaffLeave).filter(
+        StaffLeave.staff_id == staff.id,
+        StaffLeave.leave_date == ld
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Leave already requested for this date."
+        )
+
+    # Create leave
+    new_leave = StaffLeave(
+        staff_id=staff.id,
+        leave_date=ld,
+        reason=payload.reason
+    )
+    db.add(new_leave)
+    db.commit()
+    db.refresh(new_leave)
+
+    return LeaveResponse(
+        id=str(new_leave.id),
+        leave_date=new_leave.leave_date.strftime("%Y-%m-%d"),
+        reason=new_leave.reason
+    )
+
+@router.get(
+    "/leaves",
+    response_model=list[LeaveResponse],
+    summary="Get Staff Leaves",
+    description="Retrieve all leaves registered for the current staff."
+)
+def get_staff_leaves(
+    staff: Staff = Depends(get_current_staff),
+    db: Session = Depends(get_db)
+):
+    leaves = db.query(StaffLeave).filter(
+        StaffLeave.staff_id == staff.id
+    ).order_by(StaffLeave.leave_date.asc()).all()
+    
+    return [
+        LeaveResponse(
+            id=str(l.id),
+            leave_date=l.leave_date.strftime("%Y-%m-%d"),
+            reason=l.reason
+        )
+        for l in leaves
+    ]
+
+@router.delete(
+    "/leaves/{leave_id}",
+    summary="Cancel Leave",
+    description="Remove/cancel a previously submitted leave."
+)
+def cancel_staff_leave(
+    leave_id: str,
+    staff: Staff = Depends(get_current_staff),
+    db: Session = Depends(get_db)
+):
+    from uuid import UUID
+    try:
+        leave_uuid = UUID(leave_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid leave_id format."
+        )
+        
+    leave = db.query(StaffLeave).filter(
+        StaffLeave.id == leave_uuid,
+        StaffLeave.staff_id == staff.id
+    ).first()
+    
+    if not leave:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Leave request not found."
+        )
+        
+    db.delete(leave)
+    db.commit()
+    return {"success": True, "message": "Leave cancelled successfully."}
+

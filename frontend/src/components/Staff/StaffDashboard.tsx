@@ -6,6 +6,7 @@ import { AgentChat } from '../AgentChat/AgentChat';
 interface AppointmentRecord {
   id: string;
   start_time: string;
+  raw_start_time: string;
   end_time: string;
   customer_name: string;
   service_name: string;
@@ -38,6 +39,11 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
   const [leads, setLeads] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Leave management states
+  const [leaves, setLeaves] = useState<any[]>([]);
+  const [leaveDate, setLeaveDate] = useState<string>('');
+  const [leaveReason, setLeaveReason] = useState<string>('');
 
   // Stylist performance aggregates
   const [personalStats, setPersonalStats] = useState<any>({
@@ -90,6 +96,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
           return {
             id: appt.id,
             start_time: `${monthStr} ${dayStr} @ ${timeStr}`,
+            raw_start_time: appt.start_time,
             end_time: appt.end_time,
             customer_name: appt.customer ? `${appt.customer.first_name} ${appt.customer.last_name}` : 'Client',
             service_name: appt.service?.name || 'Service',
@@ -100,6 +107,10 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
       } else {
         setAppointments([]);
       }
+
+      // Load leaves from backend
+      const leavesRes = await apiClient.get<any[]>('/staff/leaves').catch(() => ({ data: [] }));
+      setLeaves(leavesRes.data);
 
       const custRes = await apiClient.get<any[]>('/customers').catch(() => ({ data: [] }));
       if (custRes.data && custRes.data.length > 0) {
@@ -156,6 +167,56 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to update status.');
     }
+  };
+
+  const handleAddLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveDate) return;
+    try {
+      await apiClient.post('/staff/leaves', {
+        leave_date: leaveDate,
+        reason: leaveReason || null
+      });
+      window.alert('🎉 Success! Leave scheduled.');
+      setLeaveDate('');
+      setLeaveReason('');
+      // Refresh leaves list
+      const leavesRes = await apiClient.get<any[]>('/staff/leaves').catch(() => ({ data: [] }));
+      setLeaves(leavesRes.data);
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to schedule leave.');
+    }
+  };
+
+  const handleCancelLeave = async (leaveId: string) => {
+    if (!window.confirm('Are you sure you want to cancel this leave?')) return;
+    try {
+      await apiClient.delete(`/staff/leaves/${leaveId}`);
+      window.alert('🎉 Success! Leave cancelled.');
+      // Refresh leaves list
+      const leavesRes = await apiClient.get<any[]>('/staff/leaves').catch(() => ({ data: [] }));
+      setLeaves(leavesRes.data);
+    } catch (err: any) {
+      window.alert('Failed to cancel leave.');
+    }
+  };
+
+  // Helper to calculate the dates of the current week (Monday to Sunday)
+  const getCurrentWeekDates = () => {
+    const now = new Date();
+    const currentDay = now.getUTCDay(); // 0 is Sunday, 1 is Monday, etc.
+    const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    
+    const monday = new Date(now);
+    monday.setUTCDate(now.getUTCDate() + distanceToMonday);
+    
+    const weekDates = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setUTCDate(monday.getUTCDate() + i);
+      weekDates.push(d);
+    }
+    return weekDates;
   };
 
   // Compute stats metrics dynamically
@@ -677,9 +738,16 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                               }`}>
                                 {lead.status}
                               </span>
+                              {lead.followup_count > 0 && (
+                                <span className="block text-[10px] text-slate-500 mt-1 font-bold">
+                                  {lead.followup_count} {lead.followup_count === 1 ? 'follow-up' : 'follow-ups'}
+                                </span>
+                              )}
                             </td>
-                            <td className="px-4 py-4 whitespace-nowrap text-slate-400 text-xs">
-                              {lead.last_contacted ? new Date(lead.last_contacted).toLocaleDateString() : 'Never'}
+                             <td className="px-4 py-4 whitespace-nowrap text-slate-400 text-xs">
+                              {lead.last_contacted 
+                                ? new Date(lead.last_contacted).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) + ' ' + new Date(lead.last_contacted).toLocaleDateString()
+                                : 'Never'}
                             </td>
                             <td className="px-4 py-4 whitespace-nowrap text-center">
                               <div className="flex gap-2 justify-center">
@@ -734,27 +802,151 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
               <div className="space-y-6">
                 <div className="border-b border-slate-800 pb-3">
                   <h2 className="text-xl font-black">🗓️ Stylist Weekly Planner</h2>
-                  <p className="text-xs text-slate-500">Visual schedule planner and slot allocations.</p>
+                  <p className="text-xs text-slate-500">Visual schedule planner, leave scheduler, and slot allocations.</p>
                 </div>
 
                 <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl">
-                  <div className="grid grid-cols-5 gap-4 text-center">
-                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map((day, idx) => (
-                      <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-850 space-y-3">
-                        <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">{day}</span>
-                        <div className="space-y-1.5">
-                          {idx === 0 || idx === 4 ? (
-                            <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded text-[9px] font-bold block border border-emerald-500/20">
-                              2 Bookings
-                            </span>
-                          ) : (
-                            <span className="px-2 py-1 bg-slate-900 text-slate-500 rounded text-[9px] font-bold block">
-                              Off-duty / Empty
-                            </span>
-                          )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 text-center">
+                    {getCurrentWeekDates().map((dateObj, idx) => {
+                      const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+                      const dateStr = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+                      const displayDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+                      // Check if staff has leave scheduled for this date
+                      const isOnLeave = leaves.some(l => l.leave_date === dateStr);
+                      const leaveInfo = leaves.find(l => l.leave_date === dateStr);
+
+                      // Filter appointments for this date
+                      const dayBookings = appointments.filter(appt => {
+                        if (appt.status === 'CANCELLED' || appt.status === 'COMPLETED') return false;
+                        if (!appt.raw_start_time) return false;
+                        return appt.raw_start_time.startsWith(dateStr);
+                      });
+                      
+                      const count = dayBookings.length;
+
+                      return (
+                        <div key={idx} className={`bg-slate-950 p-4 rounded-xl border space-y-3 flex flex-col justify-between min-h-[170px] ${
+                          isOnLeave ? 'border-red-900/35 bg-red-950/5' : 'border-slate-850'
+                        }`}>
+                          <div>
+                            <div className="border-b border-slate-900 pb-1.5 mb-2 text-center">
+                              <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">{dayName}</span>
+                              <span className="block text-[9px] text-slate-500 font-bold mt-0.5">{displayDate}</span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {isOnLeave ? (
+                                <div className="space-y-1">
+                                  <span className="px-2 py-0.5 bg-red-500/10 text-red-400 rounded text-[9px] font-black block border border-red-500/20 uppercase tracking-wider text-center">
+                                    🌴 On Leave
+                                  </span>
+                                  {leaveInfo?.reason && (
+                                    <span className="text-[9px] text-slate-550 italic block text-center truncate" title={leaveInfo.reason}>
+                                      "{leaveInfo.reason}"
+                                    </span>
+                                  )}
+                                </div>
+                              ) : count > 0 ? (
+                                <>
+                                  <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[9px] font-black block border border-emerald-500/20 uppercase tracking-wider text-center">
+                                    {count} {count === 1 ? 'Slot' : 'Slots'}
+                                  </span>
+                                  <div className="space-y-1 mt-2">
+                                    {dayBookings.slice(0, 3).map(b => (
+                                      <div key={b.id} className="text-[9px] text-left text-slate-350 bg-slate-900/40 p-1.5 rounded border border-slate-850/60" title={`${b.customer_name} - ${b.service_name}`}>
+                                        <span className="font-extrabold text-white block truncate">{b.customer_name}</span>
+                                        <span className="text-slate-500 block truncate">{b.service_name}</span>
+                                      </div>
+                                    ))}
+                                    {count > 3 && (
+                                      <span className="text-[8px] text-slate-500 block text-center mt-1">+{count - 3} more</span>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="px-2 py-1 bg-slate-900/40 text-slate-655 rounded text-[9px] font-bold block text-center uppercase tracking-wider">
+                                  Empty
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Leave Management Section */}
+                <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
+                  <div className="border-b border-slate-800 pb-3 flex justify-between items-center flex-wrap gap-4">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">🌴 Schedule Leaves & Off Days</h3>
+                      <p className="text-xs text-slate-500">Put leave for specific dates to block client bookings on both customer app and Clara assistant.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Add Leave Form */}
+                    <form onSubmit={handleAddLeave} className="bg-slate-955 p-5 rounded-2xl border border-slate-850 space-y-4 lg:col-span-1">
+                      <h4 className="text-xs font-black text-white uppercase tracking-widest border-b border-slate-900 pb-2">Record New Leave</h4>
+                      
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-bold text-slate-550 uppercase tracking-widest">Select Leave Date</label>
+                        <input
+                          type="date"
+                          value={leaveDate}
+                          onChange={e => setLeaveDate(e.target.value)}
+                          required
+                          className="px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none"
+                        />
                       </div>
-                    ))}
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-bold text-slate-550 uppercase tracking-widest">Reason / Description (Optional)</label>
+                        <input
+                          type="text"
+                          value={leaveReason}
+                          onChange={e => setLeaveReason(e.target.value)}
+                          placeholder="e.g. Vacation, Personal matter"
+                          className="px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white focus:outline-none"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-xs font-black rounded-xl text-white transition-all cursor-pointer text-center shadow-lg shadow-emerald-500/10 uppercase tracking-wider"
+                      >
+                        🌴 Schedule Leave
+                      </button>
+                    </form>
+
+                    {/* Leaves list */}
+                    <div className="bg-slate-955 p-5 rounded-2xl border border-slate-850 space-y-4 lg:col-span-2">
+                      <h4 className="text-xs font-black text-white uppercase tracking-widest border-b border-slate-900 pb-2">My Active Leaves</h4>
+                      
+                      {leaves.length === 0 ? (
+                        <div className="text-center text-slate-500 py-12 text-xs">
+                          No scheduled leaves found.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
+                          {leaves.map((l) => (
+                            <div key={l.id} className="bg-slate-900/60 border border-slate-850 p-3.5 rounded-xl flex items-center justify-between gap-4">
+                              <div className="space-y-1">
+                                <span className="font-extrabold text-white text-xs block">📅 {new Date(l.leave_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}</span>
+                                {l.reason && <span className="text-[10px] text-slate-450 block italic">Reason: "{l.reason}"</span>}
+                              </div>
+                              <button
+                                onClick={() => handleCancelLeave(l.id)}
+                                className="px-2.5 py-1.5 bg-red-950/20 hover:bg-red-900/30 border border-red-900/30 text-red-400 rounded-lg text-[10px] font-bold cursor-pointer transition-all"
+                              >
+                                Cancel Leave
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

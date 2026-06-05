@@ -22,7 +22,8 @@ from db.models import (
     Service,
     ChatLog,
     Notification,
-    User
+    User,
+    UserRole
 )
 
 logger = logging.getLogger(__name__)
@@ -270,9 +271,44 @@ def send_lead_followup(lead_id: uuid.UUID, db: Session) -> Dict[str, Any]:
     if lead.customer_id:
         user = db.query(User).filter(User.customer_id == lead.customer_id).first()
         
+    # Session ID extraction from notes to find User who initiated the chat
+    session_id = None
+    if not user and lead.notes and "Session ID:" in lead.notes:
+        for line in lead.notes.split("\n"):
+            if "Session ID:" in line:
+                session_id = line.replace("Session ID:", "").strip()
+                break
+    if not user and session_id:
+        log = db.query(ChatLog).filter(ChatLog.session_id == session_id).first()
+        if log and log.user_id:
+            user = db.query(User).filter(User.id == log.user_id).first()
+            
+    if not user and lead.customer_email:
+        # Check if we have a customer record with this email
+        customer = db.query(Customer).filter(Customer.email.ilike(lead.customer_email)).first()
+        if customer:
+            if not lead.customer_id:
+                lead.customer_id = customer.id
+                db.flush()
+            user = db.query(User).filter(User.customer_id == customer.id).first()
+        if not user:
+            # Check if we have a user directly with this email
+            user = db.query(User).filter(User.email.ilike(lead.customer_email)).first()
+            
+    if not user and lead.customer_phone:
+        customer = db.query(Customer).filter(Customer.phone == lead.customer_phone).first()
+        if customer:
+            if not lead.customer_id:
+                lead.customer_id = customer.id
+                db.flush()
+            user = db.query(User).filter(User.customer_id == customer.id).first()
+            
     if not user:
-        # Fallback to finding admin or creating a general notification
-        user = db.query(User).filter(User.role == "Admin").first()
+        # Fallback to finding admin or creating a general notification using the correct uppercase role UserRole.ADMIN
+        user = db.query(User).filter(User.role == UserRole.ADMIN).first()
+        if not user:
+            # Fallback to first user
+            user = db.query(User).first()
         
     if user:
         # Create a notification that the Customer will see in their dashboard

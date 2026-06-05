@@ -35,6 +35,8 @@ from db.models import (
     Branch,
     Service,
     Staff,
+    User,
+    Notification,
 )
 
 logger = logging.getLogger(__name__)
@@ -427,6 +429,62 @@ def create_followup_reminder(
         if lead.status == LeadStatus.NEW:
             lead.status = LeadStatus.CONTACTED
             status_advanced = True
+
+        # Update Lead stats
+        lead.followup_count += 1
+        lead.last_contacted = datetime.now(timezone.utc)
+
+        # Log in-app notification if customer/user exists
+        from db.models import ChatLog, UserRole
+        user = None
+        if lead.customer_id:
+            user = session.query(User).filter(User.customer_id == lead.customer_id).first()
+            
+        # Session ID extraction from notes to find User who initiated the chat
+        session_id = None
+        if not user and lead.notes and "Session ID:" in lead.notes:
+            for line in lead.notes.split("\n"):
+                if "Session ID:" in line:
+                    session_id = line.replace("Session ID:", "").strip()
+                    break
+        if not user and session_id:
+            log = session.query(ChatLog).filter(ChatLog.session_id == session_id).first()
+            if log and log.user_id:
+                user = session.query(User).filter(User.id == log.user_id).first()
+
+        if not user and lead.customer_email:
+            customer = session.query(Customer).filter(Customer.email.ilike(lead.customer_email)).first()
+            if customer:
+                if not lead.customer_id:
+                    lead.customer_id = customer.id
+                    session.flush()
+                user = session.query(User).filter(User.customer_id == customer.id).first()
+            if not user:
+                user = session.query(User).filter(User.email.ilike(lead.customer_email)).first()
+                
+        if not user and lead.customer_phone:
+            customer = session.query(Customer).filter(Customer.phone == lead.customer_phone).first()
+            if customer:
+                if not lead.customer_id:
+                    lead.customer_id = customer.id
+                    session.flush()
+                user = session.query(User).filter(User.customer_id == customer.id).first()
+
+        if not user:
+            # Fallback to finding admin using the correct uppercase role UserRole.ADMIN
+            user = session.query(User).filter(User.role == UserRole.ADMIN).first()
+            if not user:
+                # Fallback to first user
+                user = session.query(User).first()
+
+        if user:
+            notif = Notification(
+                user_id=user.id,
+                title="Unfinished Booking Reminder",
+                message=f"You have an unfinished booking for {lead.service_name or 'salon service'}. Click 'Continue' to complete.",
+                is_read=False
+            )
+            session.add(notif)
 
         if db:
             session.flush()

@@ -101,18 +101,17 @@ def mark_notification_as_read(
 
 @router.post(
     "/read-all",
-    summary="Mark All Notifications as Read",
-    description="Mark all notifications for the currently logged-in user as read."
+    summary="Clear All Notifications",
+    description="Deletes all notifications for the currently logged-in user from the database."
 )
-def mark_all_notifications_as_read(
+def clear_all_notifications(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Mark all notifications for current user as read."""
+    """Delete all notifications for current user."""
     db.query(Notification).filter(
-        Notification.user_id == current_user.id,
-        Notification.is_read == False
-    ).update({Notification.is_read: True}, synchronize_session=False)
+        Notification.user_id == current_user.id
+    ).delete(synchronize_session=False)
     
     db.commit()
-    return {"success": True, "message": "All notifications marked as read"}
+    return {"success": True, "message": "All notifications cleared and deleted successfully"}

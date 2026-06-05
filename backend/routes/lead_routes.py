@@ -12,9 +12,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 
-from db import get_db, Lead, LeadStatus, User, UserRole, Staff, Branch
+from db import get_db, Lead, LeadStatus, User, UserRole, Staff, Branch, Customer, Service
 from api.deps import get_current_user
 from services.lead_service import send_lead_followup, convert_lead_to_appointment
 
@@ -32,6 +32,16 @@ class LeadFollowupRequest(BaseModel):
 class LeadConvertRequest(BaseModel):
     lead_id: str
     staff_id: Optional[str] = None
+
+
+class LeadDraftRequest(BaseModel):
+    branch_id: Optional[str] = None
+    service_id: Optional[str] = None
+    staff_id: Optional[str] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    notes: Optional[str] = None
+
 
 
 class LeadResponse(BaseModel):
@@ -93,6 +103,164 @@ def verify_staff_access(current_user: User = Depends(get_current_user)):
 
 
 # --- Endpoints ---
+
+@router.post(
+    "/leads/draft",
+    summary="Save or Update Lead Draft",
+    description="Saves or updates a draft lead for the currently logged-in customer."
+)
+def save_lead_draft(
+    req: LeadDraftRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only customer accounts can create drafts."
+        )
+        
+    customer = db.query(Customer).filter(Customer.id == current_user.customer_id).first()
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Associated customer profile not found."
+        )
+        
+    # Find active lead
+    lead = db.query(Lead).filter(
+        Lead.customer_id == current_user.customer_id,
+        Lead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED])
+    ).first()
+    
+    # Resolve service_name
+    service_name = None
+    if req.service_id:
+        try:
+            s_uuid = uuid.UUID(req.service_id)
+            service = db.query(Service).filter(Service.id == s_uuid).first()
+            if service:
+                service_name = service.name
+        except ValueError:
+            pass
+            
+    # Resolve branch_id
+    b_id = None
+    if req.branch_id:
+        try:
+            b_id = uuid.UUID(req.branch_id)
+        except ValueError:
+            pass
+            
+    # Resolve staff_id
+    st_id = None
+    if req.staff_id and req.staff_id != 'any':
+        try:
+            st_id = uuid.UUID(req.staff_id)
+        except ValueError:
+            pass
+
+    # Resolve date
+    pref_date = None
+    if req.date:
+        try:
+            pref_date = datetime.strptime(req.date, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+            
+    # Resolve time
+    pref_time = None
+    if req.time:
+        try:
+            pref_time = datetime.strptime(req.time, "%H:%M").time()
+        except ValueError:
+            try:
+                pref_time = datetime.strptime(req.time, "%H:%M:%S").time()
+            except ValueError:
+                pass
+                
+    if not lead:
+        lead = Lead(
+            customer_id=current_user.customer_id,
+            customer_name=customer.full_name,
+            customer_email=customer.email,
+            customer_phone=customer.phone,
+            service_name=service_name,
+            preferred_date=pref_date,
+            preferred_time=pref_time,
+            branch_id=b_id,
+            assigned_staff=st_id,
+            source="Manual Booking Wizard",
+            status=LeadStatus.NEW,
+            lead_score=50,
+            notes=req.notes or "Draft lead created via manual booking wizard.",
+            converted=False
+        )
+        db.add(lead)
+    else:
+        # Update details
+        if service_name:
+            lead.service_name = service_name
+        if pref_date:
+            lead.preferred_date = pref_date
+        if pref_time:
+            lead.preferred_time = pref_time
+        if b_id:
+            lead.branch_id = b_id
+        
+        # Always update staff_id since they could switch back to 'any' (None)
+        lead.assigned_staff = st_id
+        
+        if req.notes:
+            lead.notes = req.notes
+            
+    db.commit()
+    return {"success": True, "lead_id": str(lead.id)}
+
+
+@router.get(
+    "/leads/active",
+    response_model=Optional[LeadResponse],
+    summary="Get Active Lead for Current Customer",
+    description="Retrieve the active lead (NEW or CONTACTED) for the currently logged-in customer."
+)
+def get_active_lead(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user.customer_id:
+        return None
+        
+    lead = db.query(Lead).filter(
+        Lead.customer_id == current_user.customer_id,
+        Lead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED])
+    ).order_by(desc(Lead.created_at)).first()
+    
+    if not lead:
+        return None
+        
+    return LeadResponse(
+        id=str(lead.id),
+        customer_id=str(lead.customer_id) if lead.customer_id else None,
+        customer_name=lead.customer_name,
+        customer_email=lead.customer_email,
+        customer_phone=lead.customer_phone,
+        service_name=lead.service_name,
+        preferred_date=lead.preferred_date.isoformat() if lead.preferred_date else None,
+        preferred_time=lead.preferred_time.isoformat() if lead.preferred_time else None,
+        branch_id=str(lead.branch_id) if lead.branch_id else None,
+        assigned_staff=str(lead.assigned_staff) if lead.assigned_staff else None,
+        source=lead.source,
+        status=lead.status.value,
+        lead_score=lead.lead_score,
+        followup_count=lead.followup_count,
+        last_contacted=lead.last_contacted.isoformat() if lead.last_contacted else None,
+        converted=lead.converted,
+        converted_at=lead.converted_at.isoformat() if lead.converted_at else None,
+        notes=lead.notes,
+        created_at=lead.created_at.isoformat() if lead.created_at else None
+    )
+
 
 @router.get(
     "/leads",
@@ -162,12 +330,12 @@ def get_staff_leads(
         # Admins can see all leads
         leads = db.query(Lead).order_by(desc(Lead.created_at)).all()
     else:
-        if not staff_user.staff_id:
-            raise HTTPException(
-                status_code=400,
-                detail="User account does not have an associated staff ID."
+        leads = db.query(Lead).filter(
+            or_(
+                Lead.assigned_staff == staff_user.staff_id,
+                Lead.assigned_staff == None
             )
-        leads = db.query(Lead).filter(Lead.assigned_staff == staff_user.staff_id).order_by(desc(Lead.created_at)).all()
+        ).order_by(desc(Lead.created_at)).all()
         
     response_list = []
     for lead in leads:

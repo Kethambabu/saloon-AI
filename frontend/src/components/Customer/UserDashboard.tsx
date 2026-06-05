@@ -116,6 +116,35 @@ const formatUTCDate = (isoString: string): string => {
   }
 };
 
+/**
+ * Extract date and time from ISO string for pre-populating inputs.
+ */
+const getInitialDateTimeForReschedule = (isoString: string) => {
+  if (!isoString) return { date: '', time: '' };
+  try {
+    let normalized = isoString;
+    if (isoString && !isoString.endsWith('Z') && !isoString.includes('+')) {
+      const parts = isoString.split(/T|\s/);
+      const hasTimeOffset = parts.length > 1 && parts[1].includes('-');
+      if (!hasTimeOffset) {
+        normalized = isoString + 'Z';
+      }
+    }
+    const dateObj = new Date(normalized);
+    const year = dateObj.getUTCFullYear();
+    const month = (dateObj.getUTCMonth() + 1).toString().padStart(2, '0');
+    const day = dateObj.getUTCDate().toString().padStart(2, '0');
+    const hours = dateObj.getUTCHours().toString().padStart(2, '0');
+    const minutes = dateObj.getUTCMinutes().toString().padStart(2, '0');
+    return {
+      date: `${year}-${month}-${day}`,
+      time: `${hours}:${minutes}`
+    };
+  } catch (err) {
+    return { date: '', time: '' };
+  }
+};
+
 export const UserDashboard: React.FC = () => {
   const { user, logout } = useAuth();
   
@@ -175,9 +204,9 @@ export const UserDashboard: React.FC = () => {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Load backend data
-  const fetchData = async () => {
+  const fetchData = async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       
       // Loyalty points are now fetched via useLoyalty hook
       // No need to fetch here anymore
@@ -243,6 +272,38 @@ export const UserDashboard: React.FC = () => {
     fetchStaff();
   }, [selectedBranch]);
 
+  // Synchronize manual booking drafts to the backend Lead Recovery System
+  useEffect(() => {
+    // We only want to save a draft if the user has selected at least one option
+    if (!selectedBranch && !selectedService && selectedStylist === 'any' && !selectedDate && !selectedTime) {
+      return;
+    }
+    
+    // Do not save draft if they are currently submitting/finalizing
+    if (isBookingSubmitting) {
+      return;
+    }
+
+    const saveDraftLead = async () => {
+      try {
+        await apiClient.post('/leads/draft', {
+          branch_id: selectedBranch || null,
+          service_id: selectedService || null,
+          staff_id: selectedStylist === 'any' ? null : selectedStylist,
+          date: selectedDate || null,
+          time: selectedTime || null,
+          notes: bookingNotes || null
+        });
+      } catch (err) {
+        console.warn('Failed to update lead draft on backend:', err);
+      }
+    };
+
+    // Debounce the draft save to avoid spamming the backend
+    const timeoutId = setTimeout(saveDraftLead, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [selectedBranch, selectedService, selectedStylist, selectedDate, selectedTime, bookingNotes]);
+
   const showToast = (text: string, type: 'success' | 'error') => {
     setToastMessage({ text, type });
     setTimeout(() => {
@@ -275,7 +336,7 @@ export const UserDashboard: React.FC = () => {
       });
       if (res.data && res.data.success) {
         showToast(res.data.message || 'Recommendation accepted successfully!', 'success');
-        fetchData();
+        fetchData(true);
         fetchRecommendations();
       }
     } catch (err: any) {
@@ -369,7 +430,7 @@ export const UserDashboard: React.FC = () => {
       });
       showToast('Appointment rescheduled successfully!', 'success');
       setReschedulingAppt(null);
-      fetchData();
+      fetchData(true);
     } catch (err: any) {
       const errorMsg = err.response?.data?.detail || 'Rescheduling failed. Slot might be unavailable.';
       showToast(errorMsg, 'error');
@@ -384,7 +445,7 @@ export const UserDashboard: React.FC = () => {
       showToast('Booking cancelled successfully.', 'success');
       // Trigger loyalty refresh when appointment is cancelled
       loyaltySyncService.emit('appointment_cancelled');
-      fetchData();
+      fetchData(true);
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Failed to cancel booking.', 'error');
     }
@@ -405,10 +466,47 @@ export const UserDashboard: React.FC = () => {
       setRatingValue(5);
       // Trigger loyalty refresh when review is submitted
       loyaltySyncService.emit('review_submitted');
-      fetchData();
+      fetchData(true);
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Failed to submit review.', 'error');
     }
+  };
+
+  // Resume booking from active lead
+  const handleResumeBooking = async () => {
+    try {
+      const res = await apiClient.get<any>('/leads/active');
+      if (res.data) {
+        const lead = res.data;
+        if (lead.branch_id) setSelectedBranch(lead.branch_id);
+        if (lead.service_name) {
+          const matchedService = services.find(s => s.name === lead.service_name);
+          if (matchedService) setSelectedService(matchedService.id);
+        }
+        if (lead.assigned_staff) setSelectedStylist(lead.assigned_staff);
+        if (lead.preferred_date) setSelectedDate(lead.preferred_date);
+        if (lead.preferred_time) {
+          // Format preferred_time (HH:MM or HH:MM:SS) to HH:MM
+          const timeStr = lead.preferred_time.substring(0, 5);
+          setSelectedTime(timeStr);
+        }
+        
+        // Navigate based on details populated
+        if (lead.branch_id && lead.service_name && lead.preferred_date && lead.preferred_time) {
+          setBookingStep(5);
+        } else if (lead.branch_id && lead.service_name) {
+          setBookingStep(3);
+        } else {
+          setBookingStep(1);
+        }
+      } else {
+        setBookingStep(1);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch active lead details, falling back to step 1', err);
+      setBookingStep(1);
+    }
+    setActiveTab('book');
   };
 
   // Booking submit logic
@@ -459,7 +557,7 @@ export const UserDashboard: React.FC = () => {
       setAppointmentTab('upcoming');
       // Trigger loyalty refresh after successful booking
       loyaltySyncService.emit('appointment_completed');
-      fetchData();
+      fetchData(true);
 
       // Open recommendations fetch popup immediately
       if (newApptId && user?.customer_id) {
@@ -501,7 +599,7 @@ export const UserDashboard: React.FC = () => {
       {/* ============================================================================
           SIDEBAR NAVIGATION BAR
           ============================================================================ */}
-      <aside className="w-full lg:w-72 bg-slate-900/90 border-b lg:border-b-0 lg:border-r border-slate-800/80 p-6 flex flex-col justify-between backdrop-blur-xl">
+      <aside className="w-full lg:w-72 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800/80 p-6 flex flex-col justify-between">
         <div className="space-y-8">
           {/* Custom Salon Brand Header */}
           <div className="text-left pb-4 border-b border-slate-800">
@@ -522,7 +620,7 @@ export const UserDashboard: React.FC = () => {
               { id: 'history', label: 'Booking History', icon: '📜' },
               { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
               { id: 'services', label: 'Services Catalog', icon: '💇' },
-              { id: 'notifications', label: 'Notifications Center', icon: '🔔' },
+              { id: 'notifications', label: 'Notifications Center', icon: '🔔', badge: notifications.filter(n => n.type === 'success').length },
               { id: 'profile', label: 'Profile Settings', icon: '👤' }
             ].map(tab => (
               <button
@@ -531,14 +629,21 @@ export const UserDashboard: React.FC = () => {
                   setActiveTab(tab.id as any);
                   setBookingStep(1); // Reset booking wizard whenever switching
                 }}
-                className={`flex items-center space-x-3.5 px-4 py-3 rounded-2xl text-xs font-bold text-left transition-all duration-300 cursor-pointer ${
+                className={`flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold text-left transition-all duration-300 cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                     : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
                 }`}
               >
-                <span className="text-lg">{tab.icon}</span>
-                <span>{tab.label}</span>
+                <div className="flex items-center space-x-3.5">
+                  <span className="text-lg">{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </div>
+                {tab.badge !== undefined && tab.badge > 0 ? (
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-red-500 text-white rounded-full animate-pulse">
+                    {tab.badge}
+                  </span>
+                ) : null}
               </button>
             ))}
           </nav>
@@ -655,7 +760,12 @@ export const UserDashboard: React.FC = () => {
                                 <span className="text-lg font-black text-blue-400">${active.service.price}</span>
                                 <div className="flex items-center space-x-2">
                                   <button
-                                    onClick={() => setReschedulingAppt(active)}
+                                    onClick={() => {
+                                      const { date, time } = getInitialDateTimeForReschedule(active.start_time);
+                                      setNewRescheduleDate(date);
+                                      setNewRescheduleTime(time);
+                                      setReschedulingAppt(active);
+                                    }}
                                     className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
                                   >
                                     🕒 Reschedule
@@ -1117,7 +1227,12 @@ export const UserDashboard: React.FC = () => {
                             {appointmentTab === 'upcoming' && (
                               <>
                                 <button
-                                  onClick={() => setReschedulingAppt(appt)}
+                                  onClick={() => {
+                                    const { date, time } = getInitialDateTimeForReschedule(appt.start_time);
+                                    setNewRescheduleDate(date);
+                                    setNewRescheduleTime(time);
+                                    setReschedulingAppt(appt);
+                                  }}
                                   className="px-3 py-2 bg-slate-800 hover:bg-slate-750 text-xs font-bold rounded-xl text-slate-300 cursor-pointer transition-all"
                                 >
                                   Reschedule
@@ -1151,7 +1266,7 @@ export const UserDashboard: React.FC = () => {
                     MODAL: SUBMIT RATING & REVIEW FOR COMPLETED SESSION
                     ============================================================================ */}
                 {reviewingAppt && (
-                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+                  <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
                     <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
                       <button 
                         onClick={() => setReviewingAppt(null)}
@@ -1214,7 +1329,7 @@ export const UserDashboard: React.FC = () => {
                     MODAL: RESCHEDULE SCHEDULING TIME
                     ============================================================================ */}
                 {reschedulingAppt && (
-                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+                  <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
                     <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
                       <button 
                         onClick={() => setReschedulingAppt(null)}
@@ -1468,10 +1583,7 @@ export const UserDashboard: React.FC = () => {
                           <p className="text-xs text-slate-400 leading-relaxed font-semibold">{n.message}</p>
                           {n.message.toLowerCase().includes("unfinished booking") && (
                             <button
-                              onClick={() => {
-                                setActiveTab('book');
-                                setBookingStep(1); // Reset booking wizard step to start
-                              }}
+                              onClick={handleResumeBooking}
                               className="mt-2.5 px-4.5 py-2 bg-blue-600 hover:bg-blue-500 text-[10px] font-black uppercase tracking-wider rounded-xl text-white transition-all shadow-lg shadow-blue-500/25 cursor-pointer"
                             >
                               Continue Booking
@@ -1720,7 +1832,7 @@ export const UserDashboard: React.FC = () => {
                 MODAL: NEW APPOINTMENT CONFIRMED - DYNAMIC UPSELL OPPORTUNITIES
                 ============================================================================ */}
             {justBookedAppt && (
-              <div className="fixed inset-0 bg-slate-955/80 backdrop-blur-md flex items-center justify-center p-6 z-50 animate-fade-in">
+              <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
                 <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-lg space-y-6 shadow-2xl relative">
                   <button 
                     onClick={() => setJustBookedAppt(null)}

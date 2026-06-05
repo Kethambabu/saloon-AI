@@ -751,8 +751,26 @@ class BusinessMetricsHistory(BaseModel):
     top_service = Column(Text, nullable=True)
     top_staff = Column(Text, nullable=True)
 
+class StaffLeave(BaseModel):
+    """
+    Represents days where a stylist / employee is on leave and unavailable.
+    """
+    __tablename__ = "staff_leaves"
+
+    staff_id = Column(
+        Uuid(as_uuid=True),
+        ForeignKey("staff.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    leave_date = Column(Date, nullable=False, index=True)
+    reason = Column(String(200), nullable=True)
+
+    # Relationships
+    staff = relationship("Staff", backref="leaves")
+
     def __repr__(self) -> str:
-        return f"<BusinessMetricsHistory date={self.metric_date} revenue={self.revenue}>"
+        return f"<StaffLeave staff_id={self.staff_id} leave_date={self.leave_date}>"
 
 
 # Export all models and enums
@@ -773,6 +791,7 @@ __all__ = [
     "ServiceRecommendation",
     "CustomerRecommendation",
     "BusinessMetricsHistory",
+    "StaffLeave",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
