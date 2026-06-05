@@ -22,11 +22,17 @@ db_url = settings.database_url
 if not db_url:
     raise ValueError("DATABASE_URL setting is missing! Supabase connection URL must be specified.")
 
+# Supabase transaction-mode pooler (port 6543) does NOT support prepared statements when using asyncpg.
+# For psycopg2 (default postgresql://), prepared_statement_cache_size is not supported and not needed.
+if "asyncpg" in db_url and "pooler.supabase.com" in db_url and "prepared_statement_cache_size" not in db_url:
+    separator = "&" if "?" in db_url else "?"
+    db_url = f"{db_url}{separator}prepared_statement_cache_size=0"
+
 # PostgreSQL enterprise-grade connection pool tuning tailored for Supabase
 # Supabase connections can occasionally drop, hence pool_pre_ping and recycle are vital.
 pool_kwargs = {
-    "pool_size": 20,
-    "max_overflow": 10,
+    "pool_size": 5,        # Reduced for Supabase free tier connection limits
+    "max_overflow": 3,     # Reduced to avoid exceeding Supabase connection limits
     "pool_recycle": 1800,  # Recycle connections after 30 minutes
     "pool_pre_ping": True,  # Enable health check ping on connection checkout
 }

@@ -37,8 +37,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const normalizeRole = (role: string): UserRole => {
   if (!role) return 'User';
   const upper = role.toUpperCase();
-  if (upper === 'ADMIN') return 'Admin';
-  if (upper === 'STAFF') return 'Staff';
+  if (upper === 'ADMIN' || upper === 'OWNER') return 'Admin';
+  if (upper === 'STAFF' || upper === 'MANAGER') return 'Staff';
+  if (upper === 'CUSTOMER' || upper === 'USER') return 'User';
   return 'User';
 };
 

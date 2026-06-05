@@ -17,7 +17,8 @@ config = context.config
 
 # Override sqlalchemy.url with configuration loaded dynamically from env settings
 db_url = settings.database_url or "sqlite:///./test.db"
-config.set_main_option("sqlalchemy.url", db_url)
+# Escape '%' to '%%' for configparser compatibility
+config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:

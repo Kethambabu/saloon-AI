@@ -256,8 +256,11 @@ def seed_database():
         # Leads & Analytics
         if db.query(Lead).count() == 0:
             lead = Lead(
-                id=uuid.uuid4(), branch_id=branches[0].id, first_name="Jennifer", last_name="Taylor",
-                email="jennifer.taylor@example.com", phone="+1-212-555-6001", source="Website",
+                id=uuid.uuid4(), branch_id=branches[0].id,
+                customer_name="Jennifer Taylor",
+                customer_email="jennifer.taylor@example.com",
+                customer_phone="+1-212-555-6001",
+                source="Website",
                 status=LeadStatus.NEW, notes="Interested in color specialist appointments"
             )
             db.add(lead)

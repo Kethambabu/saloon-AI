@@ -67,8 +67,35 @@ CREATE TABLE customers (
     last_name VARCHAR(50) NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
     phone VARCHAR(20),
-    is_active BOOLEAN DEFAULT TRUE NOT NULL
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    loyalty_points INTEGER DEFAULT 0 NOT NULL
 );
+
+-- Create enum types to match SQLAlchemy model definitions
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('ADMIN', 'STAFF', 'CUSTOMER', 'MANAGER', 'OWNER');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE appointment_status AS ENUM ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'IN_SERVICE', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE lead_status AS ENUM ('NEW', 'CONTACTED', 'INTERESTED', 'CONVERTED', 'LOST');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE review_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE loyalty_transaction_type AS ENUM ('APPOINTMENT_COMPLETED', 'APPOINTMENT_CANCELLED', 'REVIEW_SUBMITTED', 'RATING_BONUS', 'APP_USAGE_BONUS', 'POINT_REDEMPTION', 'MANUAL_ADJUSTMENT');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -76,7 +103,7 @@ CREATE TABLE users (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
     hashed_password VARCHAR(255) NOT NULL,
-    role VARCHAR(50) DEFAULT 'Staff' NOT NULL,
+    role user_role DEFAULT 'STAFF' NOT NULL,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     staff_id UUID REFERENCES staff(id) ON DELETE SET NULL,
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
@@ -93,7 +120,7 @@ CREATE TABLE appointments (
     service_id UUID REFERENCES services(id) ON DELETE RESTRICT NOT NULL,
     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     end_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    status VARCHAR(50) DEFAULT 'PENDING' NOT NULL,
+    status appointment_status DEFAULT 'PENDING' NOT NULL,
     notes TEXT
 );
 
@@ -101,13 +128,22 @@ CREATE TABLE leads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
+    customer_name TEXT,
+    customer_email TEXT,
+    customer_phone TEXT,
+    service_name TEXT,
+    preferred_date DATE,
+    preferred_time TIME,
     branch_id UUID REFERENCES branches(id) ON DELETE SET NULL,
-    first_name VARCHAR(50) NOT NULL,
-    last_name VARCHAR(50),
-    email VARCHAR(100),
-    phone VARCHAR(20),
-    source VARCHAR(50),
-    status VARCHAR(50) DEFAULT 'NEW' NOT NULL,
+    assigned_staff UUID REFERENCES staff(id) ON DELETE SET NULL,
+    source TEXT,
+    status lead_status DEFAULT 'NEW' NOT NULL,
+    lead_score INTEGER DEFAULT 0 NOT NULL,
+    followup_count INTEGER DEFAULT 0 NOT NULL,
+    last_contacted TIMESTAMP WITH TIME ZONE,
+    converted BOOLEAN DEFAULT FALSE NOT NULL,
+    converted_at TIMESTAMP WITH TIME ZONE,
     notes TEXT
 );
 
@@ -118,9 +154,15 @@ CREATE TABLE reviews (
     customer_id UUID REFERENCES customers(id) ON DELETE CASCADE NOT NULL,
     branch_id UUID REFERENCES branches(id) ON DELETE CASCADE NOT NULL,
     appointment_id UUID REFERENCES appointments(id) ON DELETE CASCADE UNIQUE,
+    staff_id UUID REFERENCES staff(id) ON DELETE SET NULL,
     rating INTEGER CHECK (rating >= 1 AND rating <= 5) NOT NULL,
     comment TEXT,
-    status VARCHAR(50) DEFAULT 'PENDING' NOT NULL
+    review_text TEXT,
+    sentiment VARCHAR(50) DEFAULT 'NEUTRAL',
+    ai_response TEXT,
+    escalation_required BOOLEAN DEFAULT FALSE NOT NULL,
+    responded BOOLEAN DEFAULT FALSE NOT NULL,
+    status review_status DEFAULT 'PENDING' NOT NULL
 );
 
 CREATE TABLE admins (
@@ -142,8 +184,71 @@ CREATE TABLE chat_logs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     session_id VARCHAR(100) NOT NULL,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
+    staff_id UUID REFERENCES staff(id) ON DELETE SET NULL,
+    agent_type VARCHAR(50) NOT NULL DEFAULT 'RECEPTIONIST',
     sender VARCHAR(50) NOT NULL,
     message TEXT NOT NULL
+);
+
+CREATE TABLE waitlists (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE NOT NULL,
+    branch_id UUID REFERENCES branches(id) ON DELETE CASCADE NOT NULL,
+    service_id UUID REFERENCES services(id) ON DELETE CASCADE NOT NULL,
+    staff_id UUID REFERENCES staff(id) ON DELETE CASCADE,
+    date_str VARCHAR(50) NOT NULL,
+    time_str VARCHAR(50) NOT NULL,
+    is_notified BOOLEAN DEFAULT FALSE NOT NULL
+);
+
+CREATE TABLE loyalty_transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE NOT NULL,
+    transaction_type loyalty_transaction_type NOT NULL,
+    points_change INTEGER NOT NULL,
+    previous_balance INTEGER NOT NULL,
+    new_balance INTEGER NOT NULL,
+    description TEXT,
+    appointment_id UUID REFERENCES appointments(id) ON DELETE SET NULL,
+    review_id UUID REFERENCES reviews(id) ON DELETE SET NULL
+);
+
+CREATE TABLE service_recommendations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    service_id UUID REFERENCES services(id) ON DELETE CASCADE NOT NULL,
+    recommended_service_id UUID REFERENCES services(id) ON DELETE CASCADE NOT NULL,
+    confidence_score FLOAT DEFAULT 1.0 NOT NULL
+);
+
+CREATE TABLE customer_recommendations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    customer_id UUID REFERENCES customers(id) ON DELETE CASCADE NOT NULL,
+    appointment_id UUID REFERENCES appointments(id) ON DELETE SET NULL,
+    recommended_service_id UUID REFERENCES services(id) ON DELETE CASCADE NOT NULL,
+    accepted BOOLEAN DEFAULT FALSE NOT NULL
+);
+
+CREATE TABLE business_metrics_history (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    metric_date DATE UNIQUE NOT NULL,
+    revenue NUMERIC(10, 2) DEFAULT 0.0 NOT NULL,
+    appointments INTEGER DEFAULT 0 NOT NULL,
+    lead_conversion FLOAT DEFAULT 0.0 NOT NULL,
+    average_rating FLOAT DEFAULT 0.0 NOT NULL,
+    upsell_revenue NUMERIC(10, 2) DEFAULT 0.0 NOT NULL,
+    top_service TEXT,
+    top_staff TEXT
 );
 
 CREATE TABLE notifications (
@@ -257,10 +362,11 @@ INSERT INTO customers (id, first_name, last_name, email, phone, is_active) VALUE
 
 -- 6.5 Insert Authenticated Users
 -- Default Hashed password matches "password123" under standard bcrypt passlib hash context
+-- IMPORTANT: Role values MUST match the Python UserRole enum: ADMIN, STAFF, CUSTOMER, MANAGER, OWNER
 INSERT INTO users (id, email, hashed_password, role, is_active, staff_id, customer_id) VALUES
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'owner@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'Admin', TRUE, NULL, NULL),
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df3', 'marcus@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'Staff', TRUE, '6a3e2b64-004c-4c6e-c342-8c0d985c6df2', NULL),
-('8c3f1b64-224c-4c6e-e342-ae0e985c8df4', 'customer@example.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'User', TRUE, NULL, '7b3f1b64-114c-4c6e-d342-9d0e985c7df1');
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df1', 'owner@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'ADMIN', TRUE, NULL, NULL),
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df3', 'marcus@salonai.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'STAFF', TRUE, '6a3e2b64-004c-4c6e-c342-8c0d985c6df2', NULL),
+('8c3f1b64-224c-4c6e-e342-ae0e985c8df4', 'customer@example.com', '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW', 'CUSTOMER', TRUE, NULL, '7b3f1b64-114c-4c6e-d342-9d0e985c7df1');
 
 -- 6.6 Insert Role Tables Profile Records
 INSERT INTO admins (id, user_id, first_name, last_name, email, phone) VALUES
@@ -271,8 +377,8 @@ INSERT INTO appointments (id, customer_id, branch_id, staff_id, service_id, star
 ('0e3f1b64-444c-4c6e-0342-cf0e985c0df1', '7b3f1b64-114c-4c6e-d342-9d0e985c7df1', '4f3d1b64-884c-4c6e-a342-6a0b985c4bf1', '6a3e2b64-004c-4c6e-c342-8c0d985c6df2', '5e2f3d64-994c-4c6e-b342-7b0c985c5cf1', NOW() + INTERVAL '1 day', NOW() + INTERVAL '1 day 1 hour', 'CONFIRMED', 'Wants soft layers haircut');
 
 -- 6.8 Insert Sample Lead
-INSERT INTO leads (id, branch_id, first_name, last_name, email, phone, source, status, notes) VALUES
-('0e3f1b64-444c-4c6e-0342-cf0e985c0df2', '4f3d1b64-884c-4c6e-a342-6a0b985c4bf1', 'Alice', 'Smith', 'alice.smith@example.com', '+1-212-555-5001', 'Website', 'NEW', 'Interested in custom balayage');
+INSERT INTO leads (id, branch_id, customer_name, customer_email, customer_phone, source, status, notes) VALUES
+('0e3f1b64-444c-4c6e-0342-cf0e985c0df2', '4f3d1b64-884c-4c6e-a342-6a0b985c4bf1', 'Alice Smith', 'alice.smith@example.com', '+1-212-555-5001', 'Website', 'NEW', 'Interested in custom balayage');
 
 -- 6.9 Insert Sample Review
 INSERT INTO reviews (id, customer_id, branch_id, appointment_id, rating, comment, status) VALUES

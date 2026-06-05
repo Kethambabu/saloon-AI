@@ -101,3 +101,10 @@ build
 *.tmp
 *.temp
 .cache
+
+/generated/prisma
+node-dist/
+**/env
+**/env (*
+
+
