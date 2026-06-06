@@ -928,14 +928,14 @@ export const AdminDashboard: React.FC = () => {
                       <select
                         value={leadStatusFilter}
                         onChange={e => setLeadStatusFilter(e.target.value)}
-                        className="px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none cursor-pointer"
+                        className="px-3 py-2.5 bg-slate-950 border border-slate-800 hover:border-slate-750 focus:border-blue-500 rounded-xl text-xs text-slate-200 focus:outline-none cursor-pointer shadow-md transition-all"
                       >
-                        <option value="ALL">All Statuses</option>
-                        <option value="NEW">New</option>
-                        <option value="CONTACTED">Contacted</option>
-                        <option value="INTERESTED">Interested</option>
-                        <option value="CONVERTED">Converted</option>
-                        <option value="LOST">Lost</option>
+                        <option value="ALL" className="bg-slate-950 text-white">All Statuses</option>
+                        <option value="NEW" className="bg-slate-950 text-white">New</option>
+                        <option value="CONTACTED" className="bg-slate-950 text-white">Contacted</option>
+                        <option value="INTERESTED" className="bg-slate-950 text-white">Interested</option>
+                        <option value="CONVERTED" className="bg-slate-950 text-white">Converted</option>
+                        <option value="LOST" className="bg-slate-950 text-white">Lost</option>
                       </select>
                     </div>
 
@@ -944,12 +944,12 @@ export const AdminDashboard: React.FC = () => {
                       <select
                         value={leadSortBy}
                         onChange={e => setLeadSortBy(e.target.value)}
-                        className="px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none cursor-pointer"
+                        className="px-3 py-2.5 bg-slate-950 border border-slate-800 hover:border-slate-750 focus:border-blue-500 rounded-xl text-xs text-slate-200 focus:outline-none cursor-pointer shadow-md transition-all"
                       >
-                        <option value="score-desc">Highest Score First</option>
-                        <option value="score-asc">Lowest Score First</option>
-                        <option value="date-desc">Newest First</option>
-                        <option value="date-asc">Oldest First</option>
+                        <option value="score-desc" className="bg-slate-950 text-white">Highest Score First</option>
+                        <option value="score-asc" className="bg-slate-950 text-white">Lowest Score First</option>
+                        <option value="date-desc" className="bg-slate-950 text-white">Newest First</option>
+                        <option value="date-asc" className="bg-slate-950 text-white">Oldest First</option>
                       </select>
                     </div>
                   </div>
