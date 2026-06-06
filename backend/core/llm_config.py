@@ -141,10 +141,10 @@ class LLMConfigManager:
     
     def _get_primary_model(self) -> str:
         """
-        Determine primary model from environment or use default.
+        Determine primary model from environment/settings or use default.
         Validates that the model is supported.
         """
-        model = os.environ.get("GROQ_MODEL", DEFAULT_PRIMARY_MODEL)
+        model = self.settings.groq_model or os.environ.get("GROQ_MODEL", DEFAULT_PRIMARY_MODEL)
         
         if not GroqModel.validate(model):
             logger.warning(

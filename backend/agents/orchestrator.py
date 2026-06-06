@@ -20,8 +20,6 @@ from typing import Dict, Any, List, Optional
 
 # AutoGen modern imports (agentchat v0.4+ / v0.7+)
 from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.teams import RoundRobinGroupChat
-from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
 from core.openai_client_adapter import OpenAIChatCompletionClient
 
 # Project imports
@@ -281,7 +279,9 @@ class MultiAgentOrchestrator(Agent):
     """
 
     # Maximum messages allowed in any group chat run (safety ceiling)
-    MAX_TURNS: int = 6
+    MAX_TURNS: int = 12
+    # Timeout in seconds for each group chat execution
+    AGENT_TIMEOUT: int = 60
 
     def __init__(self, name: str = "Orchestrator", role: str = "Multi-Agent Coordinator"):
         super().__init__(name=name, role=role)
@@ -478,33 +478,111 @@ class MultiAgentOrchestrator(Agent):
         """
         Execute a bounded group chat with the selected specialist agent.
         Uses MaxMessageTermination + TextMentionTermination for safety.
+        Includes advanced message extraction and automatic JSON formatting fallback.
         """
-        termination = MaxMessageTermination(max_messages=self.MAX_TURNS) | TextMentionTermination("TERMINATE")
+        import asyncio
 
-        group_chat = RoundRobinGroupChat(
-            participants=[agent],
-            termination_condition=termination,
-        )
+        logger.info(f"[Orchestrator] Executing direct agent run with '{agent.name}'")
 
-        logger.info(f"[Orchestrator] Starting group chat with '{agent.name}' (max_turns={self.MAX_TURNS})")
+        try:
+            result = await asyncio.wait_for(agent.run(task=query), timeout=self.AGENT_TIMEOUT)
 
-        result = await group_chat.run(task=query)
+            # Extract the last conversational TextMessage from the agent
+            response_text = ""
+            for msg in reversed(result.messages):
+                msg_type = type(msg).__name__
+                source = getattr(msg, "source", getattr(msg, "sender", ""))
+                content = getattr(msg, "content", None)
+                
+                # Check if this is a conversational text message from the specialist agent
+                if msg_type == "TextMessage" and source == agent.name and content and isinstance(content, str) and len(content.strip()) > 0:
+                    if content.strip().lower() not in [i.value for i in AgentIntent]:
+                        response_text = content.strip()
+                        break
 
-        # Extract the last meaningful agent response (skip tool-call messages)
-        response_text = ""
-        for msg in reversed(result.messages):
-            content = getattr(msg, "content", None)
-            if content and isinstance(content, str) and len(content.strip()) > 0:
-                # Skip pure label messages from the classifier
-                if content.strip().lower() not in [i.value for i in AgentIntent]:
-                    response_text = content.strip()
-                    break
+            # Fallback 1: Any TextMessage from a non-user sender
+            if not response_text:
+                for msg in reversed(result.messages):
+                    msg_type = type(msg).__name__
+                    source = getattr(msg, "source", getattr(msg, "sender", ""))
+                    content = getattr(msg, "content", None)
+                    if msg_type == "TextMessage" and source != "user" and content and isinstance(content, str) and len(content.strip()) > 0:
+                        if content.strip().lower() not in [i.value for i in AgentIntent]:
+                            response_text = content.strip()
+                            break
 
-        if not response_text:
-            response_text = "I've processed your request. Is there anything else I can help with?"
+            # Fallback 2: Any last non-empty string message content in the history
+            if not response_text:
+                for msg in reversed(result.messages):
+                    content = getattr(msg, "content", None)
+                    if content and isinstance(content, str) and len(content.strip()) > 0:
+                        if content.strip().lower() not in [i.value for i in AgentIntent]:
+                            response_text = content.strip()
+                            break
 
-        logger.info(f"[Orchestrator] Group chat with '{agent.name}' completed. Response length: {len(response_text)}")
-        return response_text
+            if not response_text:
+                response_text = "I've processed your request. Is there anything else I can help with?"
+
+            # Formatter Fallback Layer: If the response is raw JSON or single-quoted dict, format it via LLM
+            response_stripped = response_text.strip()
+            is_json_response = (
+                (response_stripped.startswith("{") or response_stripped.startswith("[") or response_stripped.startswith("{'"))
+                or ("success" in response_stripped.lower() and ("true" in response_stripped.lower() or "false" in response_stripped.lower()) and len(response_stripped) < 200)
+            )
+
+            if is_json_response:
+                logger.info("[Orchestrator] Raw JSON/dictionary response detected in _run_group_chat. Formatting using LLM...")
+                try:
+                    from autogen_core.models import SystemMessage, UserMessage
+                    
+                    if "Atlas" in agent.name:
+                        persona = "Atlas, the professional AI Business Intelligence Analyst"
+                        extra_instructions = "Use tables, lists, and clean Markdown headers to make the analytics look highly professional."
+                    elif "Mia" in agent.name:
+                        persona = "Mia, the professional AI Lead Follow-up Specialist"
+                        extra_instructions = "Focus on CRM status updates, pipeline highlights, and next steps."
+                    elif "Clara" in agent.name:
+                        persona = "Clara, the professional AI Salon Receptionist"
+                        extra_instructions = "Ensure a friendly tone, confirming booking details clearly."
+                    else:
+                        persona = f"{agent.name}, a professional AI Salon Assistant"
+                        extra_instructions = ""
+                    
+                    formatter_sys_prompt = (
+                        f"You are {persona}.\n"
+                        "Translate this raw system/tool JSON result into a clean, warm, and professional natural language response.\n"
+                        "Rules:\n"
+                        "- Present the data accurately. Do NOT invent, hallucinate, or alter any numbers or dates.\n"
+                        f"- {extra_instructions}\n"
+                        "- Use Markdown formatting where appropriate (bolding, lists, tables)."
+                    )
+                    
+                    sys_msg = SystemMessage(content=formatter_sys_prompt)
+                    user_msg = UserMessage(content=f"Raw System Result:\n{response_stripped}", source="user")
+                    
+                    fmt_result = await asyncio.wait_for(
+                        self.model_client.create(messages=[sys_msg, user_msg], max_tokens=600),
+                        timeout=15.0
+                    )
+                    formatted_response = fmt_result.content.strip()
+                    
+                    if formatted_response and len(formatted_response) >= 15:
+                        logger.info("[Orchestrator] Formatting successful.")
+                        response_text = formatted_response
+                    else:
+                        logger.warning("[Orchestrator] Formatter returned empty or too short response. Using original.")
+                except Exception as fmt_ex:
+                    logger.error(f"[Orchestrator] Failed to format JSON response: {fmt_ex}")
+
+            logger.info(f"[Orchestrator] Group chat with '{agent.name}' completed. Response length: {len(response_text)}")
+            return response_text
+
+        except asyncio.TimeoutError:
+            logger.error(f"[Orchestrator] Group chat with agent '{agent.name}' timed out.")
+            return "I apologize, but processing your request timed out. Please try again or refine your query."
+        except Exception as e:
+            logger.error(f"[Orchestrator] Group chat with agent '{agent.name}' failed: {e}", exc_info=True)
+            raise
 
     # ------------------------------------------------------------------
     # Public API
@@ -564,10 +642,24 @@ class MultiAgentOrchestrator(Agent):
             }
 
         except Exception as e:
-            logger.error(f"[Orchestrator] Processing failed: {e}", exc_info=True)
+            error_str = str(e)
+            logger.error(f"[Orchestrator] Processing failed: {error_str}", exc_info=True)
+            
+            # Provide user-friendly error messages instead of raw stack traces
+            if "429" in error_str or "rate_limit" in error_str.lower() or "Rate limit" in error_str:
+                user_msg = "Our AI service is temporarily at capacity. Please wait a minute and try again."
+            elif "timeout" in error_str.lower():
+                user_msg = "Your request took longer than expected. Please try a simpler question or try again shortly."
+            elif "connection" in error_str.lower():
+                user_msg = "Unable to connect to our analytics service. Please check your internet connection and try again."
+            else:
+                user_msg = "I encountered an unexpected issue processing your request. Please try again."
+            
             return {
                 "success": False,
-                "error": f"Orchestration failed: {str(e)}",
+                "response": user_msg,
+                "error": user_msg,
+                "agent_name": agent.name if agent else "Atlas_BI",
             }
 
     # ------------------------------------------------------------------

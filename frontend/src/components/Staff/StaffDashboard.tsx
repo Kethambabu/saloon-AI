@@ -391,7 +391,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
       </aside>
 
       {/* Main Stylist Operations Panel */}
-      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto max-h-[85vh]">
+      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
         {isLoading ? (
           <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
             Establishing Creative Session...

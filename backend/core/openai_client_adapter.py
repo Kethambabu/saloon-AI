@@ -36,7 +36,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         api_key: str,
         base_url: str,
         model_info: Optional[ModelInfo] = None,
-        timeout: float = 8.0,
+        timeout: float = 30.0,
     ):
         """Initialize the client."""
         self.model = model
@@ -111,13 +111,14 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
     def _convert_messages(self, messages: List[Any]) -> List[Dict[str, Any]]:
         """Convert AutoGen message format to OpenAI format using official to_oai_type when possible."""
-        from autogen_ext.models.openai._openai_client import to_oai_type
+        import uuid
         result = []
         for msg in messages:
             if isinstance(msg, dict):
                 result.append(msg)
             else:
                 try:
+                    from autogen_ext.models.openai._openai_client import to_oai_type
                     converted = to_oai_type(
                         msg,
                         prepend_name=False,
@@ -132,24 +133,60 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             result.append(item.model_dump())
                         else:
                             result.append(dict(item))
-                except Exception as e:
+                except (ImportError, Exception) as e:
                     logger.warning(f"Failed to use official to_oai_type: {e}. Falling back.")
-                    # Convert message object to dict
+                    # Normalise role name from AutoGen message
                     role = getattr(msg, "role", getattr(msg, "source", "user"))
-                    if role == "assistant":
+                    role_str = "user"
+                    role_lower = str(role).lower()
+                    if "assistant" in role_lower:
                         role_str = "assistant"
-                    elif role == "system":
+                    elif "system" in role_lower:
                         role_str = "system"
+                    elif "tool" in role_lower or "function" in role_lower:
+                        role_str = "tool"
+                    
+                    content = getattr(msg, "content", None)
+                    
+                    # Case 1: Assistant message requesting tool calls
+                    if role_str == "assistant" and isinstance(content, list):
+                        tool_calls = []
+                        for item in content:
+                            if hasattr(item, "name") and hasattr(item, "arguments"):
+                                tool_calls.append({
+                                    "id": getattr(item, "id", None) or f"call_{uuid.uuid4().hex[:8]}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": item.name,
+                                        "arguments": item.arguments
+                                    }
+                                })
+                        
+                        msg_dict = {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": tool_calls
+                        }
+                        result.append(msg_dict)
+                        
+                    # Case 2: Tool execution result message
+                    elif isinstance(content, list) and len(content) > 0 and hasattr(content[0], "call_id"):
+                        for item in content:
+                            result.append({
+                                "role": "tool",
+                                "tool_call_id": getattr(item, "call_id", ""),
+                                "content": getattr(item, "content", "")
+                            })
+                            
+                    # Case 3: Standard User / System / Assistant text message
                     else:
-                        role_str = "user"
-
-                    msg_dict = {
-                        "role": role_str,
-                        "content": getattr(msg, "content", str(msg)),
-                    }
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        msg_dict["tool_calls"] = msg.tool_calls
-                    result.append(msg_dict)
+                        msg_dict = {
+                            "role": role_str,
+                            "content": str(content) if content is not None else None
+                        }
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            msg_dict["tool_calls"] = msg.tool_calls
+                        result.append(msg_dict)
         return result
 
     def _filter_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -304,12 +341,53 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                 logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (type: {tool.get('type')}, params: {param_str})")
 
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                tools=converted_tools,
-                **filtered_kwargs,
-            )
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=openai_messages,
+                    tools=converted_tools,
+                    **filtered_kwargs,
+                )
+            except Exception as e:
+                from core.llm_config import get_llm_config
+                manager = get_llm_config()
+                if manager.detect_rate_limit_error(e) and manager.gemini_available:
+                    logger.warning("Rate limit detected in OpenAIChatCompletionClient. Falling back to Gemini...")
+                    success, gemini_config = manager.switch_to_gemini_fallback()
+                    if success:
+                        self.model = gemini_config["model"]
+                        self._model_info = gemini_config["model_info"]
+                        from openai import OpenAI
+                        try:
+                            self._client.close()
+                        except Exception:
+                            pass
+                        self._client = OpenAI(
+                            api_key=gemini_config["api_key"],
+                            base_url=gemini_config["base_url"],
+                            timeout=30.0,
+                        )
+                        logger.info(f"Retrying request with Gemini model: {self.model}")
+                        openai_messages = self._convert_messages(messages)
+                        converted_tools = self._convert_tools(tools)
+                        try:
+                            response = self._client.chat.completions.create(
+                                model=self.model,
+                                messages=openai_messages,
+                                tools=converted_tools,
+                                **filtered_kwargs,
+                            )
+                        except Exception as gemini_err:
+                            logger.error(f"Gemini fallback also failed: {gemini_err}")
+                            # Both providers failed - raise a clean rate limit error
+                            raise RuntimeError(
+                                "429 Rate limit: Both primary (Groq) and fallback (Gemini) AI providers are "
+                                "temporarily at capacity. Please wait a minute and try again."
+                            ) from gemini_err
+                    else:
+                        raise
+                else:
+                    raise
 
             # Track token usage
             if response.usage:
@@ -405,29 +483,64 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         filtered_kwargs = self._filter_kwargs(kwargs)
 
         try:
-            with self._client.chat.completions.create(
-                model=self.model,
-                messages=openai_messages,
-                tools=converted_tools,
-                stream=True,
-                **filtered_kwargs,
-            ) as response:
-                for chunk in response:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        if delta and delta.content:
-                            choice_reason = chunk.choices[0].finish_reason
-                            mapped_reason = "unknown"
-                            if choice_reason in ["stop", "length", "function_calls", "content_filter", "error", "unknown"]:
-                                mapped_reason = choice_reason
+            try:
+                with self._client.chat.completions.create(
+                    model=self.model,
+                    messages=openai_messages,
+                    tools=converted_tools,
+                    stream=True,
+                    **filtered_kwargs,
+                ) as response:
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            if delta and delta.content:
+                                choice_reason = chunk.choices[0].finish_reason
+                                mapped_reason = "unknown"
+                                if choice_reason in ["stop", "length", "function_calls", "content_filter", "error", "unknown"]:
+                                    mapped_reason = choice_reason
 
-                            yield CreateResult(
-                                finish_reason=mapped_reason,
-                                content=delta.content,
-                                usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
-                                cached=False,
-                            )
-
+                                yield CreateResult(
+                                    finish_reason=mapped_reason,
+                                    content=delta.content,
+                                    usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
+                                    cached=False,
+                                )
+            except Exception as e:
+                from core.llm_config import get_llm_config
+                manager = get_llm_config()
+                if manager.detect_rate_limit_error(e) and manager.gemini_available:
+                    logger.warning("Rate limit detected in OpenAIChatCompletionClient.create_stream(). Falling back to Gemini...")
+                    success, gemini_config = manager.switch_to_gemini_fallback()
+                    if success:
+                        self.model = gemini_config["model"]
+                        self._model_info = gemini_config["model_info"]
+                        from openai import OpenAI
+                        try:
+                            self._client.close()
+                        except Exception:
+                            pass
+                        self._client = OpenAI(
+                            api_key=gemini_config["api_key"],
+                            base_url=gemini_config["base_url"],
+                            timeout=30.0,
+                        )
+                        logger.info(f"Retrying stream request with Gemini model: {self.model}")
+                        openai_messages = self._convert_messages(messages)
+                        converted_tools = self._convert_tools(tools)
+                        try:
+                            async for chunk in self.create_stream(messages, tools, **kwargs):
+                                yield chunk
+                            return
+                        except Exception as gemini_err:
+                            logger.error(f"Gemini stream fallback also failed: {gemini_err}")
+                            raise RuntimeError(
+                                "429 Rate limit: Both primary and fallback AI providers are temporarily at capacity."
+                            ) from gemini_err
+                    else:
+                        raise
+                else:
+                    raise
         except Exception as e:
             logger.error(f"OpenAI API error in create_stream(): {e}")
             raise

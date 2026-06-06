@@ -228,3 +228,71 @@ def test_waitlist_system(db_session):
     ).all()
     assert len(notifs) == 1
     assert "Waitlist Slot Available!" in notifs[0].title
+
+
+def test_returning_cohort_reminders(db_session):
+    """Assert returning cohort customers automatically receive one daily reminder only."""
+    from services.analytics_service import AnalyticsService
+    
+    branch = db_session.query(Branch).first()
+    service = db_session.query(Service).first()
+    customer = db_session.query(Customer).first()
+    stylist = db_session.query(Staff).first()
+    user = db_session.query(User).first()
+
+    # 1. Before completed appointments, customer has 0 bookings - not in returning cohort
+    reminders_sent = AnalyticsService.send_returning_cohort_reminders(db_session)
+    assert reminders_sent == 0
+    
+    # Verify no reminders created
+    notifs = db_session.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.title == "Returning Cohort Daily Reminder"
+    ).all()
+    assert len(notifs) == 0
+
+    # 2. Add 2 completed appointments to qualify customer for Returning Cohort
+    appt1 = Appointment(
+        customer_id=customer.id,
+        branch_id=branch.id,
+        service_id=service.id,
+        staff_id=stylist.id,
+        start_time=datetime.now(timezone.utc) - timedelta(days=2),
+        end_time=datetime.now(timezone.utc) - timedelta(days=2, hours=-1),
+        status=AppointmentStatus.COMPLETED
+    )
+    appt2 = Appointment(
+        customer_id=customer.id,
+        branch_id=branch.id,
+        service_id=service.id,
+        staff_id=stylist.id,
+        start_time=datetime.now(timezone.utc) - timedelta(days=1),
+        end_time=datetime.now(timezone.utc) - timedelta(days=1, hours=-1),
+        status=AppointmentStatus.COMPLETED
+    )
+    db_session.add_all([appt1, appt2])
+    db_session.commit()
+
+    # 3. Trigger reminders - should send 1 reminder
+    reminders_sent = AnalyticsService.send_returning_cohort_reminders(db_session)
+    assert reminders_sent == 1
+
+    # Verify notification created
+    notifs = db_session.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.title == "Returning Cohort Daily Reminder"
+    ).all()
+    assert len(notifs) == 1
+    assert "valued returning clients" in notifs[0].message
+    assert "0 points" in notifs[0].message  # customer has 0 loyalty points initially
+
+    # 4. Trigger reminders again on the same day - should send 0 reminders (already sent constraint)
+    reminders_sent_again = AnalyticsService.send_returning_cohort_reminders(db_session)
+    assert reminders_sent_again == 0
+
+    # Verify no duplicate notification is created
+    notifs_again = db_session.query(Notification).filter(
+        Notification.user_id == user.id,
+        Notification.title == "Returning Cohort Daily Reminder"
+    ).all()
+    assert len(notifs_again) == 1

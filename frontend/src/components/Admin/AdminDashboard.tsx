@@ -67,6 +67,9 @@ interface ReviewRecord {
 
 export const AdminDashboard: React.FC = () => {
   const { user, logout } = useAuth();
+  const adminName = user?.email
+    ? user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1)
+    : 'Admin';
   
   // Redesigned Zenoti-Style Navigation State
   const [activeTab, setActiveTab] = useState<
@@ -281,20 +284,85 @@ export const AdminDashboard: React.FC = () => {
     fetchAllData();
   }, []);
 
+  // --- Auto-refresh dashboard telemetry periodically (every 15 seconds) ---
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const [
+          dashRes,
+          revRes,
+          custRes,
+          staffRes,
+          leadAnalyticsRes,
+          reviewRes,
+          upsellRes,
+          insightsRes,
+          forecastRes,
+          apptsRes
+        ] = await Promise.all([
+          apiClient.get('/analytics/dashboard-summary').catch(() => ({ data: { success: false, summary: null } })),
+          apiClient.get('/analytics/revenue-summary').catch(() => ({ data: { success: false, revenue: null } })),
+          apiClient.get('/analytics/customer-summary').catch(() => ({ data: { success: false, customers: null } })),
+          apiClient.get('/analytics/staff-summary').catch(() => ({ data: { success: false, staff: null } })),
+          apiClient.get('/leads/analytics').catch(() => ({ data: null })),
+          apiClient.get('/analytics/review-summary').catch(() => ({ data: { success: false, reviews: null } })),
+          apiClient.get('/analytics/upsell-summary').catch(() => ({ data: { success: false, upsells: null } })),
+          apiClient.get('/analytics/ai-insights').catch(() => ({ data: { success: false, insights: [] } })),
+          apiClient.get('/analytics/forecast-metrics').catch(() => ({ data: { success: false, forecast: null } })),
+          apiClient.get<AppointmentRecord[]>('/appointments/my').catch(() => ({ data: [] }))
+        ]);
+
+        if (dashRes.data?.success && dashRes.data?.summary) setDashboardSummary(dashRes.data.summary);
+        if (revRes.data?.success && revRes.data?.revenue) setRevenueSummary(revRes.data.revenue);
+        if (custRes.data?.success && custRes.data?.customers) setCustomerSummary(custRes.data.customers);
+        if (staffRes.data?.success && staffRes.data?.staff) setStaffSummary(staffRes.data.staff);
+        
+        if (leadAnalyticsRes.data) {
+          const la = leadAnalyticsRes.data;
+          setLeadSummary({
+            new_leads: la.new_leads || 0,
+            converted_leads: la.converted_leads || 0,
+            lost_leads: la.lost_leads || 0,
+            pending_leads: (la.contacted_leads || 0) + (la.interested_leads || 0),
+            conversion_rate: la.conversion_rate || 0.0
+          });
+          setTopRecoverableLeads(la.top_recoverable_leads || []);
+        }
+        if (reviewRes.data?.success && reviewRes.data?.reviews) setReviewSummary(reviewRes.data.reviews);
+        if (upsellRes.data?.success && upsellRes.data?.upsells) setUpsellSummary(upsellRes.data.upsells);
+        if (insightsRes.data?.success && insightsRes.data?.insights?.length) setAiInsights(insightsRes.data.insights);
+        if (forecastRes.data?.success && forecastRes.data?.forecast) setForecastSummary(forecastRes.data.forecast);
+        
+        setAppointments(apptsRes.data || []);
+      } catch (err) {
+        console.warn('Background dynamic telemetry refresh failed', err);
+      }
+    }, 15000); // Poll every 15 seconds for hot updates
+
+    return () => clearInterval(interval);
+  }, []);
+
   const handleToggleActive = async (userId: string) => {
     try {
       const res = await apiClient.post(`/auth/users/${userId}/toggle`);
       if (res.data && res.data.success) {
         setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: res.data.is_active } : u));
+        await fetchBIData();
       }
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to update user status.');
     }
   };
 
-  const handleCancelAppointment = (id: string) => {
+  const handleCancelAppointment = async (id: string) => {
     if (window.confirm('Cancel this active client appointment?')) {
-      setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: 'CANCELLED' } : a));
+      try {
+        await apiClient.delete(`/appointments/${id}`);
+        setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: 'CANCELLED' } : a));
+        await fetchBIData();
+      } catch (err: any) {
+        window.alert(err.response?.data?.detail || 'Failed to cancel appointment.');
+      }
     }
   };
 
@@ -313,6 +381,7 @@ export const AdminDashboard: React.FC = () => {
         const reviewsRes = await apiClient.get('/reviews').catch(() => ({ data: [] }));
         const reviewArray = reviewsRes.data?.reviews || reviewsRes.data || [];
         if (reviewArray.length) setReviews(reviewArray);
+        await fetchBIData();
       }
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to submit response.');
@@ -330,9 +399,29 @@ export const AdminDashboard: React.FC = () => {
         const reviewsRes = await apiClient.get('/reviews').catch(() => ({ data: [] }));
         const reviewArray = reviewsRes.data?.reviews || reviewsRes.data || [];
         if (reviewArray.length) setReviews(reviewArray);
+        await fetchBIData();
       }
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to escalate review.');
+    }
+  };
+
+  const handleUpdateReviewStatus = async (reviewId: string, status: 'APPROVED' | 'REJECTED') => {
+    try {
+      const res = await apiClient.post('/reviews/status', {
+        review_id: reviewId,
+        status: status
+      });
+      if (res.data && res.data.success) {
+        window.alert(`Review ${status === 'APPROVED' ? 'approved' : 'rejected'} successfully!`);
+        // reload
+        const reviewsRes = await apiClient.get('/reviews').catch(() => ({ data: [] }));
+        const reviewArray = reviewsRes.data?.reviews || reviewsRes.data || [];
+        setReviews(reviewArray);
+        await fetchBIData();
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to update review status.');
     }
   };
 
@@ -341,6 +430,7 @@ export const AdminDashboard: React.FC = () => {
       await apiClient.put(`/services/${id}`, { price: editPrice });
       setServices(prev => prev.map(s => s.id === id ? { ...s, price: editPrice } : s));
       setEditingServiceId(null);
+      await fetchBIData();
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to update service price.');
     }
@@ -371,6 +461,7 @@ export const AdminDashboard: React.FC = () => {
         setNewServicePrice(0);
         setNewServiceDuration(30);
         window.alert('New service added successfully!');
+        await fetchBIData();
       }
     } catch (err: any) {
       window.alert(err.response?.data?.detail || 'Failed to add new service.');
@@ -439,7 +530,7 @@ export const AdminDashboard: React.FC = () => {
       </aside>
 
       {/* Main Operations Container */}
-      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto max-h-[85vh]">
+      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
         {isLoading || isBIDataLoading ? (
           <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
             Establishing Secure Admin Session & BI Telemetry logs...
@@ -453,7 +544,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="border-b border-slate-850 pb-3 flex justify-between items-center">
                   <div>
                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Dashboard</span>
-                    <h2 className="text-xl font-black mt-0.5 text-white">Good Morning, Balu</h2>
+                    <h2 className="text-xl font-black mt-0.5 text-white">Good Morning, {adminName}</h2>
                   </div>
                   <button 
                     onClick={fetchBIData}
@@ -695,7 +786,7 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                   <p className="text-xs font-semibold text-slate-350 leading-relaxed">
                     {customerSummary?.total_customers > 0 
-                      ? `${Math.round((customerSummary?.inactive_customers / customerSummary?.total_customers) * 100)}% of our registered customers (${customerSummary?.inactive_customers} out of {customerSummary?.total_customers}) have not booked an appointment in the last 90 days. We recommend launching a targeted re-engagement campaign.`
+                      ? `${Math.round((customerSummary?.inactive_customers / customerSummary?.total_customers) * 100)}% of our registered customers (${customerSummary?.inactive_customers} out of ${customerSummary?.total_customers}) have not booked an appointment in the last 90 days. We recommend launching a targeted re-engagement campaign.`
                       : 'No customer cohort attrition detected.'}
                   </p>
                 </section>
@@ -1148,26 +1239,58 @@ export const AdminDashboard: React.FC = () => {
 
                           {/* Action button rows */}
                           <div className="flex flex-wrap items-center justify-between gap-4 pt-2.5 border-t border-slate-850/65 mt-4">
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 items-center">
                               {rev.escalation_required ? (
                                 <span className="px-2.5 py-1 bg-purple-950/40 border border-purple-900/45 text-purple-405 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 shadow-md">
-                                  🚨 Escalated To Manager
+                                  🚨 Escalated
                                 </span>
                               ) : (
                                 <button
                                   onClick={() => handleEscalateReview(rev.id)}
                                   className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-850 hover:border-slate-750 text-slate-400 hover:text-white rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer"
                                 >
-                                  Escalate To Manager
+                                  Escalate
                                 </button>
+                              )}
+
+                              {/* Review Moderation Controls */}
+                              {rev.status === 'PENDING' ? (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateReviewStatus(rev.id, 'APPROVED')}
+                                    className="px-3 py-1.5 bg-emerald-950/30 hover:bg-emerald-900/40 border border-emerald-900/45 hover:border-emerald-700 text-emerald-400 hover:text-emerald-300 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateReviewStatus(rev.id, 'REJECTED')}
+                                    className="px-3 py-1.5 bg-red-955/30 hover:bg-red-900/40 border border-red-900/45 hover:border-red-700 text-red-400 hover:text-red-300 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              ) : rev.status === 'APPROVED' ? (
+                                <span className="px-2.5 py-1 bg-emerald-950/20 border border-emerald-900/35 text-emerald-400 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 shadow-md">
+                                  ✓ Approved
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 bg-red-955/20 border border-red-900/35 text-red-400 rounded-lg text-[9px] font-black uppercase flex items-center gap-1 shadow-md">
+                                  ✗ Rejected
+                                </span>
                               )}
                             </div>
 
                             <div className="flex gap-2">
                               {rev.ai_response && replyingReviewId !== rev.id && (
-                                <span className="text-[9px] text-slate-550 font-black bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-850 uppercase">
+                                <button
+                                  onClick={() => {
+                                    setReplyingReviewId(rev.id);
+                                    setResponseText(rev.ai_response || '');
+                                  }}
+                                  className="text-[9px] text-slate-400 hover:text-white font-black bg-slate-900 hover:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-850 uppercase transition-all cursor-pointer"
+                                >
                                   Reply Registered
-                                </span>
+                                </button>
                               )}
                               {replyingReviewId !== rev.id && (
                                 <button

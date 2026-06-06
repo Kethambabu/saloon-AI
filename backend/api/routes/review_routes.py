@@ -38,6 +38,11 @@ class EscalateReviewRequest(BaseModel):
     review_id: str = Field(..., description="UUID string of review being escalated")
 
 
+class UpdateReviewStatusRequest(BaseModel):
+    review_id: str = Field(..., description="UUID string of review being updated")
+    status: str = Field(..., description="Target status: 'APPROVED' or 'REJECTED'")
+
+
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
@@ -255,6 +260,49 @@ async def get_reputation_analytics(
         }
     except Exception as e:
         logger.error(f"Error fetching reputation analytics: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.post(
+    "/status",
+    status_code=status.HTTP_200_OK,
+    summary="Update the moderation status of a review (Approve or Reject)"
+)
+async def update_review_status(
+    payload: UpdateReviewStatusRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Updates a review moderation status. Authorized for Admin/Staff only.
+    """
+    logger.info(f"POST /reviews/status called by user {current_user.email}")
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if "UserRole." in user_role:
+        user_role = user_role.split("UserRole.")[1]
+    if user_role not in ["ADMIN", "STAFF", "MANAGER", "OWNER"]:
+         raise HTTPException(
+             status_code=status.HTTP_403_FORBIDDEN,
+             detail="Only salon staff and administrators can approve or reject reviews."
+         )
+
+    try:
+        result = ReviewService.update_review_status(
+            db=db,
+            review_id=payload.review_id,
+            status=payload.status
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.get("error", "Failed to update review status.")
+            )
+        return result
+    except Exception as e:
+        logger.error(f"Error updating review status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

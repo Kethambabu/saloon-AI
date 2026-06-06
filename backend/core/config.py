@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     
     # External Services
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
+    groq_model: Optional[str] = Field(default=None, alias="GROQ_MODEL")
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     google_api_key: Optional[str] = Field(default=None, alias="GOOGLE_API_KEY")
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")

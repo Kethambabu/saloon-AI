@@ -1561,31 +1561,7 @@ export const UserDashboard: React.FC = () => {
                     max-width: 100% !important;
                     height: 65vh !important;
                     border: none !important;
-                    background: transparent !important;
                     box-shadow: none !important;
-                  }
-                  .custom-fullscreen-agentchat-container aside {
-                    background: #0f172a !important;
-                    border-right-color: #1e293b !important;
-                  }
-                  .custom-fullscreen-agentchat-container section {
-                    background: #0b1329/40 !important;
-                  }
-                  .custom-fullscreen-agentchat-container header {
-                    background: #0f172a !important;
-                    border-bottom-color: #1e293b !important;
-                  }
-                  .custom-fullscreen-agentchat-container .bg-slate-50\\/50 {
-                    background-color: #0b1329/20 !important;
-                  }
-                  .custom-fullscreen-agentchat-container footer {
-                    background: #0f172a !important;
-                    border-top-color: #1e293b !important;
-                  }
-                  .custom-fullscreen-agentchat-container input {
-                    background: #070d1e !important;
-                    border-color: #1e293b !important;
-                    color: white !important;
                   }
                 `}</style>
               </div>

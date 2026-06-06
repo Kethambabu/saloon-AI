@@ -30,7 +30,7 @@ class AnalyticsService:
         logger.info("[AnalyticsService] Generating dashboard summary...")
         
         # Today's boundaries
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         
         # Appointments completed or active today
@@ -38,7 +38,10 @@ class AnalyticsService:
             Appointment.start_time >= today_start,
             Appointment.start_time < today_end
         )
-        total_appts_today = appt_query.count()
+        total_appts_today = appt_query.filter(
+            Appointment.status != AppointmentStatus.CANCELLED,
+            Appointment.status != AppointmentStatus.NO_SHOW
+        ).count()
         completed_appts_today = appt_query.filter(Appointment.status == AppointmentStatus.COMPLETED).all()
         
         # Today's revenue
@@ -332,6 +335,31 @@ class AnalyticsService:
         avg_rating_val = db.query(func.avg(Review.rating)).scalar()
         average_rating = round(float(avg_rating_val), 2) if avg_rating_val is not None else 0.0
         
+        # Dynamically resolve primary complaint category from NEGATIVE/CRITICAL comments
+        primary_complaint = "None"
+        if neg_count > 0 or crit_count > 0:
+            bad_reviews = db.query(Review).filter(
+                Review.sentiment.in_(["NEGATIVE", "CRITICAL"])
+            ).all()
+            
+            counts = {"Waiting Time": 0, "Pricing": 0, "Staff Behavior": 0, "Cleanliness": 0}
+            for r in bad_reviews:
+                text = ((r.comment or "") + " " + (r.review_text or "")).lower()
+                if any(x in text for x in ["wait", "time", "delay", "slow"]):
+                    counts["Waiting Time"] += 1
+                if any(x in text for x in ["price", "expensive", "cost", "charge", "money"]):
+                    counts["Pricing"] += 1
+                if any(x in text for x in ["rude", "staff", "behavior", "attitude", "stylist"]):
+                    counts["Staff Behavior"] += 1
+                if any(x in text for x in ["dirty", "clean", "hygiene", "mess"]):
+                    counts["Cleanliness"] += 1
+            
+            best_cat = max(counts, key=counts.get)
+            if counts[best_cat] > 0:
+                primary_complaint = best_cat
+            else:
+                primary_complaint = "General Service"
+
         return {
             "total_reviews": total_reviews,
             "average_rating": average_rating,
@@ -339,7 +367,7 @@ class AnalyticsService:
             "neutral_reviews": neu_count,
             "negative_reviews": neg_count,
             "critical_complaints": crit_count,
-            "primary_complaint": "None" if total_reviews == 0 else "Waiting Time"
+            "primary_complaint": primary_complaint
         }
 
     @staticmethod
@@ -374,3 +402,91 @@ class AnalyticsService:
             "total_offers": total_recs,
             "most_accepted": most_accepted_service
         }
+
+    @staticmethod
+    def send_returning_cohort_reminders(db: Session) -> int:
+        """
+        Sends exactly one daily booking and loyalty reminder to all customers
+        in the Returning Cohort (customers with >= 2 completed appointments).
+        Returns the number of reminders sent.
+        """
+        from db.models import User, Notification
+        
+        logger.info("[AnalyticsService] Executing send_returning_cohort_reminders...")
+        
+        # 1. Identify Returning Cohort customer IDs (>= 2 completed bookings)
+        bookings_by_cust = (
+            db.query(Appointment.customer_id, func.count(Appointment.id).label("cnt"))
+            .filter(Appointment.status == AppointmentStatus.COMPLETED)
+            .group_by(Appointment.customer_id)
+            .all()
+        )
+        returning_cust_ids = [row.customer_id for row in bookings_by_cust if row.cnt >= 2]
+        
+        if not returning_cust_ids:
+            logger.info("[AnalyticsService] No returning cohort customers found.")
+            return 0
+            
+        # 2. Get today's local boundaries
+        today_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        
+        sent_count = 0
+        
+        # 3. Iterate over returning customers and check their User accounts
+        for cust_id in returning_cust_ids:
+            customer = db.query(Customer).filter(Customer.id == cust_id).first()
+            if not customer:
+                continue
+                
+            user = db.query(User).filter(User.customer_id == cust_id).first()
+            if not user:
+                # If no linked user account, we cannot send a dashboard notification
+                continue
+                
+            # 4. Check if a reminder has already been sent to this user today
+            existing_notif = db.query(Notification).filter(
+                Notification.user_id == user.id,
+                Notification.title == "Returning Cohort Daily Reminder",
+                Notification.created_at >= today_start,
+                Notification.created_at < today_end
+            ).first()
+            
+            if existing_notif:
+                # Already sent today
+                continue
+                
+            # 5. Create new daily reminder notification
+            notif = Notification(
+                user_id=user.id,
+                title="Returning Cohort Daily Reminder",
+                message=f"Hi {customer.first_name}! As one of our valued returning clients, here is your daily reminder to book your next styling appointment or check your loyalty points balance ({customer.loyalty_points} points). We look forward to seeing you soon!",
+                is_read=False,
+                is_cleared=False
+            )
+            db.add(notif)
+            sent_count += 1
+            
+        if sent_count > 0:
+            db.commit()
+            logger.info(f"[AnalyticsService] Sent {sent_count} daily reminders to Returning Cohort customers.")
+        else:
+            logger.info("[AnalyticsService] No new daily reminders sent today (already sent or no users).")
+            
+        return sent_count
+
+
+def process_returning_cohort_reminders():
+    """
+    Automated background job to dispatch daily reminders to Returning Cohort customers.
+    Executed by the background scheduler.
+    """
+    from db.database import SessionLocal
+    logger.info("⏱️ [Scheduler] Starting automated returning cohort daily reminders...")
+    db = SessionLocal()
+    try:
+        AnalyticsService.send_returning_cohort_reminders(db)
+    except Exception as e:
+        logger.error(f"[Scheduler] Error running automated returning cohort reminders: {e}", exc_info=True)
+    finally:
+        db.close()

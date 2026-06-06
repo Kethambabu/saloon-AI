@@ -68,19 +68,25 @@ async def lifespan(application: FastAPI):
     
     # Start the automated Lead Follow-up Scheduler
     try:
-        from apscheduler.schedulers.background import BackgroundScheduler
-        from services.lead_service import process_leads
-        
-        logger.info("⏱️ Starting Lead Follow-up Background Scheduler...")
-        scheduler = BackgroundScheduler()
-        scheduler.add_job(
-            process_leads,
-            'interval',
-            minutes=1
-        )
-        scheduler.start()
-        application.state.scheduler = scheduler
-        logger.info("✅ Background Scheduler started successfully.")
+         from apscheduler.schedulers.background import BackgroundScheduler
+         from services.lead_service import process_leads
+         from services.analytics_service import process_returning_cohort_reminders
+         
+         logger.info("⏱️ Starting Lead Follow-up & Cohort Reminders Background Scheduler...")
+         scheduler = BackgroundScheduler()
+         scheduler.add_job(
+             process_leads,
+             'interval',
+             minutes=1
+         )
+         scheduler.add_job(
+             process_returning_cohort_reminders,
+             'interval',
+             minutes=1
+         )
+         scheduler.start()
+         application.state.scheduler = scheduler
+         logger.info("✅ Background Scheduler started successfully.")
     except Exception as e:
         logger.error(f"❌ Failed to start background scheduler: {e}", exc_info=True)
 

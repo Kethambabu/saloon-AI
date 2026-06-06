@@ -196,6 +196,21 @@ def query_raw_analytics_database(sql_select_query: str) -> str:
     return str(result)
 
 
+def trigger_returning_cohort_reminders() -> str:
+    """
+    Manually triggers the daily reminder dispatch to all eligible customers in the
+    Returning Cohort (customers with >= 2 completed appointments) who haven't received it today.
+    """
+    logger.info("[BIAgent] Tool call: trigger_returning_cohort_reminders()")
+    db = SessionLocal()
+    try:
+        from services.analytics_service import AnalyticsService
+        sent_count = AnalyticsService.send_returning_cohort_reminders(db)
+        return f"Successfully processed daily cohort reminders. Reminders dispatched to {sent_count} returning cohort customer(s) today."
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Conversational Prompt
 # ---------------------------------------------------------------------------
@@ -220,6 +235,7 @@ Always try to use standard metric tools before writing custom database queries:
 9. `forecast_revenue` - Next month expected forecasting (+8% model).
 10. `retrieve_business_context` - Multi-dimensional **Business Metrics RAG** context retrieval (pulls daily snapshots).
 11. `query_raw_analytics_database` - Run raw SELECT queries on database schemas.
+12. `trigger_returning_cohort_reminders` - Manually trigger/process the daily cohort loyalty reminder dispatch to eligible returning clients.
 
 🧠 THE POWER OF BUSINESS METRICS RAG:
 When asked comparative business questions (e.g. "Why is revenue decreasing?" or "How does this compare to last month?"),
@@ -307,10 +323,11 @@ class BIAgent(Agent):
                 forecast_revenue,
                 retrieve_business_context,
                 query_raw_analytics_database,
+                trigger_returning_cohort_reminders,
             ],
         )
 
-        logger.info(f"Business Intelligence Agent '{name}' initialized with 11 tools.")
+        logger.info(f"Business Intelligence Agent '{name}' initialized with 12 tools.")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""

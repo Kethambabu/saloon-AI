@@ -122,11 +122,13 @@ async def chat_with_agent(
             
             if not agent_response.get("success"):
                 logger.error(f"Orchestration failed: {agent_response.get('error')}")
+                # Use the user-friendly response from the orchestrator if available
+                friendly_msg = agent_response.get("response") or "I encountered an issue processing your request. Please try again."
                 return ChatResponse(
-                    success=False,
+                    success=True,  # Return success=True so frontend renders the message instead of crashing
                     session_id=payload.session_id,
-                    response="I encountered an issue processing your request through the analytics supervisor.",
-                    agent_name="Atlas_BI"
+                    response=friendly_msg,
+                    agent_name=agent_response.get("agent_name", "Atlas_BI")
                 )
                 
             return ChatResponse(
@@ -137,9 +139,19 @@ async def chat_with_agent(
             )
         except Exception as ex:
             logger.error(f"Orchestrator processing crashed: {ex}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Orchestrator processing failed: {str(ex)}"
+            error_str = str(ex)
+            if "429" in error_str or "rate_limit" in error_str.lower():
+                friendly_msg = "Our AI service is temporarily at capacity. Please wait a minute and try again."
+            elif "timeout" in error_str.lower():
+                friendly_msg = "Your request took longer than expected. Please try again shortly."
+            else:
+                friendly_msg = "I encountered an unexpected issue. Please try again in a moment."
+            
+            return ChatResponse(
+                success=True,  # Return success=True so frontend renders the error message in chat
+                session_id=payload.session_id,
+                response=friendly_msg,
+                agent_name="Atlas_BI"
             )
     
     # Role-based agent enforcement

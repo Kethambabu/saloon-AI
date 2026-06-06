@@ -342,3 +342,25 @@ class ReviewService:
             "escalated_count": db.query(Review).filter(Review.escalation_required == True).count(),
             "responded_count": db.query(Review).filter(Review.responded == True).count(),
         }
+
+    @staticmethod
+    def update_review_status(db: Session, review_id: str, status: str) -> Dict[str, Any]:
+        """
+        Updates the moderation status of a review (APPROVED / REJECTED).
+        """
+        rev_uuid = uuid.UUID(review_id)
+        review = db.query(Review).filter(Review.id == rev_uuid).first()
+        if not review:
+            return {"success": False, "error": "Review not found"}
+            
+        try:
+            from db.models import ReviewStatus
+            review.status = ReviewStatus(status.upper())
+            db.commit()
+            return {
+                "success": True,
+                "message": f"Review status updated to {status.upper()} successfully!",
+                "status": review.status.value
+            }
+        except ValueError:
+            return {"success": False, "error": f"Invalid review status: {status}"}
