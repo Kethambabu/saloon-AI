@@ -221,7 +221,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
 
   // Compute stats metrics dynamically
   const stats = [
-    { title: "Today's Styling Book", value: `${appointments.length} Slots`, desc: 'Active agenda', icon: '⏰' },
+    { title: "Today's Styling Book", value: `${appointments.filter(a => a.status !== 'CANCELLED' && a.status !== 'COMPLETED').length} Slots`, desc: 'Active agenda', icon: '⏰' },
     { title: 'Stylist Rating', value: `${personalStats.rating?.toFixed(1) || '0.0'} ★`, desc: 'Average feedback rating', icon: '📈' },
     { title: 'Upsell Converts', value: `$${personalStats.upsells?.toFixed(0) || '0'}`, desc: 'Total upsell revenue', icon: '⚡' },
     { title: 'Assigned Role', value: `${personalStats.role || 'Stylist'}`, desc: 'Specialized role', icon: '📍' }
@@ -440,17 +440,17 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                   ))}
                 </section>
 
-                {/* Today's Agenda list */}
+                 {/* Today's Agenda list */}
                 <section className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
                   <h3 className="text-sm font-extrabold text-slate-400 uppercase tracking-wider">Today's Appointment Ledger</h3>
                   
-                  {appointments.length === 0 ? (
+                  {appointments.filter(appt => appt.status !== 'CANCELLED' && appt.status !== 'COMPLETED').length === 0 ? (
                     <div className="text-center text-slate-500 py-8 text-xs">
-                      No appointments booked for today.
+                      No active appointments booked for today.
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {appointments.map(appt => (
+                      {appointments.filter(appt => appt.status !== 'CANCELLED' && appt.status !== 'COMPLETED').map(appt => (
                         <div key={appt.id} className="bg-slate-900/80 border border-slate-800/80 p-5 rounded-2xl space-y-3 relative flex flex-col justify-between hover:border-slate-700 transition-colors">
                           <div>
                             <span className="absolute top-4 right-4 px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[9px] font-bold border border-emerald-500/20 uppercase">
@@ -492,7 +492,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                                   </button>
                                   <button
                                     onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
-                                    className="px-2.5 py-1 bg-red-950 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
+                                    className="px-2.5 py-1 bg-red-955 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
                                   >
                                     Cancel
                                   </button>
@@ -508,7 +508,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                                   </button>
                                   <button
                                     onClick={() => handleUpdateStatus(appt.id, 'CANCELLED')}
-                                    className="px-2.5 py-1 bg-red-950 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
+                                    className="px-2.5 py-1 bg-red-955 border border-red-900/40 text-red-400 rounded text-[10px] cursor-pointer"
                                   >
                                     Cancel
                                   </button>

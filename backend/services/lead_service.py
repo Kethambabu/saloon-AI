@@ -63,7 +63,7 @@ def calculate_lead_score(messages: List[ChatLog], is_returning: bool = False, ti
         score += 20
     if is_returning:
         score += 20
-    if time_spent > 60:
+    if time_spent > 10:
         score += 20
         
     return min(score, 100)  # Max out at 100
@@ -72,6 +72,11 @@ def calculate_lead_score(messages: List[ChatLog], is_returning: bool = False, ti
 # ---------------------------------------------------------------------------
 # 2. Lead Detection Engine
 # ---------------------------------------------------------------------------
+def detect_abandoned_booking(db: Session) -> List[Lead]:
+    """Singular alias for detect_abandoned_bookings to match blueprint conventions."""
+    return detect_abandoned_bookings(db)
+
+
 def detect_abandoned_bookings(db: Session) -> List[Lead]:
     """
     Scans recent ChatLogs for abandoned intent in the last 2 hours.
@@ -83,8 +88,8 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
     logger.info("[LeadDetectionEngine] Scanning chat logs for abandoned bookings...")
     new_leads_created: List[Lead] = []
     
-    # Define timeframe: chats in the last 2 hours
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    # Define timeframe: chats in the last 2 minutes
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
     
     # Get all active sessions in the cutoff window
     sessions = db.query(ChatLog.session_id).filter(
@@ -105,7 +110,9 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
         # Analyze session metadata
         first_msg = logs[0]
         last_msg = logs[-1]
-        time_spent = (last_msg.created_at - first_msg.created_at).total_seconds()
+        time_spent_msg = (last_msg.created_at - first_msg.created_at).total_seconds()
+        elapsed_since_start = (datetime.now(timezone.utc) - first_msg.created_at).total_seconds()
+        time_spent = max(time_spent_msg, elapsed_since_start)
         
         # Determine customer information
         customer_id = None
@@ -156,7 +163,7 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
         
         # Assess rule conditions
         started_booking = any(
-            any(w in log.message.lower() for w in ["book", "appointment", "schedule", "reserve"])
+            any(w in log.message.lower() for w in ["book", "appointment", "schedule", "reserve", "slot", "tomorrow", "pm", "am", "haircut", "makeup", "facial", "massage", "spa", "trim", "stylist", "priya", "alex", "marcus", "isabella"])
             for log in logs if log.sender.lower() == "user"
         )
         asked_price = any(
@@ -166,7 +173,7 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
         
         if started_booking and not appt_completed:
             rule_1_match = True
-        if time_spent > 60 and not appt_completed:
+        if time_spent > 10 and not appt_completed:
             rule_2_match = True
         if asked_price and not appt_completed:
             rule_3_match = True
@@ -190,6 +197,52 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
             branch = db.query(Branch).filter(Branch.is_active == True).first()
             branch_id = branch.id if branch else None
             
+            # Resolve assigned staff dynamically based on chat logs or inferred service
+            assigned_staff_id = None
+            
+            # 1. Check if name mentioned in chat logs
+            for log in logs:
+                msg = log.message.lower()
+                if "priya" in msg:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Priya")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                        break
+                elif "alex" in msg:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Alexandra")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                        break
+                elif "marcus" in msg:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Marcus")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                        break
+                elif "isabella" in msg:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Isabella")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                        break
+            
+            # 2. Specialization fallback if no name mentioned
+            if not assigned_staff_id:
+                if inferred_service in ["Signature Precision Haircut", "Hair Spa", "Beard Trim"]:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Priya")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                elif inferred_service in ["Balayage & Creative Color", "Bridal Makeup"]:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Alexandra")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                elif inferred_service in ["Hydrating Deep-Cleansing Facial", "Revitalizing Facial"]:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Marcus")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+                elif inferred_service in ["Himalayan Hot Stone Massage", "Hot Stone Massage"]:
+                    staff = db.query(Staff).filter(Staff.first_name.ilike("Isabella")).first()
+                    if staff:
+                        assigned_staff_id = staff.id
+
             # Calculate Lead Score
             lead_score = calculate_lead_score(logs, is_returning, time_spent)
             
@@ -199,7 +252,7 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
                 f"Time spent in chat: {time_spent:.1f}s",
                 "Triggered Rules: " + ", ".join(
                     [r for r, m in [("Rule 1 (Booking Abandoned)", rule_1_match), 
-                                    ("Rule 2 (Spent >60s)", rule_2_match), 
+                                    ("Rule 2 (Spent >10s)", rule_2_match), 
                                     ("Rule 3 (Price Inquired)", rule_3_match)] if m]
                 )
             ]
@@ -213,6 +266,7 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
                 preferred_date=(datetime.now() + timedelta(days=1)).date(),
                 preferred_time=datetime.now().time(),
                 branch_id=branch_id,
+                assigned_staff=assigned_staff_id,
                 source="AI Receptionist Chat",
                 status=LeadStatus.NEW,
                 lead_score=lead_score,
@@ -221,7 +275,7 @@ def detect_abandoned_bookings(db: Session) -> List[Lead]:
             )
             db.add(lead)
             new_leads_created.append(lead)
-            logger.info(f"⚡ [LeadDetectionEngine] Lead created for {customer_name} (Score: {lead_score})")
+            logger.info(f"⚡ [LeadDetectionEngine] Lead created for {customer_name} (Score: {lead_score}, Assigned Staff ID: {assigned_staff_id})")
             
     if new_leads_created:
         db.commit()

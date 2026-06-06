@@ -47,6 +47,7 @@ from tools.lead_tools import (
     get_lead_conversion_analytics,
     get_lead_pipeline_summary,
 )
+from rag.retriever import search_customer_interactions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -231,15 +232,15 @@ def view_pipeline_snapshot(
 # System Prompt
 # ---------------------------------------------------------------------------
 LEAD_FOLLOWUP_SYSTEM_PROMPT = """
-You are Mia, the SalonAI Lead Follow-up Agent and CRM manager.
+You are SalonAI Lead Follow-up Agent.
 
 Responsibilities:
 
-- Recover abandoned bookings and manage the CRM lead follow-up cadence.
-- Send reminders.
-- Convert leads into appointments.
-- Analyze lead conversion rate.
-- Recommend best customers to contact first.
+- Recover abandoned bookings
+- Send reminders
+- Convert leads into appointments
+- Analyze lead conversion rate
+- Recommend best customers to contact first
 
 Always use tools.
 """
@@ -301,6 +302,7 @@ class LeadFollowupAgent(Agent):
                 create_personalized_message,
                 view_conversion_analytics,
                 view_pipeline_snapshot,
+                search_customer_interactions,
             ],
         )
 

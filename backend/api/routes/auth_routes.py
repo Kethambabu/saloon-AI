@@ -17,7 +17,7 @@ from core.security import (
     create_refresh_token,
     decode_token
 )
-from api.deps import get_current_user
+from api.deps import get_current_user, RoleChecker
 import jwt
 
 logger = logging.getLogger(__name__)
@@ -94,11 +94,19 @@ def login(
         )
     
     # Verify password matches for at least one user record
+    has_matching_credential = False
     valid_users = []
     for user in users:
         if verify_password(payload.password, user.hashed_password):
+            has_matching_credential = True
             if user.is_active:
                 valid_users.append(user)
+    
+    if has_matching_credential and not valid_users:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been suspended. Please contact the administrator."
+        )
     
     if not valid_users:
         raise HTTPException(
@@ -522,3 +530,71 @@ def me(current_user: User = Depends(get_current_user)):
         staff_id=str(current_user.staff_id) if current_user.staff_id else None,
         customer_id=str(current_user.customer_id) if current_user.customer_id else None
     )
+
+
+@router.get(
+    "/users",
+    summary="Get all users (Admin Only)",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.OWNER]))]
+)
+def get_users(db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    result = []
+    for u in users:
+        frontend_role = "User"
+        if u.role in [UserRole.ADMIN, UserRole.OWNER]:
+            frontend_role = "Admin"
+        elif u.role in [UserRole.STAFF, UserRole.MANAGER]:
+            frontend_role = "Staff"
+            
+        result.append({
+            "id": str(u.id),
+            "email": u.email,
+            "role": frontend_role,
+            "is_active": u.is_active,
+            "staff_id": str(u.staff_id) if u.staff_id else None,
+            "customer_id": str(u.customer_id) if u.customer_id else None
+        })
+    return result
+
+
+@router.post(
+    "/users/{user_id}/toggle",
+    summary="Toggle user active status (Admin Only)",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.OWNER]))]
+)
+def toggle_user_active(user_id: str, db: Session = Depends(get_db)):
+    import uuid
+    try:
+        u_id = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+        
+    user = db.query(User).filter(User.id == u_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Toggle active status
+    user.is_active = not user.is_active
+    
+    # If suspended, invalidate refresh token to log them out immediately
+    if not user.is_active:
+        user.refresh_token = None
+        
+        # Also toggle is_active in corresponding staff/customer record if applicable
+        if user.staff:
+            user.staff.is_active = False
+        if user.customer:
+            user.customer.is_active = False
+    else:
+        if user.staff:
+            user.staff.is_active = True
+        if user.customer:
+            user.customer.is_active = True
+            
+    db.commit()
+    return {
+        "success": True, 
+        "is_active": user.is_active,
+        "message": f"User status successfully updated to {'active' if user.is_active else 'suspended'}."
+    }

@@ -58,6 +58,15 @@ def _parse_uuid(value: Any, name: str = "id") -> uuid.UUID:
 # ---------------------------------------------------------------------------
 # 1. Abandoned Booking Detection
 # ---------------------------------------------------------------------------
+def detect_abandoned_booking(
+    branch_id: Optional[Any] = None,
+    lookback_days: int = 30,
+    db: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """Singular alias for detect_abandoned_bookings to match blueprint conventions."""
+    return detect_abandoned_bookings(branch_id=branch_id, lookback_days=lookback_days, db=db)
+
+
 def detect_abandoned_bookings(
     branch_id: Optional[Any] = None,
     lookback_days: int = 30,

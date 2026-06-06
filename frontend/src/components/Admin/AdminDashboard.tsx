@@ -91,11 +91,22 @@ export const AdminDashboard: React.FC = () => {
   const [activeSettingsTab, setActiveSettingsTab] = useState<'users' | 'services'>('users');
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [editPrice, setEditPrice] = useState<number>(0);
+  
+  // Add Service Form State
+  const [newServiceName, setNewServiceName] = useState('');
+  const [newServiceDescription, setNewServiceDescription] = useState('');
+  const [newServicePrice, setNewServicePrice] = useState<number>(0);
+  const [newServiceDuration, setNewServiceDuration] = useState<number>(30);
+  const [isAddingService, setIsAddingService] = useState(false);
 
   // Operational Data States
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
+  const [leadSearch, setLeadSearch] = useState<string>('');
+  const [leadStatusFilter, setLeadStatusFilter] = useState<string>('ALL');
+  const [leadSortBy, setLeadSortBy] = useState<string>('score-desc');
+  const [topRecoverableLeads, setTopRecoverableLeads] = useState<any[]>([]);
   const [reviews, setReviews] = useState<ReviewRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -182,12 +193,7 @@ export const AdminDashboard: React.FC = () => {
 
   const [isBIDataLoading, setIsBIDataLoading] = useState<boolean>(false);
 
-  const [services, setServices] = useState([
-    { id: '1', name: 'Signature Precision Haircut', price: 85, duration: 60 },
-    { id: '2', name: 'Balayage & Creative Color', price: 220, duration: 150 },
-    { id: '3', name: 'Hydrating Deep Facial', price: 120, duration: 75 },
-    { id: '4', name: 'Himalayan Hot Stone Massage', price: 150, duration: 90 }
-  ]);
+  const [services, setServices] = useState<any[]>([]);
 
   // --- Fetch BI Data from Backend Analytics ---
   const fetchBIData = async () => {
@@ -198,7 +204,7 @@ export const AdminDashboard: React.FC = () => {
         revRes,
         custRes,
         staffRes,
-        leadRes,
+        leadAnalyticsRes,
         reviewRes,
         upsellRes,
         insightsRes,
@@ -208,7 +214,7 @@ export const AdminDashboard: React.FC = () => {
         apiClient.get('/analytics/revenue-summary').catch(() => ({ data: { success: false, revenue: null } })),
         apiClient.get('/analytics/customer-summary').catch(() => ({ data: { success: false, customers: null } })),
         apiClient.get('/analytics/staff-summary').catch(() => ({ data: { success: false, staff: null } })),
-        apiClient.get('/analytics/lead-summary').catch(() => ({ data: { success: false, leads: null } })),
+        apiClient.get('/leads/analytics').catch(() => ({ data: null })),
         apiClient.get('/analytics/review-summary').catch(() => ({ data: { success: false, reviews: null } })),
         apiClient.get('/analytics/upsell-summary').catch(() => ({ data: { success: false, upsells: null } })),
         apiClient.get('/analytics/ai-insights').catch(() => ({ data: { success: false, insights: [] } })),
@@ -219,7 +225,18 @@ export const AdminDashboard: React.FC = () => {
       if (revRes.data?.success && revRes.data?.revenue) setRevenueSummary(revRes.data.revenue);
       if (custRes.data?.success && custRes.data?.customers) setCustomerSummary(custRes.data.customers);
       if (staffRes.data?.success && staffRes.data?.staff) setStaffSummary(staffRes.data.staff);
-      if (leadRes.data?.success && leadRes.data?.leads) setLeadSummary(leadRes.data.leads);
+      
+      if (leadAnalyticsRes.data) {
+        const la = leadAnalyticsRes.data;
+        setLeadSummary({
+          new_leads: la.new_leads || 0,
+          converted_leads: la.converted_leads || 0,
+          lost_leads: la.lost_leads || 0,
+          pending_leads: (la.contacted_leads || 0) + (la.interested_leads || 0),
+          conversion_rate: la.conversion_rate || 0.0
+        });
+        setTopRecoverableLeads(la.top_recoverable_leads || []);
+      }
       if (reviewRes.data?.success && reviewRes.data?.reviews) setReviewSummary(reviewRes.data.reviews);
       if (upsellRes.data?.success && upsellRes.data?.upsells) setUpsellSummary(upsellRes.data.upsells);
       if (insightsRes.data?.success && insightsRes.data?.insights?.length) setAiInsights(insightsRes.data.insights);
@@ -236,11 +253,12 @@ export const AdminDashboard: React.FC = () => {
     const fetchAllData = async () => {
       try {
         setIsLoading(true);
-        const [usersRes, apptsRes, leadsRes, reviewsRes] = await Promise.all([
+        const [usersRes, apptsRes, leadsRes, reviewsRes, servicesRes] = await Promise.all([
           apiClient.get<UserRecord[]>('/auth/users').catch(() => ({ data: [] })),
           apiClient.get<AppointmentRecord[]>('/appointments/my').catch(() => ({ data: [] })),
           apiClient.get<any[]>('/leads').catch(() => ({ data: [] })),
-          apiClient.get<any>('/reviews').catch(() => ({ data: { success: false, reviews: [] } }))
+          apiClient.get<any>('/reviews').catch(() => ({ data: { success: false, reviews: [] } })),
+          apiClient.get<any[]>('/services?active_only=false').catch(() => ({ data: [] }))
         ]);
 
         setUsers(usersRes.data || []);
@@ -248,6 +266,10 @@ export const AdminDashboard: React.FC = () => {
         setLeads(leadsRes.data || []);
         const reviewArray = reviewsRes.data?.reviews || reviewsRes.data || [];
         setReviews(reviewArray);
+        setServices((servicesRes.data || []).map((s: any) => ({
+          ...s,
+          duration: s.duration_minutes || s.duration
+        })));
 
         await fetchBIData();
       } catch (err) {
@@ -259,8 +281,15 @@ export const AdminDashboard: React.FC = () => {
     fetchAllData();
   }, []);
 
-  const handleToggleActive = (userId: string) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: !u.is_active } : u));
+  const handleToggleActive = async (userId: string) => {
+    try {
+      const res = await apiClient.post(`/auth/users/${userId}/toggle`);
+      if (res.data && res.data.success) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_active: res.data.is_active } : u));
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to update user status.');
+    }
   };
 
   const handleCancelAppointment = (id: string) => {
@@ -307,11 +336,47 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleSavePrice = async (id: string) => {
+    try {
+      await apiClient.put(`/services/${id}`, { price: editPrice });
+      setServices(prev => prev.map(s => s.id === id ? { ...s, price: editPrice } : s));
+      setEditingServiceId(null);
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to update service price.');
+    }
+  };
 
-
-  const handleSavePrice = (id: string) => {
-    setServices(prev => prev.map(s => s.id === id ? { ...s, price: editPrice } : s));
-    setEditingServiceId(null);
+  const handleAddService = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newServiceName.trim() || newServicePrice <= 0 || newServiceDuration <= 0) {
+      window.alert('Please fill out all required fields with valid values.');
+      return;
+    }
+    try {
+      setIsAddingService(true);
+      const res = await apiClient.post('/services', {
+        name: newServiceName,
+        description: newServiceDescription || undefined,
+        price: newServicePrice,
+        duration_minutes: newServiceDuration
+      });
+      if (res.data) {
+        const addedService = {
+          ...res.data,
+          duration: res.data.duration_minutes
+        };
+        setServices(prev => [...prev, addedService]);
+        setNewServiceName('');
+        setNewServiceDescription('');
+        setNewServicePrice(0);
+        setNewServiceDuration(30);
+        window.alert('New service added successfully!');
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to add new service.');
+    } finally {
+      setIsAddingService(false);
+    }
   };
 
   return (
@@ -709,30 +774,38 @@ export const AdminDashboard: React.FC = () => {
             {/* ── 5. Lead Intelligence Subpage ── */}
             {activeTab === 'lead-intelligence' && (
               <div className="space-y-6">
-                <div className="border-b border-slate-850 pb-3">
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CRM Pipeline</span>
-                  <h2 className="text-xl font-black mt-0.5">🎯 Lead Intelligence</h2>
-                  <p className="text-xs text-slate-500">Autonomous campaign conversions and pipeline indicators.</p>
+                <div className="border-b border-slate-850 pb-3 flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">CRM Pipeline</span>
+                    <h2 className="text-xl font-black mt-0.5">🎯 Lead Intelligence</h2>
+                    <p className="text-xs text-slate-500">Autonomous campaign conversions and pipeline indicators.</p>
+                  </div>
+                  <button 
+                    onClick={fetchBIData}
+                    className="px-3.5 py-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-450 hover:bg-slate-850 transition-all cursor-pointer"
+                  >
+                    🔄 Refresh Leads
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <div className="bg-slate-900/50 border border-slate-850 p-4.5 rounded-2xl text-center">
+                  <div className="bg-slate-900/50 border border-slate-855 p-4.5 rounded-2xl text-center">
                     <span className="block text-[8px] font-black text-slate-500 uppercase">New Leads</span>
                     <span className="text-xl font-black text-blue-400 block mt-1">{leadSummary?.new_leads}</span>
                   </div>
-                  <div className="bg-slate-900/50 border border-slate-850 p-4.5 rounded-2xl text-center">
+                  <div className="bg-slate-900/50 border border-slate-855 p-4.5 rounded-2xl text-center">
                     <span className="block text-[8px] font-black text-slate-500 uppercase">Contacted</span>
                     <span className="text-xl font-black text-purple-400 block mt-1">{leadSummary?.pending_leads}</span>
                   </div>
-                  <div className="bg-slate-900/50 border border-slate-850 p-4.5 rounded-2xl text-center">
+                  <div className="bg-slate-900/50 border border-slate-855 p-4.5 rounded-2xl text-center">
                     <span className="block text-[8px] font-black text-slate-500 uppercase">Converted</span>
                     <span className="text-xl font-black text-emerald-450 block mt-1">{leadSummary?.converted_leads}</span>
                   </div>
-                  <div className="bg-slate-900/50 border border-slate-850 p-4.5 rounded-2xl text-center">
+                  <div className="bg-slate-900/50 border border-slate-855 p-4.5 rounded-2xl text-center">
                     <span className="block text-[8px] font-black text-slate-500 uppercase">Lost Pipeline</span>
                     <span className="text-xl font-black text-red-450 block mt-1">{leadSummary?.lost_leads}</span>
                   </div>
-                  <div className="bg-slate-900/50 border border-slate-850 p-4.5 rounded-2xl text-center col-span-2 md:col-span-1">
+                  <div className="bg-slate-900/50 border border-slate-855 p-4.5 rounded-2xl text-center col-span-2 md:col-span-1">
                     <span className="block text-[8px] font-black text-slate-500 uppercase">Conversion Rate</span>
                     <span className="text-xl font-black text-indigo-400 block mt-1">{leadSummary?.conversion_rate}%</span>
                   </div>
@@ -747,9 +820,110 @@ export const AdminDashboard: React.FC = () => {
                   </p>
                 </section>
 
+                {/* Search, Filter, Sort Controls */}
+                <div className="bg-slate-900/40 border border-slate-850 rounded-3xl p-5 flex flex-col md:flex-row gap-4 items-center justify-between">
+                  <div className="w-full md:w-1/3 relative">
+                    <input 
+                      type="text" 
+                      placeholder="Search leads name, email, phone, service..." 
+                      value={leadSearch}
+                      onChange={e => setLeadSearch(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none placeholder-slate-500"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-3 w-full md:w-auto justify-end">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] font-black text-slate-500 uppercase">Status:</span>
+                      <select
+                        value={leadStatusFilter}
+                        onChange={e => setLeadStatusFilter(e.target.value)}
+                        className="px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none cursor-pointer"
+                      >
+                        <option value="ALL">All Statuses</option>
+                        <option value="NEW">New</option>
+                        <option value="CONTACTED">Contacted</option>
+                        <option value="INTERESTED">Interested</option>
+                        <option value="CONVERTED">Converted</option>
+                        <option value="LOST">Lost</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] font-black text-slate-500 uppercase">Sort By:</span>
+                      <select
+                        value={leadSortBy}
+                        onChange={e => setLeadSortBy(e.target.value)}
+                        className="px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none cursor-pointer"
+                      >
+                        <option value="score-desc">Highest Score First</option>
+                        <option value="score-asc">Lowest Score First</option>
+                        <option value="date-desc">Newest First</option>
+                        <option value="date-asc">Oldest First</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ─── Top Recoverable Leads (Prioritized Scoring Grid) ─── */}
+                {topRecoverableLeads.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>🔥 High Priority Recoverable Leads</span>
+                      <span className="px-1.5 py-0.5 rounded-full text-[8px] bg-red-500/10 text-red-400 font-black animate-pulse">Top Scoring</span>
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {topRecoverableLeads.slice(0, 3).map((lead) => (
+                        <div key={lead.id} className="bg-gradient-to-tr from-slate-900/60 to-amber-955/10 border border-slate-850 hover:border-amber-500/30 p-5 rounded-2xl shadow-lg relative overflow-hidden flex flex-col justify-between transition-all group">
+                          <div className="absolute top-0 right-0 px-3 py-1 bg-amber-500/10 border-l border-b border-amber-500/20 text-amber-400 text-[10px] font-black rounded-bl-xl uppercase tracking-wider">
+                            Score: {lead.lead_score}
+                          </div>
+                          <div className="space-y-3">
+                            <span className="text-[9px] font-black text-slate-550 uppercase tracking-widest block">{lead.source || 'AI Receptionist'}</span>
+                            <div>
+                              <h4 className="text-sm font-extrabold text-white">{lead.customer_name}</h4>
+                              <p className="text-[11px] text-slate-400 font-semibold">{lead.customer_email || lead.email}</p>
+                              {lead.customer_phone && <p className="text-[10px] text-slate-500 font-bold mt-0.5">{lead.customer_phone}</p>}
+                            </div>
+                            <div className="bg-slate-950/45 border border-slate-855 p-3 rounded-xl space-y-1">
+                              <span className="block text-[8px] font-bold text-slate-500 uppercase">Target Treatment</span>
+                              <span className="text-xs font-extrabold text-white block truncate">{lead.service_name || 'General Inquiry'}</span>
+                            </div>
+                          </div>
+                          <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${
+                              lead.status === 'NEW' 
+                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
+                                : lead.status === 'CONTACTED' 
+                                  ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' 
+                                  : lead.status === 'INTERESTED'
+                                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            }`}>{lead.status}</span>
+                            <span className="text-slate-500 font-bold">Captured {lead.created_at ? new Date(lead.created_at).toLocaleDateString() : 'Today'}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Lead Catalog Table */}
                 <section className="bg-slate-900/40 border border-slate-855 rounded-3xl p-6 shadow-xl space-y-4">
-                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Active Nurtured Leads</h3>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                    All CRM Leads Table ({
+                      leads.filter(l => {
+                        const q = leadSearch.toLowerCase();
+                        const matchesSearch = !leadSearch.trim() || 
+                          (l.customer_name && l.customer_name.toLowerCase().includes(q)) ||
+                          (l.customer_email && l.customer_email.toLowerCase().includes(q)) ||
+                          (l.customer_phone && l.customer_phone.toLowerCase().includes(q)) ||
+                          (l.service_name && l.service_name.toLowerCase().includes(q)) ||
+                          (l.source && l.source.toLowerCase().includes(q));
+                        const matchesStatus = leadStatusFilter === 'ALL' || l.status === leadStatusFilter;
+                        return matchesSearch && matchesStatus;
+                      }).length
+                    })
+                  </h3>
                   <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-slate-850 text-xs font-semibold">
                       <thead>
@@ -757,27 +931,73 @@ export const AdminDashboard: React.FC = () => {
                           <th className="px-4 py-3 text-left">Customer Name</th>
                           <th className="px-4 py-3 text-left">Service Name</th>
                           <th className="px-4 py-3 text-center">Status</th>
-                          <th className="px-4 py-3 text-right">Lead Score</th>
+                          <th className="px-4 py-3 text-center">Source</th>
+                          <th className="px-4 py-3 text-center">Follow-ups</th>
+                          <th className="px-4 py-3 text-center">Score</th>
+                          <th className="px-4 py-3 text-right">Captured Date</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-855 text-slate-300">
-                        {leads.map((lead) => (
-                          <tr key={lead.id} className="hover:bg-slate-850/20 transition-colors">
-                            <td className="px-4 py-3.5 whitespace-nowrap text-white font-bold">
-                              {lead.customer_name}
-                              <span className="block text-[10px] text-slate-500 font-semibold">{lead.customer_email || lead.email}</span>
-                            </td>
-                            <td className="px-4 py-3.5 whitespace-nowrap text-slate-400">{lead.service_name || 'General Inquiry'}</td>
-                            <td className="px-4 py-3.5 whitespace-nowrap text-center">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[8px] font-black uppercase ${
-                                lead.status === 'NEW' ? 'bg-blue-500/10 text-blue-400' : 'bg-emerald-500/10 text-emerald-450'
-                              }`}>
-                                {lead.status}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3.5 whitespace-nowrap text-right text-red-400 font-bold">{lead.lead_score || 80} pts</td>
-                          </tr>
-                        ))}
+                      <tbody className="divide-y divide-slate-855 text-slate-350">
+                        {(() => {
+                          const q = leadSearch.toLowerCase();
+                          const list = leads.filter(l => {
+                            const matchesSearch = !leadSearch.trim() || 
+                              (l.customer_name && l.customer_name.toLowerCase().includes(q)) ||
+                              (l.customer_email && l.customer_email.toLowerCase().includes(q)) ||
+                              (l.customer_phone && l.customer_phone.toLowerCase().includes(q)) ||
+                              (l.service_name && l.service_name.toLowerCase().includes(q)) ||
+                              (l.source && l.source.toLowerCase().includes(q));
+                            const matchesStatus = leadStatusFilter === 'ALL' || l.status === leadStatusFilter;
+                            return matchesSearch && matchesStatus;
+                          });
+
+                          list.sort((a, b) => {
+                            if (leadSortBy === 'score-desc') return (b.lead_score || 0) - (a.lead_score || 0);
+                            if (leadSortBy === 'score-asc') return (a.lead_score || 0) - (b.lead_score || 0);
+                            if (leadSortBy === 'date-desc') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+                            if (leadSortBy === 'date-asc') return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+                            return 0;
+                          });
+
+                          if (list.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={7} className="px-4 py-8 text-center text-slate-500 font-bold">
+                                  No leads match the current filters.
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return list.map((lead) => (
+                            <tr key={lead.id} className="hover:bg-slate-850/20 transition-colors">
+                              <td className="px-4 py-3.5 whitespace-nowrap text-white font-bold">
+                                {lead.customer_name}
+                                <span className="block text-[10px] text-slate-500 font-semibold">{lead.customer_email || lead.email}</span>
+                              </td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-slate-450">{lead.service_name || 'General Inquiry'}</td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-center">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[8px] font-black uppercase ${
+                                  lead.status === 'NEW' 
+                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
+                                    : lead.status === 'CONTACTED' 
+                                      ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' 
+                                      : lead.status === 'INTERESTED' 
+                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+                                        : lead.status === 'CONVERTED' 
+                                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                          : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {lead.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-center text-slate-450">{lead.source || 'AI Chat'}</td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-center text-slate-350">{lead.followup_count} reminder(s)</td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-center text-red-400 font-bold">{lead.lead_score || 0} pts</td>
+                              <td className="px-4 py-3.5 whitespace-nowrap text-right text-slate-450">{lead.created_at ? new Date(lead.created_at).toLocaleDateString() : 'Unknown'}</td>
+                            </tr>
+                          ));
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -1152,8 +1372,69 @@ export const AdminDashboard: React.FC = () => {
                 )}
 
                 {activeSettingsTab === 'services' && (
-                  <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                  <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
                     <h3 className="text-sm font-extrabold text-white">High-Value Catalog Editor</h3>
+
+                    {/* Add New Service Form */}
+                    <form onSubmit={handleAddService} className="bg-slate-950/40 border border-slate-800 p-5 rounded-2xl space-y-4 text-left">
+                      <h4 className="text-xs font-black text-indigo-400 uppercase tracking-widest">Add New Catalog Service</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-550 uppercase tracking-wider mb-1">Service Name *</label>
+                          <input
+                            type="text"
+                            value={newServiceName}
+                            onChange={e => setNewServiceName(e.target.value)}
+                            placeholder="e.g. Luxury Keratin Treatment"
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-550 uppercase tracking-wider mb-1">Price (₹) *</label>
+                          <input
+                            type="number"
+                            value={newServicePrice || ''}
+                            onChange={e => setNewServicePrice(Number(e.target.value))}
+                            placeholder="Price"
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                            min="1"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-550 uppercase tracking-wider mb-1">Duration (minutes) *</label>
+                          <input
+                            type="number"
+                            value={newServiceDuration || ''}
+                            onChange={e => setNewServiceDuration(Number(e.target.value))}
+                            placeholder="Duration"
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                            min="1"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-555 uppercase tracking-wider mb-1">Description</label>
+                        <textarea
+                          value={newServiceDescription}
+                          onChange={e => setNewServiceDescription(e.target.value)}
+                          placeholder="Brief description of the service..."
+                          rows={2}
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={isAddingService}
+                          className="px-4 py-2 bg-blue-650/15 border border-blue-500/25 hover:bg-blue-650/25 text-blue-400 font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isAddingService ? 'Adding Service...' : '➕ Add Service to Catalog'}
+                        </button>
+                      </div>
+                    </form>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {services.map(s => (
@@ -1180,7 +1461,7 @@ export const AdminDashboard: React.FC = () => {
                               </div>
                             ) : (
                               <div className="flex items-center gap-3">
-                                <span className="text-xs font-black text-blue-400">${s.price}</span>
+                                <span className="text-xs font-black text-blue-400">₹{s.price}</span>
                                 <button
                                   onClick={() => {
                                     setEditingServiceId(s.id);

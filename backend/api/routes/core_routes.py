@@ -102,6 +102,18 @@ class CustomerResponse(BaseModel):
         return f"{self.first_name} {self.last_name}"
 
 
+class ServiceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    price: float = Field(..., gt=0.0)
+    duration_minutes: int = Field(..., gt=0)
+    is_active: Optional[bool] = True
+
+
+class ServiceUpdatePrice(BaseModel):
+    price: float = Field(..., gt=0.0)
+
+
 # ============================================================================
 # PUBLIC ENDPOINTS - No authentication required
 # ============================================================================
@@ -151,6 +163,95 @@ async def get_all_services(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
+
+
+@router.post(
+    "/services",
+    response_model=ServiceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new service (Admin Only)",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.OWNER]))]
+)
+async def create_service(
+    payload: ServiceCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new salon service catalog item.
+    Restricted to Admin / Owner users.
+    """
+    try:
+        existing = db.query(Service).filter(Service.name.ilike(payload.name)).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Service with this name already exists")
+            
+        new_service = Service(
+            name=payload.name,
+            description=payload.description,
+            price=payload.price,
+            duration_minutes=payload.duration_minutes,
+            is_active=payload.is_active if payload.is_active is not None else True
+        )
+        db.add(new_service)
+        db.commit()
+        db.refresh(new_service)
+        return ServiceResponse(
+            id=str(new_service.id),
+            name=new_service.name,
+            description=new_service.description,
+            price=float(new_service.price),
+            duration_minutes=new_service.duration_minutes,
+            is_active=new_service.is_active
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating service: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put(
+    "/services/{service_id}",
+    response_model=ServiceResponse,
+    summary="Update service price (Admin Only)",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.OWNER]))]
+)
+async def update_service_price(
+    service_id: str,
+    payload: ServiceUpdatePrice,
+    db: Session = Depends(get_db)
+):
+    """
+    Update an existing service's price.
+    Restricted to Admin / Owner users.
+    """
+    import uuid
+    try:
+        s_id = uuid.UUID(service_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid service ID format")
+        
+    service = db.query(Service).filter(Service.id == s_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+        
+    try:
+        service.price = payload.price
+        db.commit()
+        db.refresh(service)
+        return ServiceResponse(
+            id=str(service.id),
+            name=service.name,
+            description=service.description,
+            price=float(service.price),
+            duration_minutes=service.duration_minutes,
+            is_active=service.is_active
+        )
+    except Exception as e:
+        logger.error(f"Error updating service: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get(

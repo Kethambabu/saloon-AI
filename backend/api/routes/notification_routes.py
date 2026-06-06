@@ -45,7 +45,10 @@ def get_user_notifications(
     
     notifications = (
         db.query(Notification)
-        .filter(Notification.user_id == current_user.id)
+        .filter(
+            Notification.user_id == current_user.id,
+            Notification.is_cleared == False
+        )
         .order_by(Notification.created_at.desc())
         .all()
     )
@@ -95,23 +98,27 @@ def mark_notification_as_read(
         )
         
     notification.is_read = True
+    notification.is_cleared = True
     db.commit()
-    return {"success": True, "message": "Notification marked as read"}
+    return {"success": True, "message": "Notification marked as read and cleared"}
 
 
 @router.post(
     "/read-all",
     summary="Clear All Notifications",
-    description="Deletes all notifications for the currently logged-in user from the database."
+    description="Marks all notifications for the currently logged-in user as cleared and read."
 )
 def clear_all_notifications(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete all notifications for current user."""
+    """Mark all notifications for current user as cleared and read."""
     db.query(Notification).filter(
         Notification.user_id == current_user.id
-    ).delete(synchronize_session=False)
+    ).update(
+        {Notification.is_cleared: True, Notification.is_read: True},
+        synchronize_session=False
+    )
     
     db.commit()
-    return {"success": True, "message": "All notifications cleared and deleted successfully"}
+    return {"success": True, "message": "All notifications cleared successfully"}

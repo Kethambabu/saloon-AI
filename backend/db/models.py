@@ -652,6 +652,7 @@ class Notification(BaseModel):
     title = Column(String(150), nullable=False)
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False, nullable=False)
+    is_cleared = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     user = relationship("User", backref="notifications")

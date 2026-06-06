@@ -149,3 +149,117 @@ def test_create_followup_reminder_links_and_notifies(db_session):
     notifications = db_session.query(Notification).filter(Notification.user_id == user.id).all()
     assert len(notifications) == 1
     assert notifications[0].title == "Unfinished Booking Reminder"
+
+
+def test_notification_clearing_behavior(db_session):
+    # 1. Create a customer and user
+    customer = Customer(
+        first_name="Jane",
+        last_name="Doe",
+        email="jane@example.com",
+        phone="+1-555-4321"
+    )
+    db_session.add(customer)
+    db_session.commit()
+
+    user = User(
+        email="jane@example.com",
+        hashed_password="hashedpassword",
+        role=UserRole.CUSTOMER,
+        customer_id=customer.id,
+        is_active=True
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    # 2. Add a notification
+    notif = Notification(
+        user_id=user.id,
+        title="Test Notification Title",
+        message="This is a test notification",
+        is_read=False,
+        is_cleared=False
+    )
+    db_session.add(notif)
+    db_session.commit()
+
+    # 3. Retrieve notifications via get_user_notifications -> should return it
+    from api.routes.notification_routes import get_user_notifications, clear_all_notifications
+    res_list = get_user_notifications(current_user=user, db=db_session)
+    assert len(res_list) == 1
+    assert res_list[0].title == "Test Notification Title"
+
+    # 4. Clear notifications via clear_all_notifications
+    clear_res = clear_all_notifications(current_user=user, db=db_session)
+    assert clear_res["success"] is True
+
+    # 5. Retrieve again -> should return 0 since they are marked as is_cleared=True
+    res_list_after = get_user_notifications(current_user=user, db=db_session)
+    assert len(res_list_after) == 0
+
+    # 6. Verify notification still exists in the database table
+    db_notif = db_session.query(Notification).filter(Notification.user_id == user.id).first()
+    assert db_notif is not None
+    assert db_notif.is_cleared is True
+    assert db_notif.is_read is True
+
+
+def test_lead_dismissal(db_session):
+    # 1. Create customer and user
+    customer = Customer(
+        first_name="Diana",
+        last_name="Prince",
+        email="diana@example.com",
+        phone="+1-555-0007"
+    )
+    db_session.add(customer)
+    db_session.commit()
+
+    user = User(
+        email="diana@example.com",
+        hashed_password="hashedpassword",
+        role=UserRole.CUSTOMER,
+        customer_id=customer.id,
+        is_active=True
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    # 2. Create lead in CONTACTED status
+    lead = Lead(
+        customer_id=customer.id,
+        customer_name="Diana Prince",
+        customer_email="diana@example.com",
+        customer_phone="+1-555-0007",
+        service_name="Precision Haircut",
+        status=LeadStatus.CONTACTED,
+        lead_score=60
+    )
+    db_session.add(lead)
+
+    # 3. Create active notification for this lead follow-up
+    notif = Notification(
+        user_id=user.id,
+        title="Unfinished Booking Reminder",
+        message="You have an unfinished booking for Precision Haircut. Click 'Continue' to complete.",
+        is_read=False,
+        is_cleared=False
+    )
+    db_session.add(notif)
+    db_session.commit()
+
+    # 4. Trigger dismissal route logic
+    from routes.lead_routes import dismiss_active_lead
+    res = dismiss_active_lead(current_user=user, db=db_session)
+    assert res["success"] is True
+
+    # 5. Check lead status is now LOST
+    db_session.refresh(lead)
+    assert lead.status == LeadStatus.LOST
+
+    # 6. Check notification is now read and cleared
+    db_session.refresh(notif)
+    assert notif.is_read is True
+    assert notif.is_cleared is True
+
+

@@ -17,7 +17,7 @@ from autogen_agentchat.agents import AssistantAgent
 
 
 def test_lead_followup_agent_initialization():
-    """Verifies that Mia the AI Lead Follow-Up Agent initializes with correct prompts and tools."""
+    """Verifies that the AI Lead Follow-Up Agent initializes with correct prompts and tools."""
     # Initialize the agent
     agent = LeadFollowupAgent(name="Mia")
 
@@ -29,14 +29,14 @@ def test_lead_followup_agent_initialization():
 
     # 2. Verify system message contains core CRM prompt guidelines
     sys_msg = agent.assistant._system_messages[0].content
-    assert "Mia" in sys_msg
-    assert "lead" in sys_msg.lower()
-    assert "crm" in sys_msg.lower()
-    assert "cadence" in sys_msg.lower()
+    assert "SalonAI Lead Follow-up Agent" in sys_msg
+    assert "Recover abandoned bookings" in sys_msg
+    assert "Send reminders" in sys_msg
+    assert "Convert leads into appointments" in sys_msg
 
-    # 3. Verify that the 8 custom CRM tools wrapper functions are bound to the agent
+    # 3. Verify that the 9 custom CRM tools wrapper functions are bound to the agent
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 8
+    assert len(bound_tools) == 9
 
     tool_names = [tool.name for tool in bound_tools]
     assert "find_abandoned_bookings" in tool_names
@@ -47,6 +47,7 @@ def test_lead_followup_agent_initialization():
     assert "create_personalized_message" in tool_names
     assert "view_conversion_analytics" in tool_names
     assert "view_pipeline_snapshot" in tool_names
+    assert "search_customer_interactions" in tool_names
 
 
 def test_lead_followup_agent_conversation_memory():

@@ -202,6 +202,7 @@ export const UserDashboard: React.FC = () => {
 
   // Notification center alerts
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [activeLead, setActiveLead] = useState<any>(null);
 
   // Load backend data
   const fetchData = async (silent = false) => {
@@ -215,11 +216,9 @@ export const UserDashboard: React.FC = () => {
       // Load services & branches
       const srvRes = await apiClient.get<ServiceItem[]>('/services');
       setServices(srvRes.data);
-      if (srvRes.data.length > 0) setSelectedService(srvRes.data[0].id);
 
       const branchRes = await apiClient.get<BranchItem[]>('/branches');
       setBranches(branchRes.data);
-      if (branchRes.data.length > 0) setSelectedBranch(branchRes.data[0].id);
 
       // Load client's appointments
       const apptRes = await apiClient.get<AppointmentRecord[]>('/appointments/my');
@@ -230,13 +229,21 @@ export const UserDashboard: React.FC = () => {
       if (notifRes.data && notifRes.data.length > 0) {
         setNotifications(notifRes.data.map((n: any) => ({
           id: n.id,
-          type: n.is_read ? 'info' : 'success',
+          type: n.is_read ? 'info' : 'warning',
           title: n.title,
           message: n.message,
           timestamp: new Date(n.created_at).toLocaleTimeString() + ' ' + new Date(n.created_at).toLocaleDateString()
         })));
       } else {
         setNotifications([]);
+      }
+
+      // Load active lead
+      try {
+        const leadRes = await apiClient.get('/leads/active');
+        setActiveLead(leadRes.data || null);
+      } catch (err) {
+        setActiveLead(null);
       }
     } catch (err) {
       console.warn('Backend offline or not returning customer data');
@@ -474,15 +481,41 @@ export const UserDashboard: React.FC = () => {
 
   // Resume booking from active lead
   const handleResumeBooking = async () => {
+    let currentServices = services;
+    if (services.length === 0) {
+      try {
+        const srvRes = await apiClient.get<ServiceItem[]>('/services');
+        setServices(srvRes.data);
+        currentServices = srvRes.data;
+      } catch (e) {
+        console.warn('Failed to load services on resume booking', e);
+      }
+    }
+    
     try {
       const res = await apiClient.get<any>('/leads/active');
       if (res.data) {
         const lead = res.data;
-        if (lead.branch_id) setSelectedBranch(lead.branch_id);
-        if (lead.service_name) {
-          const matchedService = services.find(s => s.name === lead.service_name);
-          if (matchedService) setSelectedService(matchedService.id);
+        if (lead.branch_id) {
+          setSelectedBranch(lead.branch_id);
+          // Pre-fetch staff immediately to ensure it's loaded in state for step 4/5 stylist name lookup
+          try {
+            const staffRes = await apiClient.get<StaffItem[]>(`/branches/${lead.branch_id}/staff`);
+            setStaff(staffRes.data);
+          } catch (e) {
+            console.warn('Failed to pre-fetch branch staff', e);
+          }
         }
+        
+        let matchedServiceId = '';
+        if (lead.service_name) {
+          const matchedService = currentServices.find(s => s.name === lead.service_name);
+          if (matchedService) {
+            setSelectedService(matchedService.id);
+            matchedServiceId = matchedService.id;
+          }
+        }
+        
         if (lead.assigned_staff) setSelectedStylist(lead.assigned_staff);
         if (lead.preferred_date) setSelectedDate(lead.preferred_date);
         if (lead.preferred_time) {
@@ -492,10 +525,14 @@ export const UserDashboard: React.FC = () => {
         }
         
         // Navigate based on details populated
-        if (lead.branch_id && lead.service_name && lead.preferred_date && lead.preferred_time) {
+        if (lead.branch_id && matchedServiceId && lead.preferred_date && lead.preferred_time) {
           setBookingStep(5);
-        } else if (lead.branch_id && lead.service_name) {
+        } else if (lead.branch_id && matchedServiceId && lead.assigned_staff) {
+          setBookingStep(4);
+        } else if (lead.branch_id && matchedServiceId) {
           setBookingStep(3);
+        } else if (lead.branch_id) {
+          setBookingStep(2);
         } else {
           setBookingStep(1);
         }
@@ -547,6 +584,9 @@ export const UserDashboard: React.FC = () => {
 
       // Reset wizard
       setBookingStep(1);
+      setSelectedBranch('');
+      setSelectedService('');
+      setSelectedStylist('any');
       setSelectedDate('');
       setSelectedTime('');
       setBookingNotes('');
@@ -620,7 +660,7 @@ export const UserDashboard: React.FC = () => {
               { id: 'history', label: 'Booking History', icon: '📜' },
               { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
               { id: 'services', label: 'Services Catalog', icon: '💇' },
-              { id: 'notifications', label: 'Notifications Center', icon: '🔔', badge: notifications.filter(n => n.type === 'success').length },
+              { id: 'notifications', label: 'Notifications Center', icon: '🔔', badge: notifications.filter(n => n.type === 'warning').length },
               { id: 'profile', label: 'Profile Settings', icon: '👤' }
             ].map(tab => (
               <button
@@ -720,6 +760,51 @@ export const UserDashboard: React.FC = () => {
                     onRefresh={refreshLoyalty}
                   />
                 </section>
+
+                {/* ─── LEAD FOLLOW-UP BANNER (shown when staff has contacted the customer or they have a draft) ─── */}
+                {activeLead && (activeLead.status === 'CONTACTED' || activeLead.status === 'NEW') && (
+                  <div className="bg-gradient-to-r from-amber-950/60 to-orange-950/60 border border-amber-500/30 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest animate-pulse">
+                        {activeLead.status === 'CONTACTED' ? '💬 Our Team Reached Out' : '✏️ Unfinished Booking'}
+                      </span>
+                      <h4 className="text-sm font-extrabold text-white">
+                        {activeLead.status === 'CONTACTED'
+                          ? `You have an unfinished booking for ${activeLead.service_name || 'a salon service'}`
+                          : `Resume your booking for ${activeLead.service_name || 'a salon service'}`}
+                      </h4>
+                      <p className="text-xs text-slate-400">
+                        {activeLead.status === 'CONTACTED'
+                          ? 'Pick up where you left off — your preferences are saved.'
+                          : 'You were in the middle of scheduling. Click continue to finish.'}
+                      </p>
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={handleResumeBooking}
+                        className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-black text-xs font-black rounded-xl transition-all cursor-pointer whitespace-nowrap shadow-lg shadow-amber-500/20"
+                      >
+                        ▶ Continue Booking
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await apiClient.post('/leads/active/dismiss');
+                            setActiveLead(null);
+                            fetchData(true);
+                            showToast('Follow-up reminder dismissed.', 'success');
+                          } catch (err) {
+                            console.warn('Failed to dismiss active lead:', err);
+                            showToast('Failed to dismiss reminder.', 'error');
+                          }
+                        }}
+                        className="px-4 py-2.5 border border-slate-700 hover:bg-slate-800 text-slate-350 hover:text-white text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Main Dashboard Interactive Split Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1573,18 +1658,43 @@ export const UserDashboard: React.FC = () => {
                 ) : (
                   <div className="space-y-3 max-w-2xl mx-auto">
                     {notifications.map(n => (
-                      <div key={n.id} className="bg-slate-900/50 border border-slate-800 p-4.5 rounded-2xl flex items-start space-x-4 text-left hover:border-slate-750 transition-colors">
-                        <span className="text-lg mt-0.5">{n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : 'ℹ'}</span>
+                      <div key={n.id} className={`bg-slate-900/50 border p-4.5 rounded-2xl flex items-start space-x-4 text-left hover:border-slate-750 transition-colors ${
+                        n.message.toLowerCase().includes("unfinished booking") 
+                          ? 'border-amber-500/20 bg-gradient-to-r from-slate-900/50 to-amber-950/10' 
+                          : 'border-slate-800'
+                      }`}>
+                        <span className="text-lg mt-0.5 text-slate-400">
+                          {n.message.toLowerCase().includes("unfinished booking") 
+                            ? '💬' 
+                            : n.type === 'success' ? '✓' : n.type === 'warning' ? '⚠' : 'ℹ'}
+                        </span>
                         <div className="flex-1 space-y-1">
                           <div className="flex justify-between items-center">
-                            <h4 className="text-xs font-black text-slate-200">{n.title}</h4>
-                            <span className="text-[10px] text-slate-500 font-medium">{n.timestamp}</span>
+                            <h4 className={`text-xs font-black ${n.message.toLowerCase().includes("unfinished booking") ? 'text-amber-400' : 'text-slate-200'}`}>{n.title}</h4>
+                            <div className="flex items-center space-x-3.5">
+                              <span className="text-[10px] text-slate-500 font-medium">{n.timestamp}</span>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await apiClient.post(`/notifications/${n.id}/read`);
+                                    fetchData(true);
+                                    showToast('Notification cleared.', 'success');
+                                  } catch (err) {
+                                    console.warn('Failed to clear notification:', err);
+                                  }
+                                }}
+                                className="text-slate-500 hover:text-red-400 text-xs font-bold transition-colors cursor-pointer"
+                                title="Clear notification"
+                              >
+                                ✕
+                              </button>
+                            </div>
                           </div>
                           <p className="text-xs text-slate-400 leading-relaxed font-semibold">{n.message}</p>
                           {n.message.toLowerCase().includes("unfinished booking") && (
                             <button
                               onClick={handleResumeBooking}
-                              className="mt-2.5 px-4.5 py-2 bg-blue-600 hover:bg-blue-500 text-[10px] font-black uppercase tracking-wider rounded-xl text-white transition-all shadow-lg shadow-blue-500/25 cursor-pointer"
+                              className="mt-2.5 px-4.5 py-2 bg-amber-500 hover:bg-amber-400 text-black text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-amber-500/25 cursor-pointer"
                             >
                               Continue Booking
                             </button>

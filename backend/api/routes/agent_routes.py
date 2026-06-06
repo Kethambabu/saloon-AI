@@ -202,6 +202,20 @@ async def chat_with_agent(
             message=payload.message
         )
         db_sess.add(chat_log)
+        
+        # Reset existing lead to NEW because they are active in the chat again!
+        from db import Lead, LeadStatus
+        from datetime import datetime
+        existing_lead = db_sess.query(Lead).filter(
+            (Lead.notes.like(f"%Session ID: {payload.session_id}%")) |
+            (Lead.customer_id == current_user.customer_id if current_user.customer_id else False)
+        ).filter(Lead.status != LeadStatus.CONVERTED).first()
+        
+        if existing_lead:
+            existing_lead.status = LeadStatus.NEW
+            existing_lead.notes = (existing_lead.notes or "") + f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Customer resumed chat session."
+            logger.info(f"Reset existing lead status to NEW for session {payload.session_id}")
+            
         db_sess.commit()
         logger.info(f"Stored user chat log for user {current_user.id}, customer_id: {current_user.customer_id}")
     except Exception as e:

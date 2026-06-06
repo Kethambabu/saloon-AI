@@ -76,7 +76,7 @@ async def lifespan(application: FastAPI):
         scheduler.add_job(
             process_leads,
             'interval',
-            minutes=30
+            minutes=1
         )
         scheduler.start()
         application.state.scheduler = scheduler

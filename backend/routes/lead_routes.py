@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, or_
 
-from db import get_db, Lead, LeadStatus, User, UserRole, Staff, Branch, Customer, Service
+from db import get_db, Lead, LeadStatus, User, UserRole, Staff, Branch, Customer, Service, Notification
 from api.deps import get_current_user
 from services.lead_service import send_lead_followup, convert_lead_to_appointment
 
@@ -211,6 +211,9 @@ def save_lead_draft(
         # Always update staff_id since they could switch back to 'any' (None)
         lead.assigned_staff = st_id
         
+        # Reset status to NEW because they are actively editing again
+        lead.status = LeadStatus.NEW
+        
         if req.notes:
             lead.notes = req.notes
             
@@ -260,6 +263,48 @@ def get_active_lead(
         notes=lead.notes,
         created_at=lead.created_at.isoformat() if lead.created_at else None
     )
+
+
+@router.post(
+    "/leads/active/dismiss",
+    summary="Dismiss Active Lead follow-up",
+    description="Marks the active lead as LOST (dismissed) and clears related notifications."
+)
+def dismiss_active_lead(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only customer accounts can dismiss leads."
+        )
+        
+    # Find active lead
+    lead = db.query(Lead).filter(
+        Lead.customer_id == current_user.customer_id,
+        Lead.status.in_([LeadStatus.NEW, LeadStatus.CONTACTED])
+    ).order_by(desc(Lead.created_at)).first()
+    
+    if not lead:
+        return {"success": True, "message": "No active lead found to dismiss."}
+        
+    # Set status to LOST
+    lead.status = LeadStatus.LOST
+    lead.notes = (lead.notes or "") + f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Dismissed by customer."
+    
+    # Clear related notifications for this user
+    db.query(Notification).filter(
+        Notification.user_id == current_user.id,
+        Notification.title == "Unfinished Booking Reminder"
+    ).update(
+        {Notification.is_cleared: True, Notification.is_read: True},
+        synchronize_session=False
+    )
+    
+    db.commit()
+    return {"success": True, "message": "Active lead dismissed and notifications cleared."}
+
 
 
 @router.get(
@@ -441,6 +486,11 @@ def trigger_followup(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid lead UUID format.")
         
+    lead = db.query(Lead).filter(Lead.id == lead_uuid).first()
+    if lead and not lead.assigned_staff:
+        lead.assigned_staff = staff_user.staff_id
+        db.flush()
+        
     res = send_lead_followup(lead_uuid, db)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error"))
@@ -460,7 +510,7 @@ def convert_lead(
 ):
     try:
         lead_uuid = uuid.UUID(req.lead_id)
-        staff_uuid = uuid.UUID(req.staff_id) if req.staff_id else None
+        staff_uuid = uuid.UUID(req.staff_id) if req.staff_id else staff_user.staff_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID format for lead or staff.")
         
