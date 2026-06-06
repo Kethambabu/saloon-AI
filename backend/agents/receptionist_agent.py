@@ -130,7 +130,7 @@ def adjust_past_date_today(date_str: str, time_str: str) -> str:
 
 
 def repair_date(date_input: Any) -> str:
-    """Automatically resolve relative date keywords to YYYY-MM-DD format."""
+    """Automatically resolve relative date keywords and absolute date strings (e.g., 'june 8th 2026', '08-06-2026') to YYYY-MM-DD."""
     if not date_input:
         return get_query_base_date()
     
@@ -149,14 +149,15 @@ def repair_date(date_input: Any) -> str:
         base_date = datetime.utcnow()
         
     date_clean = date_str.lower()
+    
     if "today" in date_clean:
         return base_date.strftime("%Y-%m-%d")
-    elif "tomorrow" in date_clean:
-        tomorrow = base_date + timedelta(days=1)
-        return tomorrow.strftime("%Y-%m-%d")
     elif "day after tomorrow" in date_clean:
         target = base_date + timedelta(days=2)
         return target.strftime("%Y-%m-%d")
+    elif "tomorrow" in date_clean:
+        tomorrow = base_date + timedelta(days=1)
+        return tomorrow.strftime("%Y-%m-%d")
     elif "next week" in date_clean:
         next_week = base_date + timedelta(days=7)
         return next_week.strftime("%Y-%m-%d")
@@ -170,6 +171,54 @@ def repair_date(date_input: Any) -> str:
             target = base_date + timedelta(days=days_ahead)
             return target.strftime("%Y-%m-%d")
             
+    # Try parsing month names (e.g. "june 8th 2026", "June 8, 2026")
+    months = {
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, 
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
+    }
+    
+    found_month = None
+    for m_name, m_val in months.items():
+        if re.search(r"\b" + re.escape(m_name) + r"\b", date_clean):
+            found_month = m_val
+            break
+            
+    if found_month:
+        text_without_month = re.sub(r"\b" + re.escape(m_name) + r"\b", "", date_clean)
+        digits = re.findall(r"\d+", text_without_month)
+        day = None
+        year = base_date.year
+        for d in digits:
+            val = int(d)
+            if 1 <= val <= 31:
+                if day is None:
+                    day = val
+                elif val > 31 and val > 1900:
+                    year = val
+            elif val > 1900:
+                year = val
+        if day is not None:
+            return f"{year:04d}-{found_month:02d}-{day:02d}"
+
+    # Try matching common numeric patterns like "08-06-2026", "8/6/26", etc.
+    num_str = re.sub(r"\s+", "", date_clean)
+    match_dmy = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$", num_str)
+    if match_dmy:
+        day = int(match_dmy.group(1))
+        month = int(match_dmy.group(2))
+        year = int(match_dmy.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+            
+    match_ymd = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$", num_str)
+    if match_ymd:
+        year = int(match_ymd.group(1))
+        month = int(match_ymd.group(2))
+        day = int(match_ymd.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+
     return base_date.strftime("%Y-%m-%d")
 
 
@@ -1127,6 +1176,11 @@ class ReceptionistAgent(Agent):
         # Load Customer History Memory for warm personalized greeting (Priority 7)
         cust_id = get_query_customer_id()
         pref_str, pref_service, pref_stylist = _get_customer_memory(cust_id)
+        
+        # Avoid prepending the welcome profile on every single chat response if there's history
+        is_first_turn = "Here is the conversation history so far for context:" not in query
+        if not is_first_turn:
+            pref_str = ""
 
         # Priority 4: Direct discovery catalog browser rules
         is_discovery_query = any(k in query.lower() for k in ["show services", "show branches", "show staff", "list services", "list branches", "list staff"])

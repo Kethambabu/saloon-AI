@@ -252,7 +252,7 @@ async def chat_with_agent(
                     staff_id=current_user.staff_id if current_user.staff_id else None,
                     agent_type="RECEPTIONIST",
                     sender="assistant",
-                    message=agent_res.get("response", "")
+                    message=agent_res.get("response", "").strip()
                 )
                 db_sess_bg.add(chat_log)
                 db_sess_bg.commit()
@@ -296,7 +296,7 @@ async def chat_with_agent(
                 staff_id=current_user.staff_id if current_user.staff_id else None,
                 agent_type="RECEPTIONIST",
                 sender="assistant",
-                message=agent_response.get("response", "")
+                message=agent_response.get("response", "").strip()
             )
             db_sess_sync.add(chat_log)
             db_sess_sync.commit()
@@ -311,7 +311,7 @@ async def chat_with_agent(
         return ChatResponse(
             success=True,
             session_id=payload.session_id,
-            response=agent_response.get("response", ""),
+            response=agent_response.get("response", "").strip(),
             agent_name=agent_response.get("agent_name", "Clara")
         )
 
