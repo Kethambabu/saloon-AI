@@ -786,6 +786,9 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                                 {lead.status === 'CONVERTED' && (
                                   <span className="text-emerald-400 font-bold text-xs">✓ Booking Confirmed</span>
                                 )}
+                                {lead.status === 'LOST' && (
+                                  <span className="text-slate-500 font-bold text-xs">✗ Dismissed / Lost</span>
+                                )}
                               </div>
                             </td>
                           </tr>
