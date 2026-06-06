@@ -5,11 +5,11 @@ Ensures data isolation and role-based access control.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from db import get_db, Staff, UserRole, Appointment, User, Customer
@@ -487,4 +487,188 @@ def cancel_staff_leave(
     db.delete(leave)
     db.commit()
     return {"success": True, "message": "Leave cancelled successfully."}
+
+
+# --- Staff Chat Endpoint ---
+
+class StaffChatRequest(BaseModel):
+    """Structured Chat Request model supporting both space-based aliases and standard snake_case keys."""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "message": "Show my appointments today.",
+                "session id": "session-12345",
+                "chat history": []
+            }
+        }
+    )
+
+    message: str = Field(..., description="The conversational message or query from the staff user")
+    session_id: str = Field(
+        ...,
+        validation_alias="session id",
+        serialization_alias="session id",
+        description="Dynamic session or conversation identifier"
+    )
+    chat_history: Optional[List[Dict[str, Any]]] = Field(
+        default=[],
+        validation_alias="chat history",
+        serialization_alias="chat history",
+        description="Historical messages context: [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]"
+    )
+
+
+class StaffChatResponse(BaseModel):
+    """Structured Standard JSON response from Atlas the Co-Stylist AI."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    success: bool = Field(..., description="Indicates if the query was processed successfully")
+    session_id: str = Field(
+        ...,
+        alias="session id",
+        validation_alias="session id",
+        serialization_alias="session id",
+        description="The ongoing session identifier"
+    )
+    response: str = Field(..., description="Conversational reply text from the AI Agent")
+    agent_name: str = Field(..., description="Name of the agent replying")
+
+
+# Global singleton cache for StaffAssistantAgent to optimize load times
+_staff_assistant_agent: Optional[Any] = None
+
+
+def get_staff_assistant_agent():
+    """Helper to lazily load and cache the StaffAssistantAgent singleton."""
+    global _staff_assistant_agent
+    if _staff_assistant_agent is None:
+        logger.info("Initializing lazy StaffAssistantAgent singleton...")
+        from agents.staff_assistant_agent import StaffAssistantAgent
+        _staff_assistant_agent = StaffAssistantAgent()
+    return _staff_assistant_agent
+
+
+@router.post(
+    "/chat",
+    response_model=StaffChatResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Chat with Atlas the Staff AI Assistant Agent"
+)
+async def chat_with_staff_agent(
+    payload: StaffChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint for staff to chat with their specialized Staff Productivity Assistant.
+    Role-based context and Staff IDs are automatically injected into the assistant queries.
+    """
+    logger.info(f"POST /api/staff/chat received (Session ID: {payload.session_id}, User Email: {current_user.email})")
+
+    if current_user.role not in [UserRole.STAFF, UserRole.ADMIN, UserRole.MANAGER, UserRole.OWNER]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is only accessible to staff members"
+        )
+
+    if not current_user.staff_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Staff profile must be associated with the user account"
+        )
+
+    staff = db.query(Staff).filter(Staff.id == current_user.staff_id).first()
+    if not staff:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Staff profile not found"
+        )
+
+    # Inject current date, time, and staff context
+    now_dt = datetime.now(timezone.utc)
+    context_prefix = (
+        f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (Today is {now_dt.strftime('%A, %B %d, %Y')})]\n"
+        f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff member '{staff.full_name}' (ID: {staff.id}, Role: {staff.role}, Branch ID: {staff.branch_id}). ALWAYS use this Staff ID ({staff.id}) when querying schedules, revenue, performance, or submitting leaves on their behalf. Do NOT ask them for their ID.]\n"
+    )
+
+    full_query = context_prefix + "\n"
+    if payload.chat_history:
+        full_query += "Here is the conversation history so far for context:\n"
+        for idx, msg in enumerate(payload.chat_history[-5:]):
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "")
+            full_query += f"- {role}: {content}\n"
+
+    full_query += f"Latest User Message: {payload.message}"
+
+    # Store user message in ChatLog
+    from db import ChatLog, SessionLocal
+    db_sess = SessionLocal()
+    try:
+        chat_log = ChatLog(
+            session_id=payload.session_id,
+            user_id=current_user.id,
+            staff_id=staff.id,
+            agent_type="STAFF_ASSISTANT",
+            sender="user",
+            message=payload.message
+        )
+        db_sess.add(chat_log)
+        db_sess.commit()
+    except Exception as e:
+        logger.error(f"Failed to log user message in chat logs: {e}")
+        db_sess.rollback()
+    finally:
+        db_sess.close()
+
+    # Lazy load staff agent
+    agent = get_staff_assistant_agent()
+
+    try:
+        # Process query through AutoGen StaffAssistantAgent
+        agent_response = await agent.process({"query": full_query})
+
+        if not agent_response.get("success"):
+            error_msg = agent_response.get("error", "Unknown staff agent error.")
+            return StaffChatResponse(
+                success=False,
+                session_id=payload.session_id,
+                response=f"I encountered an issue processing your request: {error_msg}. Please try again.",
+                agent_name="Atlas"
+            )
+
+        # Store agent response in ChatLog
+        db_sess_sync = SessionLocal()
+        try:
+            chat_log = ChatLog(
+                session_id=payload.session_id,
+                user_id=current_user.id,
+                staff_id=staff.id,
+                agent_type="STAFF_ASSISTANT",
+                sender="assistant",
+                message=agent_response.get("response", "")
+            )
+            db_sess_sync.add(chat_log)
+            db_sess_sync.commit()
+        except Exception as e:
+            logger.error(f"Failed to log assistant response in chat logs: {e}")
+            db_sess_sync.rollback()
+        finally:
+            db_sess_sync.close()
+
+        return StaffChatResponse(
+            success=True,
+            session_id=payload.session_id,
+            response=agent_response.get("response", ""),
+            agent_name="Atlas"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in staff chat endpoint: {e}", exc_info=True)
+        return StaffChatResponse(
+            success=False,
+            session_id=payload.session_id,
+            response="An unexpected error occurred in the AI assistant. Please try again.",
+            agent_name="Atlas"
+        )
 

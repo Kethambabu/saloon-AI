@@ -3,7 +3,7 @@
  * Driven by React, TypeScript, Tailwind CSS, and communicating with the FastAPI agent backend.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiClient } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 
