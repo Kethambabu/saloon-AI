@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
+from core.config import get_settings
 
 from autogen_core.models import (
     ChatCompletionClient,
@@ -319,6 +320,53 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         logger.debug(f"Converted {len(result)} tools")
         return result if result else None
 
+    def _prune_messages(self, openai_messages: List[Dict[str, Any]], max_tokens: int) -> List[Dict[str, Any]]:
+        """Prunes messages to stay within a token budget while keeping system prompt and recent history."""
+        if not openai_messages:
+            return openai_messages
+
+        estimated_tokens = self.count_tokens(openai_messages)
+        if estimated_tokens <= max_tokens:
+            return openai_messages
+
+        logger.info(f"[Token Management] Prompt size ({estimated_tokens} tokens) exceeds budget ({max_tokens} tokens). Pruning context...")
+
+        system_messages = []
+        conversational_messages = []
+
+        for msg in openai_messages:
+            if msg.get("role") == "system":
+                system_messages.append(msg)
+            else:
+                conversational_messages.append(msg)
+
+        system_tokens = self.count_tokens(system_messages)
+        available_tokens = max(0, max_tokens - system_tokens)
+
+        pruned_conv = []
+        accumulated_tokens = 0
+
+        # Greedily include messages from the newest to oldest
+        for msg in reversed(conversational_messages):
+            msg_tokens = self.count_tokens([msg])
+            if accumulated_tokens + msg_tokens > available_tokens:
+                # Always ensure at least the very last message is included
+                if not pruned_conv:
+                    pruned_conv.append(msg)
+                break
+            pruned_conv.append(msg)
+            accumulated_tokens += msg_tokens
+
+        pruned_conv.reverse()
+        pruned_messages = system_messages + pruned_conv
+        new_estimated = self.count_tokens(pruned_messages)
+
+        logger.info(
+            f"[Token Management] Pruned message context: messages={len(openai_messages)}->{len(pruned_messages)} | "
+            f"Est. tokens: {estimated_tokens}->{new_estimated} (Saved ~{estimated_tokens - new_estimated} tokens)"
+        )
+        return pruned_messages
+
     async def create(
         self,
         messages: List[Any],
@@ -327,6 +375,8 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
     ) -> CreateResult:
         """Create a chat completion."""
         openai_messages = self._convert_messages(messages)
+        max_prompt_tokens = get_settings().max_prompt_tokens
+        openai_messages = self._prune_messages(openai_messages, max_prompt_tokens)
         converted_tools = self._convert_tools(tools)
         filtered_kwargs = self._filter_kwargs(kwargs)
 
@@ -369,6 +419,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         )
                         logger.info(f"Retrying request with Gemini model: {self.model}")
                         openai_messages = self._convert_messages(messages)
+                        openai_messages = self._prune_messages(openai_messages, max_prompt_tokens)
                         converted_tools = self._convert_tools(tools)
                         try:
                             response = self._client.chat.completions.create(
@@ -397,6 +448,12 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                     "prompt_tokens": response.usage.prompt_tokens,
                     "completion_tokens": response.usage.completion_tokens,
                 }
+                logger.info(
+                    f"[TOKEN USAGE] Model: {self.model} | "
+                    f"Prompt (Input) Tokens: {response.usage.prompt_tokens} | "
+                    f"Completion (Output) Tokens: {response.usage.completion_tokens} | "
+                    f"Total Tokens: {response.usage.prompt_tokens + response.usage.completion_tokens}"
+                )
 
             # Extract response content
             if response.choices:
@@ -479,11 +536,14 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
     ):
         """Create a streaming chat completion."""
         openai_messages = self._convert_messages(messages)
+        max_prompt_tokens = get_settings().max_prompt_tokens
+        openai_messages = self._prune_messages(openai_messages, max_prompt_tokens)
         converted_tools = self._convert_tools(tools)
         filtered_kwargs = self._filter_kwargs(kwargs)
 
         try:
             try:
+                total_output_chars = 0
                 with self._client.chat.completions.create(
                     model=self.model,
                     messages=openai_messages,
@@ -495,6 +555,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         if chunk.choices:
                             delta = chunk.choices[0].delta
                             if delta and delta.content:
+                                total_output_chars += len(delta.content)
                                 choice_reason = chunk.choices[0].finish_reason
                                 mapped_reason = "unknown"
                                 if choice_reason in ["stop", "length", "function_calls", "content_filter", "error", "unknown"]:
@@ -506,6 +567,18 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                                     usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
                                     cached=False,
                                 )
+                
+                # Estimate streaming token usage
+                estimated_completion_tokens = max(1, total_output_chars // 4)
+                estimated_prompt_tokens = self.count_tokens(openai_messages)
+                self._total_input_tokens += estimated_prompt_tokens
+                self._total_output_tokens += estimated_completion_tokens
+                logger.info(
+                    f"[TOKEN USAGE (STREAMING)] Model: {self.model} | "
+                    f"Est. Prompt Tokens: {estimated_prompt_tokens} | "
+                    f"Est. Completion Tokens: {estimated_completion_tokens} | "
+                    f"Est. Total Tokens: {estimated_prompt_tokens + estimated_completion_tokens}"
+                )
             except Exception as e:
                 from core.llm_config import get_llm_config
                 manager = get_llm_config()
@@ -527,6 +600,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         )
                         logger.info(f"Retrying stream request with Gemini model: {self.model}")
                         openai_messages = self._convert_messages(messages)
+                        openai_messages = self._prune_messages(openai_messages, max_prompt_tokens)
                         converted_tools = self._convert_tools(tools)
                         try:
                             async for chunk in self.create_stream(messages, tools, **kwargs):

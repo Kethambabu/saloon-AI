@@ -44,9 +44,78 @@ from db import Branch, Customer, Service, Staff
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# HELPER UTILITIES FOR VALIDATION & REPAIR (STABILIZATION LAYER)
-# ============================================================================
+def compress_history_for_prompt(history_data: Any) -> str:
+    """
+    Compresses booking history data to make it extremely compact for the LLM prompt context,
+    preventing token bloat while keeping all critical semantic details.
+    """
+    if not history_data:
+        return "No history available."
+
+    import json
+    import ast
+
+    data = None
+    if isinstance(history_data, str):
+        raw_clean = history_data.strip()
+        try:
+            data = ast.literal_eval(raw_clean)
+        except Exception:
+            try:
+                data = json.loads(raw_clean)
+            except Exception:
+                pass
+    elif isinstance(history_data, dict):
+        data = history_data
+
+    if not isinstance(data, dict):
+        return str(history_data)
+
+    history = data.get("history", [])
+    if not history:
+        return "No past styling appointments on record."
+
+    total_count = len(history)
+    completed_count = sum(1 for a in history if str(a.get("status")).upper() == "COMPLETED")
+    cancelled_count = sum(1 for a in history if str(a.get("status")).upper() == "CANCELLED")
+    confirmed_count = sum(1 for a in history if str(a.get("status")).upper() == "CONFIRMED")
+
+    total_spent = sum(float(a.get("service_price") or 0.0) for a in history if str(a.get("status")).upper() == "COMPLETED")
+
+    compressed_records = []
+    # Keep details for the 8 most recent appointments to prevent prompt token bloat
+    for appt in history[:8]:
+        start_time = appt.get("start_time", "")
+        date_part = start_time.split("T")[0] if "T" in start_time else start_time
+        time_part = ""
+        if "T" in start_time:
+            time_part = start_time.split("T")[1][:5]
+
+        compressed_records.append({
+            "id": appt.get("appointment_id"),
+            "date": date_part,
+            "time": time_part,
+            "service": appt.get("service_name"),
+            "price": appt.get("service_price"),
+            "stylist": appt.get("staff_name"),
+            "status": appt.get("status")
+        })
+
+    compressed_data = {
+        "customer_name": data.get("customer_name"),
+        "total_appointments": total_count,
+        "completed": completed_count,
+        "cancelled": cancelled_count,
+        "confirmed": confirmed_count,
+        "total_spent_on_completed": total_spent,
+        "recent_appointments": compressed_records
+    }
+
+    if total_count > 8:
+        compressed_data["note"] = f"Showing 8 most recent appointments of {total_count} total appointments. Older appointments are omitted."
+
+    return json.dumps(compressed_data, indent=2)
+
 
 def _is_valid_uuid(val: Any) -> bool:
     """Verify if value is a valid UUID."""
@@ -1524,7 +1593,7 @@ class ReceptionistAgent(Agent):
             
             if is_specific_query:
                 # Let's route to the LLM agent, but inject the history data into the query so the LLM can see it!
-                query = f"{query}\n\n[USER BOOKING HISTORY DATA: {history_data}]"
+                query = f"{query}\n\n[USER BOOKING HISTORY DATA: {compress_history_for_prompt(history_data)}]"
             else:
                 formatted_history = format_receptionist_tool_output("history", history_data)
                 return {

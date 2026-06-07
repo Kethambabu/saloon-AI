@@ -1553,7 +1553,7 @@ export const UserDashboard: React.FC = () => {
                 
                 {/* Full screen render wrapper for Clara chat */}
                 <div className="bg-slate-900/30 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative custom-fullscreen-agentchat-container">
-                  <AgentChat onRefreshAppointments={fetchData} />
+                  <AgentChat onRefreshAppointments={() => fetchData(true)} />
                 </div>
 
                 <style>{`

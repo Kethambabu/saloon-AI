@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
     supabase_anon_key: Optional[str] = Field(default=None, alias="SUPABASE_ANON_KEY")
     supabase_service_role_key: Optional[str] = Field(default=None, alias="SUPABASE_SERVICE_ROLE_KEY")
+    max_prompt_tokens: int = Field(default=4500, alias="MAX_PROMPT_TOKENS")
 
     # Features
     enable_rag: bool = Field(default=True, alias="ENABLE_RAG")
