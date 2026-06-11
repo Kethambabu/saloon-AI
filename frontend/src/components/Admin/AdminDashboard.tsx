@@ -82,6 +82,7 @@ export const AdminDashboard: React.FC = () => {
     | 'reputation-intelligence'
     | 'forecast'
     | 'business-assistant'
+    | 'ai-configuration'
     | 'settings'
   >('dashboard');
 
@@ -198,6 +199,59 @@ export const AdminDashboard: React.FC = () => {
 
   const [services, setServices] = useState<any[]>([]);
 
+  // AI Configuration / Receptionist RAG states
+  const [activeAiConfigTab, setActiveAiConfigTab] = useState<'documents' | 'offers' | 'memory-pipelines'>('documents');
+  const [knowledgeDocs, setKnowledgeDocs] = useState<any[]>([]);
+  const [offers, setOffers] = useState<any[]>([]);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocType, setNewDocType] = useState('cancellation_policy');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // Memory Pipeline & RAG trigger states
+  const [isRebuildingKnowledge, setIsRebuildingKnowledge] = useState(false);
+
+  // Unified Sync States
+  const [syncStatus, setSyncStatus] = useState<{
+    last_run_date: string | null;
+    earliest_date: string;
+    next_sync_start: string;
+    next_sync_end: string;
+    sync_available: boolean;
+  } | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncStatusLoading, setIsSyncStatusLoading] = useState(false);
+
+  const [isSavingOffer, setIsSavingOffer] = useState(false);
+  const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
+  const [offerTitle, setOfferTitle] = useState('');
+  const [offerDescription, setOfferDescription] = useState('');
+  const [offerDiscountPct, setOfferDiscountPct] = useState<number>(0);
+  const [offerStartDate, setOfferStartDate] = useState('');
+  const [offerEndDate, setOfferEndDate] = useState('');
+
+  const fetchKnowledgeDocs = async () => {
+    try {
+      const res = await apiClient.get('/admin/knowledge/documents');
+      if (res.data && res.data.success) {
+        setKnowledgeDocs(res.data.documents || []);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch knowledge documents', err);
+    }
+  };
+
+  const fetchOffers = async () => {
+    try {
+      const res = await apiClient.get('/admin/offers');
+      if (res.data && res.data.success) {
+        setOffers(res.data.offers || []);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch special offers', err);
+    }
+  };
+
   // --- Fetch BI Data from Backend Analytics ---
   const fetchBIData = async () => {
     try {
@@ -274,7 +328,11 @@ export const AdminDashboard: React.FC = () => {
           duration: s.duration_minutes || s.duration
         })));
 
-        await fetchBIData();
+        await Promise.all([
+          fetchKnowledgeDocs(),
+          fetchOffers(),
+          fetchBIData()
+        ]);
       } catch (err) {
         console.warn('Failed to compile operations ledger', err);
       } finally {
@@ -283,6 +341,35 @@ export const AdminDashboard: React.FC = () => {
     };
     fetchAllData();
   }, []);
+
+  const fetchSyncStatus = async () => {
+    try {
+      setIsSyncStatusLoading(true);
+      const res = await apiClient.get('/memory/status');
+      setSyncStatus(res.data);
+    } catch (err: any) {
+      console.error('Failed to fetch sync status', err);
+    } finally {
+      setIsSyncStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeAiConfigTab !== 'memory-pipelines') return;
+    
+    fetchSyncStatus();
+    
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiClient.get('/memory/status');
+        setSyncStatus(res.data);
+      } catch (err) {
+        console.warn('Failed to poll sync status', err);
+      }
+    }, 10000); // Poll every 10 seconds for active tab
+    
+    return () => clearInterval(interval);
+  }, [activeAiConfigTab]);
 
   // --- Auto-refresh dashboard telemetry periodically (every 15 seconds) ---
   useEffect(() => {
@@ -470,6 +557,168 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleUploadDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDocTitle.trim() || !newDocType || !selectedFile) {
+      window.alert('Please fill out all fields and select a file.');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('title', newDocTitle);
+    formData.append('document_type', newDocType);
+    formData.append('file', selectedFile);
+
+    try {
+      setIsUploadingDoc(true);
+      const res = await apiClient.post('/admin/knowledge/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      if (res.data && res.data.success) {
+        window.alert('Document uploaded and indexed successfully!');
+        setNewDocTitle('');
+        setSelectedFile(null);
+        await fetchKnowledgeDocs();
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to upload document.');
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
+
+  const handleDeleteDocument = async (id: string) => {
+    if (window.confirm('Are you sure you want to deactivate and delete this document from the knowledge base?')) {
+      try {
+        const res = await apiClient.delete(`/admin/knowledge/documents/${id}`);
+        if (res.data && res.data.success) {
+          window.alert('Document deleted and index rebuilt successfully.');
+          await fetchKnowledgeDocs();
+        }
+      } catch (err: any) {
+        window.alert(err.response?.data?.detail || 'Failed to delete document.');
+      }
+    }
+  };
+
+  const handleRebuildKnowledge = async () => {
+    try {
+      setIsRebuildingKnowledge(true);
+      const res = await apiClient.post('/admin/knowledge/rebuild');
+      if (res.data && res.data.success) {
+        window.alert(`🎉 Success! Receptionist knowledge RAG index rebuilt from DB! Chunks: ${res.data.details?.chunks_indexed}`);
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to rebuild receptionist knowledge index.');
+    } finally {
+      setIsRebuildingKnowledge(false);
+    }
+  };
+
+  const handleTriggerSync = async () => {
+    try {
+      setIsSyncing(true);
+      const res = await apiClient.post('/memory/trigger/sync');
+      if (res.data && res.data.success) {
+        if (res.data.action === 'skipped') {
+          window.alert(`ℹ️ Notice: ${res.data.message}`);
+        } else {
+          window.alert(`🎉 Success! ${res.data.message}`);
+        }
+        await fetchSyncStatus();
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to synchronize vector database.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSaveOffer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!offerTitle.trim() || !offerDescription.trim() || offerDiscountPct < 0 || !offerStartDate || !offerEndDate) {
+      window.alert('Please fill out all required fields.');
+      return;
+    }
+    if (new Date(offerStartDate) > new Date(offerEndDate)) {
+      window.alert('Start date cannot be after end date.');
+      return;
+    }
+
+    const payload = {
+      title: offerTitle,
+      description: offerDescription,
+      discount_pct: Number(offerDiscountPct),
+      start_date: offerStartDate,
+      end_date: offerEndDate,
+    };
+
+    try {
+      setIsSavingOffer(true);
+      if (editingOfferId) {
+        const res = await apiClient.put(`/admin/offers/${editingOfferId}`, payload);
+        if (res.data && res.data.success) {
+          window.alert('Offer updated and indexed successfully!');
+          setEditingOfferId(null);
+          setOfferTitle('');
+          setOfferDescription('');
+          setOfferDiscountPct(0);
+          setOfferStartDate('');
+          setOfferEndDate('');
+          await fetchOffers();
+        }
+      } else {
+        const res = await apiClient.post('/admin/offers', payload);
+        if (res.data && res.data.success) {
+          window.alert('Offer created and indexed successfully!');
+          setOfferTitle('');
+          setOfferDescription('');
+          setOfferDiscountPct(0);
+          setOfferStartDate('');
+          setOfferEndDate('');
+          await fetchOffers();
+        }
+      }
+    } catch (err: any) {
+      window.alert(err.response?.data?.detail || 'Failed to save offer.');
+    } finally {
+      setIsSavingOffer(false);
+    }
+  };
+
+  const handleDeleteOffer = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this special offer?')) {
+      try {
+        const res = await apiClient.delete(`/admin/offers/${id}`);
+        if (res.data && res.data.success) {
+          window.alert('Special offer deleted successfully.');
+          await fetchOffers();
+        }
+      } catch (err: any) {
+        window.alert(err.response?.data?.detail || 'Failed to delete offer.');
+      }
+    }
+  };
+
+  const handleEditOfferClick = (offer: any) => {
+    setEditingOfferId(offer.id);
+    setOfferTitle(offer.title);
+    setOfferDescription(offer.description);
+    setOfferDiscountPct(offer.discount_pct);
+    setOfferStartDate(offer.start_date);
+    setOfferEndDate(offer.end_date);
+  };
+
+  const handleCancelEditOffer = () => {
+    setEditingOfferId(null);
+    setOfferTitle('');
+    setOfferDescription('');
+    setOfferDiscountPct(0);
+    setOfferStartDate('');
+    setOfferEndDate('');
+  };
+
   return (
     <div className="flex flex-col md:flex-row min-h-[85vh] bg-slate-950 text-white rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl font-sans">
       
@@ -496,6 +745,7 @@ export const AdminDashboard: React.FC = () => {
               { id: 'reputation-intelligence', label: 'Reputation Intelligence', icon: '🛡️' },
               { id: 'forecast', label: 'Forecast Intelligence', icon: '🔮' },
               { id: 'business-assistant', label: 'AI Business Assistant', icon: '🤖' },
+              { id: 'ai-configuration', label: 'AI Configuration', icon: '🧠' },
               { id: 'settings', label: 'Settings Panel', icon: '⚙️' }
             ].map(tab => (
               <button
@@ -1401,6 +1651,468 @@ export const AdminDashboard: React.FC = () => {
                 <div className="bg-slate-900/60 border border-slate-850 p-5 rounded-3xl">
                   <AgentChat intentOverride="business_intelligence" />
                 </div>
+              </div>
+            )}
+
+            {/* ── 9.5. AI Configuration Subpage ── */}
+            {activeTab === 'ai-configuration' && (
+              <div className="space-y-6">
+                <div className="border-b border-slate-850 pb-3 flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AI Workforce configuration</span>
+                    <h2 className="text-xl font-black mt-0.5">🧠 AI Configuration</h2>
+                    <p className="text-xs text-slate-500">Manage knowledge bases, agent policies, and promotional offers retrieved by the AI Receptionist.</p>
+                  </div>
+                  <button 
+                    onClick={async () => {
+                      setIsLoading(true);
+                      await Promise.all([fetchKnowledgeDocs(), fetchOffers()]);
+                      setIsLoading(false);
+                      window.alert('RAG index synchronization complete.');
+                    }}
+                    className="px-3.5 py-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-450 hover:bg-slate-850 transition-all cursor-pointer"
+                  >
+                    🔄 Sync RAG Data
+                  </button>
+                </div>
+
+                {/* AI Configuration Sub-nav */}
+                <div className="flex gap-2 border-b border-slate-900 pb-3">
+                  <button
+                    onClick={() => setActiveAiConfigTab('documents')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeAiConfigTab === 'documents'
+                        ? 'bg-blue-600 border-blue-500 text-white shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    📁 Policies & FAQ documents
+                  </button>
+                  <button
+                    onClick={() => setActiveAiConfigTab('offers')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeAiConfigTab === 'offers'
+                        ? 'bg-blue-600 border-blue-500 text-white shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ⚡ Special Promotions
+                  </button>
+                  <button
+                    onClick={() => setActiveAiConfigTab('memory-pipelines')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeAiConfigTab === 'memory-pipelines'
+                        ? 'bg-blue-600 border-blue-500 text-white shadow-md'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    🧠 Memory & RAG Consolidation
+                  </button>
+                </div>
+
+                {activeAiConfigTab === 'documents' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left: Upload Form */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 h-fit">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white">Upload Policy or FAQ Document</h3>
+                        <p className="text-[11px] text-slate-500 mt-1">Upload a PDF or TXT document containing the policies or FAQs. Older versions are automatically archived.</p>
+                      </div>
+                      <form onSubmit={handleUploadDocument} className="space-y-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Document Title *</label>
+                          <input
+                            type="text"
+                            value={newDocTitle}
+                            onChange={e => setNewDocTitle(e.target.value)}
+                            placeholder="e.g. Salon Cancellation Policy V2"
+                            className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Policy Type *</label>
+                          <select
+                            value={newDocType}
+                            onChange={e => setNewDocType(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                            required
+                          >
+                            <option value="cancellation_policy">Cancellation & Rescheduling Policy</option>
+                            <option value="refund_policy">Refund & Payment Policy</option>
+                            <option value="timings">Business Timings & Hours Policy</option>
+                            <option value="faq">Frequently Asked Questions (FAQs)</option>
+                            <option value="salon_info">General Salon Information</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">File Upload (.pdf, .txt) *</label>
+                          <div className="relative border border-dashed border-slate-850 bg-slate-950 hover:bg-slate-900/30 rounded-xl p-4 text-center cursor-pointer transition-colors">
+                            <input
+                              type="file"
+                              accept=".pdf,.txt"
+                              onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              required
+                            />
+                            <div className="space-y-1">
+                              <span className="block text-lg">📄</span>
+                              <span className="block text-[11px] font-bold text-slate-400">
+                                {selectedFile ? selectedFile.name : 'Click or Drag File Here'}
+                              </span>
+                              <span className="block text-[9px] text-slate-500">PDF or Text up to 10MB</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-end pt-2">
+                          <button
+                            type="submit"
+                            disabled={isUploadingDoc}
+                            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {isUploadingDoc ? 'Uploading & Indexing...' : '🚀 Ingest Document'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* Right: Documents List */}
+                    <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white">Active RAG Policy Documents</h3>
+                        <p className="text-[11px] text-slate-500 mt-1">Clara automatically performs similarity searches over active documents to answer customer questions.</p>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-slate-800 text-xs font-semibold">
+                          <thead>
+                            <tr className="text-slate-500 uppercase tracking-wider text-[9px] font-black">
+                              <th className="px-4 py-3 text-left">Document Title</th>
+                              <th className="px-4 py-3 text-left">Document Type</th>
+                              <th className="px-4 py-3 text-center">Version</th>
+                              <th className="px-4 py-3 text-center">Status</th>
+                              <th className="px-4 py-3 text-center">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                            {knowledgeDocs.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="px-4 py-8 text-center text-slate-500 font-bold">
+                                  No RAG policy documents uploaded yet. Upload a policy above to initialize the knowledge index.
+                                </td>
+                              </tr>
+                            ) : (
+                              knowledgeDocs.map((doc: any) => (
+                                <tr key={doc.id} className="hover:bg-slate-850/20 transition-colors">
+                                  <td className="px-4 py-3.5 whitespace-nowrap text-white font-bold">
+                                    {doc.title}
+                                  </td>
+                                  <td className="px-4 py-3.5 whitespace-nowrap">
+                                    <span className="px-2 py-0.5 rounded text-[9px] font-bold border bg-slate-950 border-slate-800 text-slate-350">
+                                      {doc.document_type === 'cancellation_policy' && '🚫 Cancellation'}
+                                      {doc.document_type === 'refund_policy' && '💳 Refund'}
+                                      {doc.document_type === 'timings' && '⏱️ Timings'}
+                                      {doc.document_type === 'faq' && '❓ FAQs'}
+                                      {doc.document_type === 'salon_info' && '🏢 General Info'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 whitespace-nowrap text-center text-blue-400 font-bold">
+                                    V{doc.version}
+                                  </td>
+                                  <td className="px-4 py-3.5 whitespace-nowrap text-center">
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                      doc.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-450'
+                                    }`}>
+                                      <span className={`w-1 h-1 rounded-full mr-1 ${doc.is_active ? 'bg-emerald-400' : 'bg-slate-455'}`} />
+                                      {doc.is_active ? 'Active' : 'Archived'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3.5 whitespace-nowrap text-center">
+                                    <button
+                                      onClick={() => handleDeleteDocument(doc.id)}
+                                      className="px-2.5 py-1 bg-red-955/20 border border-red-900/30 text-red-450 hover:bg-red-900/30 rounded-lg text-[10px] transition-all cursor-pointer font-bold"
+                                    >
+                                      Deactivate
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeAiConfigTab === 'offers' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left: Offer Builder Form */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 h-fit">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white">
+                          {editingOfferId ? 'Edit Special Offer' : 'Create Special Offer'}
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-1">Configure active promotional offers. Offers are indexed and searchable by the AI Agent.</p>
+                      </div>
+                      <form onSubmit={handleSaveOffer} className="space-y-4 text-left">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Offer Title *</label>
+                          <input
+                            type="text"
+                            value={offerTitle}
+                            onChange={e => setOfferTitle(e.target.value)}
+                            placeholder="e.g. Hair Spa Combo"
+                            className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description *</label>
+                          <textarea
+                            value={offerDescription}
+                            onChange={e => setOfferDescription(e.target.value)}
+                            placeholder="Deep conditioning treatment plus precision haircut for only ₹1499."
+                            rows={3}
+                            className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+                            required
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Discount % *</label>
+                            <input
+                              type="number"
+                              value={offerDiscountPct || ''}
+                              onChange={e => setOfferDiscountPct(Number(e.target.value))}
+                              placeholder="30"
+                              min="0"
+                              max="100"
+                              className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status</label>
+                            <div className="px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-slate-400 font-bold flex items-center h-[34px]">
+                              {editingOfferId ? 'Active state updates below' : 'Starts Active'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Start Date *</label>
+                            <input
+                              type="date"
+                              value={offerStartDate}
+                              onChange={e => setOfferStartDate(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">End Date *</label>
+                            <input
+                              type="date"
+                              value={offerEndDate}
+                              onChange={e => setOfferEndDate(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-955 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                              required
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                          {editingOfferId && (
+                            <button
+                              type="button"
+                              onClick={handleCancelEditOffer}
+                              className="flex-1 px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          <button
+                            type="submit"
+                            disabled={isSavingOffer}
+                            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {isSavingOffer ? 'Saving...' : editingOfferId ? '💾 Save Changes' : '➕ Create Offer'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* Right: Offers Cards Grid */}
+                    <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white">Active Promotional Offers</h3>
+                        <p className="text-[11px] text-slate-500 mt-1">Offers are automatically indexed into the RAG system and deactivated on their expiry date.</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {offers.length === 0 ? (
+                          <div className="col-span-2 py-12 text-center text-slate-500 font-bold">
+                            No special offers configured. Create one above to initialize offers in RAG.
+                          </div>
+                        ) : (
+                          offers.map((offer: any) => {
+                            const isExpired = new Date(offer.end_date) < new Date();
+                            return (
+                              <div key={offer.id} className="bg-slate-950/60 border border-slate-850 p-5 rounded-2xl flex flex-col justify-between space-y-3">
+                                <div>
+                                  <div className="flex justify-between items-start">
+                                    <h4 className="text-sm font-black text-white">{offer.title}</h4>
+                                    <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${
+                                      offer.is_active && !isExpired ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                    }`}>
+                                      {isExpired ? 'Expired' : offer.is_active ? 'Active' : 'Disabled'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-400 mt-1 font-medium">{offer.description}</p>
+                                  <div className="mt-3 flex items-center space-x-2">
+                                    <span className="text-[9px] font-black bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded uppercase tracking-wider">
+                                      🏷️ {offer.discount_pct}% OFF
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="border-t border-slate-900/80 pt-3 flex justify-between items-center text-[10px] font-bold text-slate-500">
+                                  <span>📅 {offer.start_date} to {offer.end_date}</span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditOfferClick(offer)}
+                                      className="p-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-lg transition-all cursor-pointer"
+                                      title="Edit Offer"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteOffer(offer.id)}
+                                      className="p-1.5 bg-red-955/20 border border-red-900/30 text-red-455 hover:bg-red-900/30 rounded-lg transition-all cursor-pointer"
+                                      title="Delete Offer"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeAiConfigTab === 'memory-pipelines' && (
+                  <div className="space-y-6">
+                    {/* Unified Synchronization Panel */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
+                      <div>
+                        <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                          🔄 Unified RAG & Memory Synchronization
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                          Automatically pulls, compiles, and embeds all appointments, leads, reviews, customer chats, and agent summaries.
+                          This replaces individual daily, weekly, monthly, and yearly memory buttons with an incremental, single-button sync.
+                        </p>
+                      </div>
+
+                      {isSyncStatusLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                          <span className="ml-3 text-xs text-slate-400">Loading synchronization status...</span>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/45 p-5 border border-slate-800 rounded-2xl">
+                          <div className="space-y-3">
+                            <div>
+                              <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Last Sync Date</span>
+                              <span className="text-sm font-black text-white">{syncStatus?.last_run_date || 'Never Run'}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Earliest Data Record</span>
+                              <span className="text-xs font-bold text-slate-400">{syncStatus?.earliest_date || '2026-06-01'}</span>
+                            </div>
+                          </div>
+                          <div className="space-y-3">
+                            <div>
+                              <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Pending Sync Window</span>
+                              {syncStatus?.is_syncing ? (
+                                <div className="flex flex-col mt-0.5 animate-pulse">
+                                  <span className="text-xs font-black text-yellow-400">Syncing...</span>
+                                  <span className="text-[11px] text-slate-400">
+                                    Processing background synchronization
+                                  </span>
+                                </div>
+                              ) : syncStatus?.sync_available ? (
+                                <div className="flex flex-col mt-0.5">
+                                  <span className="text-xs font-black text-green-400">Sync Available</span>
+                                  <span className="text-[11px] text-slate-400">
+                                    From {syncStatus.next_sync_start} to {syncStatus.next_sync_end}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col mt-0.5">
+                                  <span className="text-xs font-black text-blue-400">Up to Date</span>
+                                  <span className="text-[11px] text-slate-500">All data synced up to yesterday.</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between pt-2 font-sans">
+                        <div className="text-xs text-slate-400 font-semibold">
+                          {syncStatus?.is_syncing ? (
+                            <span className="text-yellow-500/80 font-bold animate-pulse">🔄 Sync in progress. Processing day-by-day in background...</span>
+                          ) : syncStatus?.sync_available ? (
+                            <span className="text-green-500/80 font-bold">⚠️ Incremental updates will process day-by-day.</span>
+                          ) : (
+                            <span>No pending sync windows. Next sync available tomorrow.</span>
+                          )}
+                        </div>
+                        <button
+                          onClick={handleTriggerSync}
+                          disabled={isSyncing || isSyncStatusLoading || !syncStatus?.sync_available || syncStatus?.is_syncing}
+                          className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                        >
+                          {isSyncing || syncStatus?.is_syncing ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                              <span>Synchronizing Vector DB...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>⚡ Sync Vector Database</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Dedicated Receptionist Knowledge RAG (Maintains separate document-upload flow) */}
+                    <div className="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                      <div>
+                        <h4 className="text-sm font-extrabold text-white flex items-center gap-1.5 font-sans">📖 Receptionist Knowledge Base RAG</h4>
+                        <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                          Rebuilds the receptionist knowledge SOPs, policies, active offers, and operational FAQs index from PDF/text documents.
+                          This runs automatically on file uploads, but can be manually rebuilt here.
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between bg-slate-950/45 p-4 border border-slate-800 rounded-xl mt-2 font-sans">
+                        <span className="text-xs text-slate-400 font-semibold">Rebuild `receptionist_knowledge` FAISS collection</span>
+                        <button
+                          onClick={handleRebuildKnowledge}
+                          disabled={isRebuildingKnowledge}
+                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isRebuildingKnowledge ? 'Rebuilding Index...' : 'Rebuild Index'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

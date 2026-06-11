@@ -269,10 +269,10 @@ async def chat_with_agent(
     try:
         logger.debug(f"Sending query to agent: {full_query[:100]}...")
         
-        # Try to wait for the agent response for a maximum of 3.0 seconds
+        # Try to wait for the agent response for a maximum of 30.0 seconds
         agent_response = await asyncio.wait_for(
             agent.process({"query": full_query}),
-            timeout=3.0
+            timeout=30.0
         )
         
         if not agent_response.get("success"):
@@ -307,7 +307,7 @@ async def chat_with_agent(
         finally:
             db_sess_sync.close()
 
-        logger.info(f"Agent successfully processed query within 3 seconds for session {payload.session_id}")
+        logger.info(f"Agent successfully processed query within 30 seconds for session {payload.session_id}")
         return ChatResponse(
             success=True,
             session_id=payload.session_id,
@@ -316,7 +316,7 @@ async def chat_with_agent(
         )
 
     except asyncio.TimeoutError:
-        logger.warning(f"⏰ Agent execution exceeded 3.0 seconds. Forking task to FastAPI background worker.")
+        logger.warning(f"⏰ Agent execution exceeded 30.0 seconds. Forking task to FastAPI background worker.")
         background_tasks.add_task(run_agent_in_background, {"query": full_query})
         
         return ChatResponse(

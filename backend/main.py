@@ -3,6 +3,16 @@ SalonAI Workforce - FastAPI Application Entry Point
 Production-ready enterprise application for salon workforce management
 """
 
+import sys
+import os
+# Add both backend and project root directories to sys.path to resolve imports correctly
+backend_dir = os.path.abspath(os.path.dirname(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+project_root = os.path.abspath(os.path.join(backend_dir, ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -19,7 +29,51 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # App instance
+# App instance
 app: FastAPI | None = None
+
+
+def process_daily_memory_snapshots():
+    """Scheduled task to run daily memory pipeline."""
+    from db.database import SessionLocal
+    from services.memory_pipeline_service import MemoryPipelineService
+    import asyncio
+    
+    logger.info("⏱️ [Scheduler] Starting automated daily memory snapshot pipeline...")
+    db = SessionLocal()
+    try:
+        service = MemoryPipelineService()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(service.run_daily_pipeline(db))
+        loop.close()
+        logger.info("✅ [Scheduler] Automated daily memory snapshot pipeline completed successfully.")
+    except Exception as e:
+        logger.error(f"[Scheduler] Error running automated daily memory snapshots: {e}", exc_info=True)
+    finally:
+        db.close()
+
+
+def process_weekly_memory_snapshots():
+    """Scheduled task to run weekly memory consolidation pipeline."""
+    from db.database import SessionLocal
+    from services.memory_pipeline_service import MemoryPipelineService
+    import asyncio
+    import datetime
+    
+    logger.info("⏱️ [Scheduler] Starting automated weekly memory consolidation pipeline...")
+    db = SessionLocal()
+    try:
+        service = MemoryPipelineService()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(service.run_weekly_pipeline(db, datetime.date.today()))
+        loop.close()
+        logger.info("✅ [Scheduler] Automated weekly memory consolidation pipeline completed successfully.")
+    except Exception as e:
+        logger.error(f"[Scheduler] Error running automated weekly memory consolidation: {e}", exc_info=True)
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -83,6 +137,21 @@ async def lifespan(application: FastAPI):
              process_returning_cohort_reminders,
              'interval',
              minutes=1
+         )
+         # Daily memory run at 11:59 PM
+         scheduler.add_job(
+             process_daily_memory_snapshots,
+             'cron',
+             hour=23,
+             minute=59
+         )
+         # Weekly memory consolidation on Sunday at 11:59 PM
+         scheduler.add_job(
+             process_weekly_memory_snapshots,
+             'cron',
+             day_of_week='sun',
+             hour=23,
+             minute=59
          )
          scheduler.start()
          application.state.scheduler = scheduler

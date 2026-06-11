@@ -388,17 +388,21 @@ class TestReputationAgentInitialization:
         assert "find_critical_reviews" in sys_msg
         assert "draft_review_response" in sys_msg
         assert "view_reputation_scorecard" in sys_msg
+        assert "escalate_customer_review" in sys_msg
 
     def test_five_tools_bound(self):
         agent = ReputationAgent(name="Olivia")
         bound_tools = agent.assistant._tools
-        assert len(bound_tools) == 5
+        assert len(bound_tools) == 8
         names = [t.name for t in bound_tools]
         assert "view_customer_reviews" in names
         assert "view_review_analytics" in names
         assert "find_critical_reviews" in names
         assert "draft_review_response" in names
         assert "view_reputation_scorecard" in names
+        assert "escalate_customer_review" in names
+        assert "search_salon_knowledge" in names
+        assert "search_reputation_memory" in names
 
     def test_analytics_initialized(self):
         agent = ReputationAgent(name="Olivia")

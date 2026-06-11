@@ -42,6 +42,13 @@ class RecommendationService:
         """
         cust_uuid = uuid.UUID(customer_id) if isinstance(customer_id, str) else customer_id
         
+        # Trigger auto-cancellation of past customer appointments
+        try:
+            from tools.booking_tools import auto_cancel_past_customer_appointments
+            auto_cancel_past_customer_appointments(cust_uuid, db)
+        except Exception as cancel_err:
+            logger.error(f"Auto-cancellation of past appointments in recommendations failed: {cancel_err}")
+            
         # 1. Fetch active appointments
         active_appts = db.query(Appointment).filter(
             Appointment.customer_id == cust_uuid,
@@ -71,7 +78,7 @@ class RecommendationService:
                             "price": float(rec_service.price),
                             "duration_minutes": rec_service.duration_minutes,
                             "confidence_score": rule.confidence_score,
-                            "reason": f"Pairs perfectly with your booked {appt.service.name}",
+                            "reason": f"Pairs perfectly with booked {appt.service.name}",
                             "appointment_id": str(appt.id)
                         })
                         already_recommended.add(rec_service.id)
@@ -102,7 +109,7 @@ class RecommendationService:
                             "price": float(fav_service.price),
                             "duration_minutes": fav_service.duration_minutes,
                             "confidence_score": 0.8,
-                            "reason": f"Based on your purchase history (you booked this {count} times previously)",
+                            "reason": f"Based on previous booking history (booked {count} times previously)",
                             "appointment_id": str(active_appts[0].id) if active_appts else None
                         })
                         already_recommended.add(fav_service.id)
@@ -233,11 +240,24 @@ class RecommendationService:
                     f"[Automated Upsell Accepted: Added {rec_service.name} (${rec_service.price})]"
                 ).strip()
                 
-                # Check if linked add-on appointment already exists
+                # Find the parent and all existing add-ons to determine the consecutive start time
+                add_ons = db.query(Appointment).filter(
+                    Appointment.customer_id == cust_uuid,
+                    Appointment.notes.like(f"Linked Add-on from Appointment {original_appt.id}%"),
+                    Appointment.status != AppointmentStatus.CANCELLED
+                ).all()
+                
+                # The start time of the new add-on should be the maximum end time among the parent and all active add-ons
+                start_time = original_appt.end_time
+                for addon in add_ons:
+                    if addon.end_time > start_time:
+                        start_time = addon.end_time
+                
+                # Check if linked add-on appointment already exists at this calculated start time
                 existing_addon = db.query(Appointment).filter(
                     Appointment.customer_id == cust_uuid,
                     Appointment.service_id == service_uuid,
-                    Appointment.start_time == original_appt.start_time
+                    Appointment.start_time == start_time
                 ).first()
                 
                 if not existing_addon:
@@ -249,8 +269,8 @@ class RecommendationService:
                         branch_id=original_appt.branch_id,
                         staff_id=original_appt.staff_id,
                         service_id=service_uuid,
-                        start_time=original_appt.start_time,
-                        end_time=original_appt.start_time + timedelta(minutes=int(rec_service.duration_minutes)),
+                        start_time=start_time,
+                        end_time=start_time + timedelta(minutes=int(rec_service.duration_minutes)),
                         status=AppointmentStatus.CONFIRMED,
                         notes=f"Linked Add-on from Appointment {original_appt.id}"
                     )

@@ -34,6 +34,11 @@ from tools.review_tools import (
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+from rag.retriever import (
+    search_salon_knowledge,
+    search_reputation_memory,
+)
+
 
 REPUTATION_SYSTEM_PROMPT = """
 You are SalonAI Reputation Agent (Olivia, Reputation & Review Manager).
@@ -44,6 +49,9 @@ Responsibilities and Capabilities:
 - Find critical reviews requiring escalation using find_critical_reviews
 - Generate and draft professional responses using draft_review_response
 - Track reputation metrics scorecard using view_reputation_scorecard
+- Escalate customer reviews to management using escalate_customer_review
+- Search salon policies and FAQ knowledge base using `search_salon_knowledge`
+- Search reputation manager memory using `search_reputation_memory`
 
 Always use these tools.
 """
@@ -77,6 +85,11 @@ def draft_review_response(review_id: str, custom_response: Optional[str] = None)
 def view_reputation_scorecard() -> str:
     """Generate the overall reputation metrics scorecard."""
     return get_review_analytics_tool()
+
+
+def escalate_customer_review(review_id: str) -> str:
+    """Escalate a customer review to management for urgent attention."""
+    return escalate_review_tool(review_id=review_id)
 
 
 class ReputationAgent(Agent):
@@ -124,10 +137,13 @@ class ReputationAgent(Agent):
                 find_critical_reviews,
                 draft_review_response,
                 view_reputation_scorecard,
+                escalate_customer_review,
+                search_salon_knowledge,
+                search_reputation_memory,
             ],
         )
 
-        logger.info(f"Reputation Agent '{name}' initialized with 5 tools.")
+        logger.info(f"Reputation Agent '{name}' initialized with 8 tools (6 Review CRUD, 2 RAG).")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""
@@ -277,3 +293,8 @@ def draft_review_response(review_id: str, custom_response: Optional[str] = None)
 def view_reputation_scorecard() -> str:
     """Generate the overall reputation metrics scorecard."""
     return get_review_analytics_tool()
+
+
+def escalate_customer_review(review_id: str) -> str:
+    """Escalate a customer review to management for urgent attention."""
+    return escalate_review_tool(review_id=review_id)

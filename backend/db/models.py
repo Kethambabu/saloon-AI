@@ -774,6 +774,65 @@ class StaffLeave(BaseModel):
         return f"<StaffLeave staff_id={self.staff_id} leave_date={self.leave_date}>"
 
 
+class KnowledgeDocument(BaseModel):
+    """
+    Represents dynamic business knowledge files uploaded by admins.
+    Includes policies, FAQs, timings, etc.
+    """
+    __tablename__ = "knowledge_documents"
+
+    title = Column(String(150), nullable=False)
+    document_type = Column(String(50), nullable=False, index=True)  # e.g. cancellation_policy, timings, etc.
+    content = Column(Text, nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeDocument title={self.title} type={self.document_type} version={self.version} active={self.is_active}>"
+
+
+class SpecialOffer(BaseModel):
+    """
+    Represents active discounts and packages offered by the salon.
+    Aggregated automatically into Receptionist Knowledge Base.
+    """
+    __tablename__ = "special_offers"
+
+    title = Column(String(150), nullable=False)
+    description = Column(Text, nullable=False)
+    discount_pct = Column(Float, default=0.0, nullable=False)
+    start_date = Column(Date, nullable=False, index=True)
+    end_date = Column(Date, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+
+    def __repr__(self) -> str:
+        return f"<SpecialOffer title={self.title} discount={self.discount_pct}% active={self.is_active}>"
+
+
+class AgentMemory(BaseModel):
+    """
+    Represents persistent consolidated daily, weekly, monthly, and yearly summaries for agents.
+    """
+    __tablename__ = "agent_memories"
+
+    agent_name = Column(String(100), nullable=False, index=True)  # e.g., receptionist, customer, staff, etc.
+    level = Column(String(50), nullable=False, index=True)       # e.g., daily, weekly, monthly, yearly
+    target_date = Column(Date, nullable=True, index=True)         # target date for daily/weekly/monthly
+    target_year = Column(Integer, nullable=True, index=True)      # target year for yearly
+    customer_id = Column(Uuid(as_uuid=True), ForeignKey("customers.id"), nullable=True, index=True)
+    staff_id = Column(Uuid(as_uuid=True), ForeignKey("staff.id"), nullable=True, index=True)
+    content = Column(Text, nullable=False)
+
+    # Relationships
+    customer = relationship("Customer", backref="memories")
+    staff = relationship("Staff", backref="memories")
+
+    def __repr__(self) -> str:
+        return f"<AgentMemory agent={self.agent_name} level={self.level} date={self.target_date or self.target_year}>"
+
+
 # Export all models and enums
 __all__ = [
     "BaseModel",
@@ -793,9 +852,13 @@ __all__ = [
     "CustomerRecommendation",
     "BusinessMetricsHistory",
     "StaffLeave",
+    "KnowledgeDocument",
+    "SpecialOffer",
+    "AgentMemory",
     "AppointmentStatus",
     "LeadStatus",
     "ReviewStatus",
     "UserRole",
 ]
+
 

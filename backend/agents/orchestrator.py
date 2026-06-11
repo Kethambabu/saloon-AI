@@ -112,17 +112,20 @@ from agents.lead_followup_agent import (
 
 
 # ---- Upsell Agent --------------------------------------------------------
-UPSELL_SYSTEM_PROMPT = """\
-You are Max, the Upsell & Cross-Sell Strategist at SalonAI Workforce.
-Your responsibilities:
-1. Analyse a customer's booking history and suggest premium upgrades.
-2. Recommend complementary add-on services.
-3. Design promotional bundles and loyalty packages.
-4. Calculate potential revenue uplift from upsell opportunities.
-5. Craft persuasive, non-pushy upgrade pitches.
+UPSELL_SYSTEM_PROMPT = """You are Max, the helpful AI Upsell & Cross-Sell Specialist at SalonAI Workforce Platform.
 
-Focus on genuine customer value, not hard selling.
-When you have no real data, provide realistic illustrative examples.
+Your job is to increase revenue per booking, suggest add-on services, recommend premium upgrades, and design promotional bundles.
+
+Available tools:
+1. get_upsell_recommendations(customer_id: str) - Fetch mock personalized service recommendations for a customer.
+2. create_promotion(name: str, discount_percent: int, services: str) - Create a targeted promotional offer draft.
+3. search_salon_knowledge(query: str) - Search salon policy, safety, and SOP documents.
+4. search_receptionist_knowledge(query: str) - Search salon knowledge base for services, policies, and offers.
+5. get_active_offers() - Retrieve active promotional offers.
+6. search_customer_memory(query: str, customer_id: Optional[str]) - Search customer-specific styling and preferences memory.
+7. search_upsell_memory(query: str) - Search upsell strategy, templates, and campaign guidelines memory.
+
+Focus on genuine customer value. Always use RAG and memory tools before responding.
 """
 
 
@@ -171,6 +174,7 @@ from agents.reputation_agent import (
     find_critical_reviews,
     draft_review_response,
     view_reputation_scorecard,
+    escalate_customer_review,
 )
 
 
@@ -336,6 +340,19 @@ class MultiAgentOrchestrator(Agent):
             search_salon_knowledge,
             search_customer_interactions,
             search_all_context,
+            search_customer_memory,
+            search_lead_memory,
+            search_upsell_memory,
+            search_reputation_memory,
+            search_bi_memory,
+        )
+        from tools.receptionist_rag_tools import (
+            search_receptionist_knowledge,
+            get_active_offers,
+            get_business_timings,
+            get_cancellation_policy,
+            get_refund_policy,
+            get_faq_answer,
         )
 
         agents: Dict[AgentIntent, AssistantAgent] = {}
@@ -352,10 +369,16 @@ class MultiAgentOrchestrator(Agent):
                 reschedule_existing_appointment,
                 check_customer_booking_history,
                 search_salon_knowledge,
+                search_receptionist_knowledge,
+                get_active_offers,
+                get_business_timings,
+                get_cancellation_policy,
+                get_refund_policy,
+                get_faq_answer,
             ],
         )
 
-        # 2. Lead Follow-up (real PostgreSQL-backed CRM tools + RAG Knowledge & Interactions search)
+        # 2. Lead Follow-up (real PostgreSQL-backed CRM tools + RAG Knowledge & Interactions search + lead/customer memory)
         agents[AgentIntent.LEAD_FOLLOWUP] = AssistantAgent(
             name="Mia_LeadFollowup",
             model_client=self.model_client,
@@ -371,18 +394,28 @@ class MultiAgentOrchestrator(Agent):
                 view_pipeline_snapshot,
                 search_salon_knowledge,
                 search_customer_interactions,
+                search_lead_memory,
+                search_customer_memory,
             ],
         )
 
-        # 3. Upsell + RAG Knowledge search
+        # 3. Upsell + RAG Knowledge search + upsell/customer memory
         agents[AgentIntent.UPSELL] = AssistantAgent(
             name="Max_Upsell",
             model_client=self.model_client,
             system_message=UPSELL_SYSTEM_PROMPT,
-            tools=[get_upsell_recommendations, create_promotion, search_salon_knowledge],
+            tools=[
+                get_upsell_recommendations,
+                create_promotion,
+                search_salon_knowledge,
+                search_upsell_memory,
+                search_customer_memory,
+                get_active_offers,
+                search_receptionist_knowledge,
+            ],
         )
 
-        # 4. Reputation + RAG Knowledge search (real DB-backed tools)
+        # 4. Reputation + RAG Knowledge search + reputation memory (real DB-backed tools)
         agents[AgentIntent.REPUTATION] = AssistantAgent(
             name="Olivia_Reputation",
             model_client=self.model_client,
@@ -393,11 +426,13 @@ class MultiAgentOrchestrator(Agent):
                 find_critical_reviews,
                 draft_review_response,
                 view_reputation_scorecard,
+                escalate_customer_review,
                 search_salon_knowledge,
+                search_reputation_memory,
             ],
         )
 
-        # 5. Business Intelligence + RAG Knowledge search (real SQL-backed BI agent tools)
+        # 5. Business Intelligence + RAG Knowledge search + BI memory (real SQL-backed BI agent tools)
         from agents.bi_agent import (
             BI_SYSTEM_PROMPT,
             get_dashboard_summary,
@@ -411,6 +446,7 @@ class MultiAgentOrchestrator(Agent):
             forecast_revenue,
             retrieve_business_context,
             query_raw_analytics_database,
+            trigger_returning_cohort_reminders,
         )
 
         agents[AgentIntent.BUSINESS_INTELLIGENCE] = AssistantAgent(
@@ -429,7 +465,9 @@ class MultiAgentOrchestrator(Agent):
                 forecast_revenue,
                 retrieve_business_context,
                 query_raw_analytics_database,
+                trigger_returning_cohort_reminders,
                 search_salon_knowledge,
+                search_bi_memory,
             ],
         )
 

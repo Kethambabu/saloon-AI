@@ -4,10 +4,19 @@ End-to-end test to verify the tool schema fix works with BI agent tools.
 This simulates how AutoGen will pass tools to the OpenAI client.
 """
 
+import os
 import sys
 import json
 import logging
 from typing import Dict, Any, List, Optional
+
+# Add backend directory and parent directory to path
+backend_dir = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.dirname(backend_dir)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

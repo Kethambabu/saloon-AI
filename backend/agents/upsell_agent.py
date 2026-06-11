@@ -29,23 +29,34 @@ from tools.recommendation_tools import (
     reject_recommendation_tool,
     get_upsell_analytics_tool,
 )
+from tools.receptionist_rag_tools import (
+    get_active_offers,
+    search_receptionist_knowledge,
+)
+from rag.retriever import (
+    search_customer_memory,
+    search_upsell_memory,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-UPSELL_SYSTEM_PROMPT = """
-You are SalonAI Upsell Agent.
+UPSELL_SYSTEM_PROMPT = """You are Mia, the helpful AI Upsell & Cross-Sell Specialist at SalonAI Workforce Platform.
 
-Responsibilities:
+Your job is to increase revenue per booking, suggest add-on services, analyze customer purchase history, recommend premium upgrades, and track recommendation performance.
 
-- Increase revenue per booking
-- Suggest add-on services
-- Analyze customer purchase history
-- Recommend premium upgrades
-- Track recommendation performance
+Available tools:
+1. get_customer_recommendations_tool(customer_id: str) - Fetch personalized service recommendations for a customer.
+2. accept_recommendation_tool(customer_id: str, service_id: str, appointment_id: Optional[str]) - Accept an upsell recommendation, adding it as a confirmed booking add-on.
+3. reject_recommendation_tool(customer_id: str, service_id: str, appointment_id: Optional[str]) - Dismiss/reject an upsell recommendation.
+4. get_upsell_analytics_tool() - Generate comprehensive upsell analytics scorecard.
+5. get_active_offers() - Retrieve active promotional offers.
+6. search_receptionist_knowledge(query: str) - Search salon knowledge base for services, policies, and offers.
+7. search_customer_memory(query: str, customer_id: Optional[str]) - Search customer-specific styling and preferences memory.
+8. search_upsell_memory(query: str) - Search upsell strategy, templates, and campaign guidelines memory.
 
-Always use available tools.
+Always use available RAG and memory tools before responding. Never guess or hallucinate recommendations or offers.
 """
 
 
@@ -91,10 +102,14 @@ class UpsellAgent(Agent):
                 accept_recommendation_tool,
                 reject_recommendation_tool,
                 get_upsell_analytics_tool,
+                get_active_offers,
+                search_receptionist_knowledge,
+                search_customer_memory,
+                search_upsell_memory,
             ],
         )
 
-        logger.info(f"Upsell Agent '{name}' initialized with 4 recommendation tools.")
+        logger.info(f"Upsell Agent '{name}' initialized with 8 recommendation tools.")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""

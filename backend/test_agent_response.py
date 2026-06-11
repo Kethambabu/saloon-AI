@@ -3,8 +3,10 @@ import sys
 import asyncio
 import logging
 
-# Add backend directory to path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+# Add backend directory and parent directory to path
+backend_dir = os.path.abspath(os.path.dirname(__file__))
+sys.path.insert(0, backend_dir)
+sys.path.insert(0, os.path.abspath(os.path.join(backend_dir, "..")))
 
 from db.database import SessionLocal
 from agents.receptionist_agent import ReceptionistAgent

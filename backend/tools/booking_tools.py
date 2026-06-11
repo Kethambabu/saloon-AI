@@ -235,12 +235,21 @@ def get_available_slots(
 
         # Determine target staff members
         staff_list = []
+        requested_staff_on_leave = False
+        requested_staff_name = None
         if staff_id:
             try:
                 st_id = resolve_staff(staff_id, session, branch_id=b_id, raise_on_missing=True)
                 st = session.query(Staff).filter(Staff.id == st_id, Staff.is_active == True).first()
                 if not st:
                     return {"success": False, "error": f"Staff member not found or inactive"}
+                
+                # Check leave
+                on_leave, staff_name = is_staff_on_leave(st.id, date_str, session)
+                if on_leave:
+                    requested_staff_on_leave = True
+                    requested_staff_name = staff_name
+                
                 staff_list = [st]
             except ValueError as e:
                 return {"success": False, "error": str(e)}
@@ -257,6 +266,75 @@ def get_available_slots(
             if not on_leave:
                 active_staff.append(s)
         staff_list = active_staff
+
+        if requested_staff_on_leave:
+            # Find other staff members who are NOT on leave and who don't have bookings at those slots
+            other_staff = session.query(Staff).filter(
+                Staff.branch_id == b_id, 
+                Staff.is_active == True,
+                Staff.id != st_id
+            ).all()
+            
+            active_other_staff = []
+            for os in other_staff:
+                os_on_leave, _ = is_staff_on_leave(os.id, date_str, session)
+                if not os_on_leave:
+                    active_other_staff.append(os)
+            
+            # Fetch all non-cancelled appointments for this branch on the target date
+            day_start = datetime.combine(target_date, time(0, 0), tzinfo=timezone.utc)
+            day_end = datetime.combine(target_date, time(23, 59, 59), tzinfo=timezone.utc)
+            
+            appointments = session.query(Appointment).filter(
+                Appointment.branch_id == b_id,
+                Appointment.status != AppointmentStatus.CANCELLED,
+                Appointment.start_time >= day_start,
+                Appointment.start_time <= day_end
+            ).all()
+            
+            slots_available = []
+            now_utc = datetime.now(timezone.utc)
+            current_time = datetime.combine(target_date, time(BUSINESS_START_HOUR, 0), tzinfo=timezone.utc)
+            end_boundary = datetime.combine(target_date, time(BUSINESS_END_HOUR, 0), tzinfo=timezone.utc)
+            
+            while current_time + timedelta(minutes=duration) <= end_boundary:
+                slot_start = current_time
+                slot_end = current_time + timedelta(minutes=duration)
+                
+                if slot_start < now_utc:
+                    current_time += timedelta(minutes=SLOT_INTERVAL_MINUTES)
+                    continue
+                
+                free_staff_ids = []
+                free_staff_names = []
+                for member in active_other_staff:
+                    has_overlap = False
+                    for appt in appointments:
+                        if appt.staff_id == member.id:
+                            if slot_start < appt.end_time.replace(tzinfo=timezone.utc) and slot_end > appt.start_time.replace(tzinfo=timezone.utc):
+                                has_overlap = True
+                                break
+                    if not has_overlap:
+                        free_staff_ids.append(str(member.id))
+                        free_staff_names.append(member.full_name)
+                
+                if free_staff_ids:
+                    slots_available.append({
+                        "start_time": slot_start.isoformat(),
+                        "end_time": slot_end.isoformat(),
+                        "available_staff_ids": free_staff_ids,
+                        "available_staff_names": free_staff_names
+                    })
+                current_time += timedelta(minutes=SLOT_INTERVAL_MINUTES)
+                
+            return {
+                "success": False,
+                "error": f"{requested_staff_name} is on leave on {date_str}. Please choose another staff member.",
+                "staff_on_leave": True,
+                "staff_name": requested_staff_name,
+                "date": date_str,
+                "slots": slots_available
+            }
 
         # Fetch all non-cancelled appointments for this branch on the target date
         day_start = datetime.combine(target_date, time(0, 0), tzinfo=timezone.utc)
@@ -399,8 +477,10 @@ def create_appointment(
                 logger.warning(f"Staff resolution failed: {str(e)}")
                 return {"success": False, "error": str(e)}
 
-        # Ensure booking is in the future
-        if st_start < datetime.now(timezone.utc):
+        # Ensure booking is in the future — give a 6-hour grace window to account for
+        # timezone differences between the user's local time and the UTC server clock.
+        # e.g., "10 AM tomorrow IST" = "4:30 AM UTC" which would incorrectly fail without grace.
+        if st_start < (datetime.now(timezone.utc) - timedelta(hours=6)):
             return {"success": False, "error": "Appointments must be in the future."}
 
         # Get entities (all should exist after resolver)
@@ -409,17 +489,27 @@ def create_appointment(
         
         st_end = st_start + timedelta(minutes=int(service.duration_minutes))
 
-        # Validate Business Hours
-        if not _is_within_business_hours(st_start, st_end):
+        # Validate Business Hours — appointment must be within 9:00–20:00 of the REQUESTED local time
+        # (We treat the input time as local/wall-clock; the Z suffix just marks no explicit offset)
+        req_hour = st_start.hour  # This is the hour from the user's requested time string
+        req_end_hour = st_end.hour
+        if req_hour < BUSINESS_START_HOUR or (st_end.hour > BUSINESS_END_HOUR or (st_end.hour == BUSINESS_END_HOUR and st_end.minute > 0)):
             return {
                 "success": False, 
-                "error": f"Appointment must fit inside business hours ({BUSINESS_START_HOUR}:00 to {BUSINESS_END_HOUR}:00 UTC)."
+                "error": f"Appointment must fit inside business hours (9:00 AM to 8:00 PM). Requested: {req_hour}:00–{req_end_hour}:{st_end.minute:02d}."
             }
 
-        # Enforce Customer Booking Limits (Item 11)
+        # Enforce Customer Booking Limits (Item 11) — only count future bookings as active.
+        # Aligned with the 6-hour timezone grace window. Exclude linked add-on appointments.
+        from sqlalchemy import or_
         active_bookings_count = session.query(Appointment).filter(
             Appointment.customer_id == c_id,
-            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED])
+            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+            Appointment.start_time > (datetime.now(timezone.utc) - timedelta(hours=6)),
+            or_(
+                Appointment.notes.is_(None),
+                ~Appointment.notes.like("Linked Add-on from Appointment%")
+            )
         ).count()
         if active_bookings_count >= 3:
             return {
@@ -519,7 +609,7 @@ def create_appointment(
             if not chosen_staff_id:
                 return {"success": False, "error": "No available staff members for the requested time slot."}
 
-        # Create Appointment
+        # Create Appointment — status is CONFIRMED immediately so it shows in customer UI
         new_appointment = Appointment(
             customer_id=c_id,
             branch_id=b_id,
@@ -527,7 +617,7 @@ def create_appointment(
             service_id=s_id,
             start_time=st_start,
             end_time=st_end,
-            status=AppointmentStatus.PENDING,
+            status=AppointmentStatus.CONFIRMED,
             notes=notes
         )
 
@@ -558,8 +648,8 @@ def create_appointment(
                 notif = Notification(
                     id=uuid.uuid4(),
                     user_id=user.id,
-                    title="Appointment Requested",
-                    message=f"Your appointment request for {service.name} has been submitted and is pending staff confirmation.",
+                    title="Appointment Confirmed",
+                    message=f"Your appointment for {service.name} has been confirmed and is ready.",
                     is_read=False
                 )
                 session.add(notif)
@@ -590,6 +680,26 @@ def create_appointment(
         except Exception as lead_err:
             logger.error(f"Error converting lead on appointment creation: {lead_err}")
 
+        # Mark matching recommendations as accepted
+        try:
+            from db.models import CustomerRecommendation
+            matching_recs = session.query(CustomerRecommendation).filter(
+                CustomerRecommendation.customer_id == c_id,
+                CustomerRecommendation.recommended_service_id == s_id,
+                CustomerRecommendation.accepted == False
+            ).all()
+            for r in matching_recs:
+                r.accepted = True
+                r.appointment_id = new_appointment.id
+            if db:
+                session.flush()
+            else:
+                session.commit()
+            if matching_recs:
+                logger.info(f"Marked {len(matching_recs)} customer recommendations as accepted for customer {c_id}")
+        except Exception as rec_err:
+            logger.error(f"Error converting recommendation on appointment creation: {rec_err}")
+
         logger.info(f"Appointment created: {appointment_id}")
         return {
             "success": True,
@@ -599,8 +709,8 @@ def create_appointment(
             "assigned_staff": assigned_staff_name,
             "start_time": st_start.isoformat(),
             "end_time": st_end.isoformat(),
-            "status": "PENDING",
-            "message": "Appointment created and is pending confirmation."
+            "status": "CONFIRMED",
+            "message": "Appointment confirmed successfully."
         }
 
     except Exception as e:
@@ -954,10 +1064,10 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
         if not customer:
             return {"success": False, "error": f"Customer not found."}
 
-        # Query all appointments, ordered from newest to oldest
+        # Query all appointments, ordered from newest to oldest, limited to 5 to avoid token limit issues
         appointments = session.query(Appointment).filter(
             Appointment.customer_id == c_id
-        ).order_by(Appointment.start_time.desc()).all()
+        ).order_by(Appointment.start_time.desc()).limit(5).all()
 
         history_list = []
         for appt in appointments:
@@ -967,6 +1077,7 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
             review = appt.review
 
             history_list.append({
+                "id": str(appt.id),
                 "appointment_id": str(appt.id),
                 "branch_name": branch.name if branch else None,
                 "branch_city": branch.city if branch else None,
@@ -998,7 +1109,8 @@ def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict
             "email": customer.email,
             "phone": customer.phone,
             "appointment_count": len(history_list),
-            "history": history_list
+            "history": history_list,
+            "bookings": history_list
         }
     except Exception as e:
         logger.error(f"Error fetching customer history: {str(e)}", exc_info=True)
@@ -1171,4 +1283,64 @@ def send_appointment_reminders(customer_id: Any, db: Session) -> int:
         db.commit()
         
     return notifications_created
+
+
+def auto_cancel_past_customer_appointments(customer_id: Any, db: Session) -> int:
+    """
+    Finds all PENDING or CONFIRMED appointments for a customer that are in the past,
+    marks them as CANCELLED, and commits the transaction.
+    """
+    from datetime import datetime, timezone
+    from db.models import Appointment, AppointmentStatus
+    from utils.entity_resolver import resolve_customer
+    
+    try:
+        c_id = resolve_customer(customer_id, db, raise_on_missing=True)
+    except ValueError:
+        return 0
+        
+    now = datetime.now(timezone.utc)
+    past_appts = db.query(Appointment).filter(
+        Appointment.customer_id == c_id,
+        Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+        Appointment.start_time < now
+    ).all()
+    
+    if past_appts:
+        for appt in past_appts:
+            appt.status = AppointmentStatus.CANCELLED
+            logger.info(f"Auto-cancelled past customer appointment {appt.id} (scheduled for {appt.start_time})")
+        db.commit()
+        return len(past_appts)
+    return 0
+
+
+def auto_cancel_past_staff_appointments(staff_id: Any, db: Session) -> int:
+    """
+    Finds all PENDING or CONFIRMED appointments for a staff member that are in the past,
+    marks them as CANCELLED, and commits the transaction.
+    """
+    from datetime import datetime, timezone
+    from db.models import Appointment, AppointmentStatus
+    from utils.entity_resolver import resolve_staff
+    
+    try:
+        s_id = resolve_staff(staff_id, db, raise_on_missing=True)
+    except ValueError:
+        return 0
+        
+    now = datetime.now(timezone.utc)
+    past_appts = db.query(Appointment).filter(
+        Appointment.staff_id == s_id,
+        Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
+        Appointment.start_time < now
+    ).all()
+    
+    if past_appts:
+        for appt in past_appts:
+            appt.status = AppointmentStatus.CANCELLED
+            logger.info(f"Auto-cancelled past staff appointment {appt.id} (scheduled for {appt.start_time})")
+        db.commit()
+        return len(past_appts)
+    return 0
 

@@ -37,12 +37,15 @@ async def test_receptionist_books_when_all_details_provided():
     """Verify that receptionist attempts to check availability and book when all parameters are provided."""
     agent = ReceptionistAgent()
     
+    from datetime import datetime, timedelta, timezone
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+    
     # Mock the LLM client's create response to return all required details
     mock_llm_res = AsyncMock()
-    mock_llm_res.content = '{"intent": "book", "service": "Bridal Makeup", "branch": "Main Salon", "stylist": "Marcus Johnson", "date": "2026-06-06", "time": "17:00"}'
+    mock_llm_res.content = f'{{"intent": "book", "service": "Bridal Makeup", "branch": "Main Salon", "stylist": "Marcus Johnson", "date": "{tomorrow}", "time": "17:00"}}'
     
     # Mock check_stylist_availability to indicate slot is free
-    mock_availability = '{"slots": [{"start_time": "2026-06-06T17:00:00Z"}]}'
+    mock_availability = f'{{"slots": [{{"start_time": "{tomorrow}T17:00:00Z"}}]}}'
     
     # Mock book_new_appointment to return success
     mock_booking = '{"success": true, "appointment_id": "appt-123"}'

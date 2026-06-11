@@ -34,9 +34,9 @@ def test_lead_followup_agent_initialization():
     assert "Send reminders" in sys_msg
     assert "Convert leads into appointments" in sys_msg
 
-    # 3. Verify that the 9 custom CRM tools wrapper functions are bound to the agent
+    # 3. Verify that the 12 custom CRM tools wrapper functions are bound to the agent
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 9
+    assert len(bound_tools) == 12
 
     tool_names = [tool.name for tool in bound_tools]
     assert "find_abandoned_bookings" in tool_names
@@ -48,6 +48,9 @@ def test_lead_followup_agent_initialization():
     assert "view_conversion_analytics" in tool_names
     assert "view_pipeline_snapshot" in tool_names
     assert "search_customer_interactions" in tool_names
+    assert "search_salon_knowledge" in tool_names
+    assert "search_lead_memory" in tool_names
+    assert "search_customer_memory" in tool_names
 
 
 def test_lead_followup_agent_conversation_memory():

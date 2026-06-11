@@ -15,9 +15,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add backend to path
-backend_path = Path(__file__).parent.parent / "backend"
+# Add backend and project root to path
+backend_path = Path(__file__).parent
 sys.path.insert(0, str(backend_path))
+sys.path.insert(0, str(backend_path.parent))
 
 from core.llm_config import LLMConfigManager, check_gemini_key_available
 

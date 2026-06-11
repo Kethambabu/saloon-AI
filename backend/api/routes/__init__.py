@@ -48,6 +48,14 @@ router.include_router(recommendation_router)
 from api.routes.review_routes import router as review_router
 router.include_router(review_router)
 
+# Include memory pipeline sub-routes
+from api.routes.memory_routes import router as memory_router
+router.include_router(memory_router)
+
+# Include admin knowledge base sub-routes
+from api.routes.admin_knowledge_routes import router as admin_knowledge_router
+router.include_router(admin_knowledge_router)
+
 
 
 

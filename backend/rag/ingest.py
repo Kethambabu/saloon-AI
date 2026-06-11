@@ -26,7 +26,80 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except Exception as e:
+    # Fallback to a custom pure-Python implementation when PyTorch DLL loading errors prevent importing langchain-text-splitters
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Failed to import RecursiveCharacterTextSplitter from langchain_text_splitters: {e}. Using pure-Python fallback.")
+    class RecursiveCharacterTextSplitter:
+        def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50, separators: Optional[List[str]] = None, length_function = len):
+            self.chunk_size = chunk_size
+            self.chunk_overlap = chunk_overlap
+            self.separators = separators or ["\n\n", "\n", ". ", ", ", " ", ""]
+            self.length_function = length_function
+
+        def split_text(self, text: str) -> List[str]:
+            return self._split_text(text, self.separators)
+
+        def _split_text(self, text: str, separators: List[str]) -> List[str]:
+            if len(text) <= self.chunk_size:
+                return [text]
+            if not separators:
+                return [text[i:i + self.chunk_size] for i in range(0, len(text), self.chunk_size)]
+            separator = separators[0]
+            if separator == "":
+                splits = list(text)
+            else:
+                splits = text.split(separator)
+            chunks = []
+            current_chunk = []
+            current_len = 0
+            for part in splits:
+                part_str = part + separator if separator != "" else part
+                if len(part_str) > self.chunk_size:
+                    if current_chunk:
+                        chunks.append("".join(current_chunk))
+                        current_chunk = []
+                        current_len = 0
+                    sub_splits = self._split_text(part, separators[1:])
+                    chunks.extend(sub_splits)
+                else:
+                    if current_len + len(part_str) > self.chunk_size:
+                        if current_chunk:
+                            chunks.append("".join(current_chunk))
+                        overlap_str = "".join(current_chunk)
+                        overlap_len = len(overlap_str)
+                        if overlap_len > self.chunk_overlap:
+                            current_chunk = [overlap_str[-self.chunk_overlap:], part_str]
+                            current_len = self.chunk_overlap + len(part_str)
+                        else:
+                            current_chunk = [overlap_str, part_str] if overlap_str else [part_str]
+                            current_len = overlap_len + len(part_str)
+                    else:
+                        current_chunk.append(part_str)
+                        current_len += len(part_str)
+            if current_chunk:
+                chunks.append("".join(current_chunk))
+            return [c.rstrip(separator) if separator != "" else c for c in chunks]
+
+        def create_documents(self, texts: List[str], metadatas: Optional[List[dict]] = None) -> List[Document]:
+            documents = []
+            for i, text in enumerate(texts):
+                meta = metadatas[i] if metadatas and i < len(metadatas) else {}
+                chunks = self.split_text(text)
+                for chunk in chunks:
+                    documents.append(Document(page_content=chunk, metadata=meta.copy()))
+            return documents
+
+        def split_documents(self, documents: List[Document]) -> List[Document]:
+            output = []
+            for doc in documents:
+                chunks = self.split_text(doc.page_content)
+                for chunk in chunks:
+                    output.append(Document(page_content=chunk, metadata=doc.metadata.copy()))
+            return output
 
 from core.config import get_settings
 from rag.embeddings import get_embedding_model, EmbeddingConfig
@@ -53,8 +126,8 @@ class DocumentChunker:
 
     def __init__(
         self,
-        chunk_size: int = 512,
-        chunk_overlap: int = 64,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
         separators: Optional[List[str]] = None,
     ):
         self.splitter = RecursiveCharacterTextSplitter(
@@ -104,172 +177,8 @@ class DocumentChunker:
 
 
 # ---------------------------------------------------------------------------
-# Salon Knowledge Base (Static Business Knowledge)
-# ---------------------------------------------------------------------------
-
-# The canonical salon knowledge base content
-SALON_KNOWLEDGE_BASE: List[Dict[str, Any]] = [
-    {
-        "category": "services",
-        "title": "Signature Precision Haircut",
-        "content": (
-            "Our Signature Precision Haircut ($85, 60 minutes) includes a premium tailored wash, "
-            "precision cut, invigorating scalp massage, and professional style blowout. "
-            "Our senior stylists specialize in all hair types and textures. "
-            "Recommended maintenance: every 4-6 weeks for optimal shape retention."
-        ),
-    },
-    {
-        "category": "services",
-        "title": "Balayage & Creative Color",
-        "content": (
-            "Our Balayage & Creative Color service ($220, 150 minutes) features custom artistic "
-            "coloring and toning with high-end premium bond protectors. Includes a consultation "
-            "to determine the perfect shade palette for your skin tone and lifestyle. "
-            "Our color specialists use Olaplex bond-building treatments to maintain hair integrity. "
-            "Touch-up recommended every 8-12 weeks."
-        ),
-    },
-    {
-        "category": "services",
-        "title": "Hydrating Deep-Cleansing Facial",
-        "content": (
-            "Our Hydrating Deep-Cleansing Facial ($120, 75 minutes) uses organic advanced botanical "
-            "exfoliation, gentle extraction, and antioxidant hydration treatment. "
-            "Includes LED light therapy for collagen stimulation and a customized serum application. "
-            "Perfect for all skin types, especially dehydrated or congested skin. "
-            "Recommended frequency: monthly for optimal results."
-        ),
-    },
-    {
-        "category": "services",
-        "title": "Himalayan Hot Stone Massage",
-        "content": (
-            "Our Himalayan Hot Stone Massage ($150, 90 minutes) is a deep tissue somatic therapy "
-            "utilizing warm mineral-rich salt rocks sourced from the Himalayas. "
-            "Combines Swedish massage techniques with heated stones to release chronic tension, "
-            "improve circulation, and promote deep relaxation. "
-            "Ideal for stress relief, muscle recovery, and chronic pain management."
-        ),
-    },
-    {
-        "category": "policies",
-        "title": "Cancellation Policy",
-        "content": (
-            "SalonAI requires 24-hour advance notice for appointment cancellations. "
-            "Late cancellations (less than 24 hours) may incur a 50% service charge. "
-            "No-shows will be charged the full service amount. "
-            "We understand emergencies happen — please contact us as soon as possible, "
-            "and we'll do our best to accommodate rescheduling."
-        ),
-    },
-    {
-        "category": "policies",
-        "title": "Business Hours & Scheduling",
-        "content": (
-            "SalonAI is open daily from 9:00 AM to 8:00 PM (UTC). "
-            "Last appointment slots are based on service duration to ensure completion before closing. "
-            "Online booking is available 24/7 through our AI receptionist Clara. "
-            "Walk-ins are welcome based on availability, but we recommend advance booking for "
-            "guaranteed slots, especially on weekends."
-        ),
-    },
-    {
-        "category": "policies",
-        "title": "Pricing & Payment",
-        "content": (
-            "All prices are displayed inclusive of service costs. "
-            "We accept cash, all major credit/debit cards, Apple Pay, and Google Pay. "
-            "Gratuities are appreciated but never expected. "
-            "Package bundles and loyalty memberships are available — ask our team about "
-            "the SalonAI Elite Membership for exclusive discounts and priority booking."
-        ),
-    },
-    {
-        "category": "branches",
-        "title": "SalonAI Downtown Elite",
-        "content": (
-            "SalonAI Downtown Elite is located at 100 Enterprise Way, Suite A, Metropolis. "
-            "Phone: 555-0100. Email: downtown@salonai.com. "
-            "Features 8 styling stations, 2 private facial rooms, and 3 massage suites. "
-            "Ample street parking and valet service available on weekends. "
-            "Staff includes Senior Stylist Marcus Vance and Master Esthetician Sarah Jenkins."
-        ),
-    },
-    {
-        "category": "branches",
-        "title": "SalonAI Uptown Oasis",
-        "content": (
-            "SalonAI Uptown Oasis is located at 450 Serenity Lane, Building 3, Metropolis. "
-            "Phone: 555-0200. Email: uptown@salonai.com. "
-            "Spa-inspired atmosphere with 6 styling stations, a zen garden waiting area, "
-            "and premium tea service. "
-            "Staff includes Color Specialist Elena Rostova and Licensed Massage Therapist Kai Chen."
-        ),
-    },
-    {
-        "category": "faq",
-        "title": "First-Time Visitors",
-        "content": (
-            "Welcome to SalonAI! For first-time visitors, we recommend arriving 10 minutes early "
-            "to complete a brief consultation form. Your stylist will discuss your goals, preferences, "
-            "and any concerns before starting the service. "
-            "First-time customers receive a complimentary 20% discount on their first service. "
-            "No referral needed — just mention you're a new client when booking."
-        ),
-    },
-    {
-        "category": "faq",
-        "title": "Aftercare & Products",
-        "content": (
-            "We carry a curated selection of professional-grade hair and skincare products. "
-            "Your stylist will recommend specific products based on your service and hair/skin type. "
-            "All products are available for purchase in-salon or through our online store. "
-            "We offer a 30-day satisfaction guarantee on all retail products."
-        ),
-    },
-    {
-        "category": "faq",
-        "title": "Group & Event Bookings",
-        "content": (
-            "SalonAI offers special packages for weddings, proms, corporate events, and group sessions. "
-            "Groups of 4+ receive a 10% discount. Bridal packages include trial runs and day-of styling. "
-            "Please contact us at least 2 weeks in advance for group bookings to ensure availability. "
-            "Private salon buyouts are available for groups of 12+ guests."
-        ),
-    },
-    {
-        "category": "loyalty",
-        "title": "SalonAI Elite Membership",
-        "content": (
-            "The SalonAI Elite Membership costs $49/month and includes: "
-            "15% off all services, priority booking, complimentary birthday service, "
-            "exclusive access to new treatments, and a quarterly product gift box. "
-            "Members earn 1 loyalty point per $1 spent. 500 points = $50 credit. "
-            "Cancel anytime with no penalty."
-        ),
-    },
-]
-
-
-def _build_knowledge_documents() -> List[Document]:
-    """Convert the salon knowledge base into LangChain Documents."""
-    docs = []
-    for entry in SALON_KNOWLEDGE_BASE:
-        content = f"{entry['title']}\n\n{entry['content']}"
-        docs.append(
-            Document(
-                page_content=content,
-                metadata={
-                    "source": "salon_knowledge_base",
-                    "category": entry["category"],
-                    "title": entry["title"],
-                    "doc_type": "knowledge",
-                    "ingested_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-        )
-    return docs
+# Salon Knowledge Base (Static Business Knowledge RAG #1) was removed from here.
+# Dynamic business policies are now managed via RAG #3 (receptionist_knowledge) and stored in the database.
 
 
 # ---------------------------------------------------------------------------
@@ -442,24 +351,21 @@ def build_interaction_documents(
 class RAGIngestor:
     """
     Unified ingestion facade that orchestrates:
-        1. Loading knowledge base and interaction documents
+        1. Loading interaction documents
         2. Chunking into embedding-ready fragments
         3. Building and persisting FAISS vector indices
 
-    Manages two separate FAISS indices:
-        - `knowledge_index`  → Static salon business knowledge
-        - `interaction_index` → Dynamic customer interactions from PostgreSQL
+    Manages FAISS index for dynamic customer interactions from PostgreSQL.
     """
 
-    KNOWLEDGE_INDEX_NAME = "salon_knowledge"
     INTERACTION_INDEX_NAME = "customer_interactions"
 
     def __init__(
         self,
         index_dir: Optional[str] = None,
         embedding_config: Optional[EmbeddingConfig] = None,
-        chunk_size: int = 512,
-        chunk_overlap: int = 64,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
     ):
         self.index_dir = index_dir or _DEFAULT_INDEX_DIR
         self.embedding_model = get_embedding_model(embedding_config)
@@ -468,57 +374,6 @@ class RAGIngestor:
         # Ensure index directory exists
         os.makedirs(self.index_dir, exist_ok=True)
         logger.info(f"[RAGIngestor] Initialized (index_dir={self.index_dir})")
-
-    def ingest_knowledge_base(self, force_rebuild: bool = False) -> Dict[str, Any]:
-        """
-        Build the salon knowledge base FAISS index from static content.
-
-        Args:
-            force_rebuild: If True, rebuilds even if an existing index is found.
-
-        Returns:
-            Metadata about the ingestion result.
-        """
-        from langchain_community.vectorstores import FAISS
-
-        index_path = os.path.join(self.index_dir, self.KNOWLEDGE_INDEX_NAME)
-
-        # Check for existing index
-        if not force_rebuild and os.path.exists(f"{index_path}.faiss"):
-            logger.info("[RAGIngestor] Knowledge base index already exists. Skipping rebuild.")
-            return {
-                "success": True,
-                "action": "skipped",
-                "index_path": index_path,
-                "message": "Existing index found. Use force_rebuild=True to overwrite.",
-            }
-
-        logger.info("[RAGIngestor] Building salon knowledge base index...")
-
-        # Load and chunk knowledge documents
-        raw_docs = _build_knowledge_documents()
-        chunked_docs = self.chunker.chunk_documents(raw_docs)
-
-        logger.info(f"[RAGIngestor] Chunked {len(raw_docs)} docs → {len(chunked_docs)} chunks")
-
-        # Build FAISS index
-        vectorstore = FAISS.from_documents(
-            documents=chunked_docs,
-            embedding=self.embedding_model,
-        )
-
-        # Persist to disk
-        vectorstore.save_local(index_path)
-
-        logger.info(f"[RAGIngestor] Knowledge base index saved to {index_path}")
-        return {
-            "success": True,
-            "action": "built",
-            "index_name": self.KNOWLEDGE_INDEX_NAME,
-            "index_path": index_path,
-            "raw_documents": len(raw_docs),
-            "chunks_indexed": len(chunked_docs),
-        }
 
     def ingest_interactions(self, force_rebuild: bool = False) -> Dict[str, Any]:
         """
@@ -620,7 +475,7 @@ class RAGIngestor:
 
     def ingest_all(self, force_rebuild: bool = False) -> Dict[str, Any]:
         """
-        Run full ingestion pipeline: knowledge base + customer interactions.
+        Run full ingestion pipeline: customer interactions.
 
         Args:
             force_rebuild: Rebuild all indices from scratch.
@@ -628,13 +483,11 @@ class RAGIngestor:
         Returns:
             Combined ingestion results.
         """
-        logger.info("[RAGIngestor] Starting full ingestion pipeline...")
+        logger.info("[RAGIngestor] Starting customer interaction ingestion...")
 
-        kb_result = self.ingest_knowledge_base(force_rebuild=force_rebuild)
         interaction_result = self.ingest_interactions(force_rebuild=force_rebuild)
 
         return {
             "success": True,
-            "knowledge_base": kb_result,
             "interactions": interaction_result,
         }

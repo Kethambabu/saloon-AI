@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GEMINI_MODEL = "gemini-2.0-flash"  # Fast, free tier available
 
+# ============================================================================
+# HUGGING FACE PROVIDER CONFIGURATION
+# ============================================================================
+_settings = get_settings()
+HUGGINGFACE_API_BASE_URL = _settings.huggingface_api_base_url
+HUGGINGFACE_MODEL = _settings.huggingface_model
+HUGGINGFACE_ENABLED = _settings.huggingface_enabled
+HUGGINGFACE_API_KEY = _settings.huggingface_api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN", "")
+
 def check_gemini_key_available() -> bool:
     """Check if Gemini API key is configured."""
     settings = get_settings()
@@ -118,17 +127,25 @@ class LLMConfigManager:
     def __init__(self):
         """Initialize LLM configuration manager."""
         self.settings = get_settings()
-        self.primary_model = self._get_primary_model()
+        # Determine primary provider based on environment
+        self.huggingface_available = HUGGINGFACE_ENABLED
+        if self.huggingface_available:
+            self.current_provider = "huggingface"
+            self.primary_model = HUGGINGFACE_MODEL
+            self.base_url = HUGGINGFACE_API_BASE_URL
+        else:
+            self.current_provider = "groq"
+            self.primary_model = self._get_primary_model()
+            self.base_url = GROQ_API_BASE_URL
         self.fallback_model = DEFAULT_FALLBACK_MODEL
         self.api_key = self._get_api_key()
-        self.base_url = GROQ_API_BASE_URL
         self.is_mock_mode = False
         
         # Check for Gemini availability
         self.gemini_available = check_gemini_key_available()
         self.gemini_api_key = self.settings.gemini_api_key or self.settings.google_api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
         
-        logger.info(f"LLM Config initialized: primary={self.primary_model}, fallback={self.fallback_model}, gemini={self.gemini_available}")
+        logger.info(f"LLM Config initialized: provider={self.current_provider}, primary={self.primary_model}, fallback={self.fallback_model}, gemini={self.gemini_available}")
     
     def _get_api_key(self) -> str:
         """Get Groq API key from settings or environment."""
@@ -157,28 +174,36 @@ class LLMConfigManager:
     
     def get_config(self, use_fallback: bool = False) -> Dict[str, Any]:
         """
-        Get complete LLM configuration for instantiating OpenAI client.
-        
+        Get complete LLM configuration for the current provider.
+
         Args:
-            use_fallback: If True, use fallback model instead of primary
-        
+            use_fallback: If True, use fallback model (Groq fallback or Gemini) instead of primary.
+
         Returns:
-            Dictionary with 'model', 'api_key', 'base_url', 'model_info'
+            Dictionary with 'model', 'api_key', 'base_url', 'model_info', 'provider'.
         """
-        model = self.fallback_model if use_fallback else self.primary_model
-        
+        if self.current_provider == "huggingface":
+            model = self.primary_model if not use_fallback else self.fallback_model
+            api_key = HUGGINGFACE_API_KEY or "huggingface"
+        else:
+            model = self.fallback_model if use_fallback else self.primary_model
+            api_key = self.api_key
+
         return {
             "model": model,
-            "api_key": self.api_key,
+            "api_key": api_key,
             "base_url": self.base_url,
             "model_info": get_model_info_dict(model),
+            "provider": self.current_provider,
         }
     
     @staticmethod
     def detect_rate_limit_error(error: Exception) -> bool:
-        """Detect if error is a Groq rate limit (HTTP 429) error."""
+        """Detect if error is a Groq rate limit (HTTP 429) or a tool calling error (tool_use_failed)."""
         error_str = str(error)
-        return "429" in error_str or "rate_limit" in error_str.lower() or "Rate limit reached" in error_str
+        is_rate_limit = "429" in error_str or "rate_limit" in error_str.lower() or "Rate limit reached" in error_str
+        is_tool_failure = "tool_use_failed" in error_str or "failed_generation" in error_str.lower() or "failed to call a function" in error_str.lower()
+        return is_rate_limit or is_tool_failure
     
     @staticmethod
     def handle_rate_limit_error(error: Exception) -> Dict[str, Any]:
@@ -249,28 +274,152 @@ class LLMConfigManager:
             logger.error(f"❌ Gemini fallback error: {str(e)}")
             return False, {}
     
+    def get_provider_chain(self) -> list:
+        """
+        Return a fresh, ordered list of provider configuration dicts for the
+        current request.  Order: Hugging Face -> Groq (primary) -> Groq (fallback) -> Gemini.
+        This is called once per request so the singleton's state is NEVER mutated
+        permanently; Hugging Face will always be tried first on the next request.
+
+        Returns:
+            List of dicts with keys: provider, model, api_key, base_url, model_info
+        """
+        chain: list = []
+
+        # --- Tier 1: Hugging Face model ---
+        if HUGGINGFACE_ENABLED:
+            chain.append({
+                "provider": "huggingface",
+                "model": HUGGINGFACE_MODEL,
+                "api_key": HUGGINGFACE_API_KEY or "huggingface",
+                "base_url": HUGGINGFACE_API_BASE_URL,
+                "model_info": {
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "family": "qwen" if "qwen" in HUGGINGFACE_MODEL.lower() else "llama-3.3" if "llama" in HUGGINGFACE_MODEL.lower() else "unknown",
+                    "structured_output": False,
+                },
+            })
+
+        # --- Tier 2: Groq primary (llama-3.3-70b-versatile) ---
+        groq_key = self.settings.groq_api_key or os.environ.get("GROQ_API_KEY", "")
+        if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
+            chain.append({
+                "provider": "groq",
+                "model": DEFAULT_PRIMARY_MODEL,
+                "api_key": groq_key,
+                "base_url": GROQ_API_BASE_URL,
+                "model_info": get_model_info_dict(DEFAULT_PRIMARY_MODEL),
+            })
+            # --- Tier 3: Groq fallback (llama-3.1-8b-instant) ---
+            chain.append({
+                "provider": "groq",
+                "model": DEFAULT_FALLBACK_MODEL,
+                "api_key": groq_key,
+                "base_url": GROQ_API_BASE_URL,
+                "model_info": get_model_info_dict(DEFAULT_FALLBACK_MODEL),
+            })
+
+        # --- Tier 4: Gemini ---
+        gemini_key = (
+            self.settings.gemini_api_key
+            or self.settings.google_api_key
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY", "")
+        )
+        if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
+            chain.append({
+                "provider": "gemini",
+                "model": GEMINI_MODEL,
+                "api_key": gemini_key,
+                "base_url": GEMINI_API_BASE_URL,
+                "model_info": {
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "family": "gemini-2.0",
+                    "structured_output": False,
+                },
+            })
+
+        return chain
+
+    def get_next_fallback_config(self, error: Exception) -> Optional[Dict[str, Any]]:
+        """
+        Transition to the next fallback provider in the chain (Hugging Face -> Groq -> Gemini)
+        and return the configuration, or None if no fallbacks remain.
+
+        NOTE: This method intentionally does NOT mutate self.current_provider so that
+        the singleton always starts fresh with Hugging Face on the next request.
+
+        Args:
+            error: The exception that triggered the fallback.
+
+        Returns:
+            Dictionary with next configuration or None.
+        """
+        logger.warning(f"🚨 Provider error or rate limit detected on '{self.current_provider}': {str(error)[:150]}")
+
+        if self.current_provider == "huggingface":
+            logger.info("🔄 Switching from Hugging Face to Groq fallback...")
+            groq_key = self.settings.groq_api_key or os.environ.get("GROQ_API_KEY", "")
+            if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
+                self.current_provider = "groq"
+                return {
+                    "provider": "groq",
+                    "model": DEFAULT_PRIMARY_MODEL,
+                    "api_key": groq_key,
+                    "base_url": GROQ_API_BASE_URL,
+                    "model_info": get_model_info_dict(DEFAULT_PRIMARY_MODEL),
+                }
+            # No Groq key → fall straight through to Gemini
+            logger.warning("⚠️ No Groq key available, skipping Groq tier.")
+            self.current_provider = "gemini"
+
+        if self.current_provider == "groq":
+            if self.gemini_available:
+                logger.info("🔄 Switching from Groq to Gemini fallback...")
+                self.current_provider = "gemini"
+                return {
+                    "model": GEMINI_MODEL,
+                    "api_key": self.gemini_api_key,
+                    "base_url": GEMINI_API_BASE_URL,
+                    "model_info": {
+                        "vision": False,
+                        "function_calling": True,
+                        "json_output": True,
+                        "family": "gemini-2.0",
+                        "structured_output": False,
+                    },
+                    "provider": "gemini",
+                }
+            else:
+                logger.error("❌ Gemini fallback is not available (API key missing).")
+                return None
+
+        # Already on Gemini — no more fallbacks
+        logger.error("❌ No more fallback providers in the chain.")
+        return None
+
     def get_config_with_fallback(self, error: Optional[Exception] = None) -> Dict[str, Any]:
         """
-        Get LLM configuration with automatic fallback on rate limits.
+        Get LLM configuration with automatic fallback on rate limits/errors.
         
         Args:
-            error: Optional exception to check for rate limit errors
+            error: Optional exception to check for rate limit/provider errors.
         
         Returns:
-            Dictionary with 'model', 'api_key', 'base_url', 'model_info', 'provider'
+            Dictionary with 'model', 'api_key', 'base_url', 'model_info', 'provider'.
         """
-        # Check if error is rate limit and try Gemini
-        if error and self.detect_rate_limit_error(error):
-            logger.warning(f"🚨 Rate limit detected: {str(error)[:100]}")
-            
-            success, gemini_config = self.switch_to_gemini_fallback()
-            if success:
-                gemini_config["provider"] = "gemini"
-                return gemini_config
-        
-        # Use Gemini if rate limit was previously detected
+        if error:
+            next_config = self.get_next_fallback_config(error)
+            if next_config:
+                return next_config
+                
+        # If Gemini was previously activated due to prior rate limits
         if LLMConfigManager.RATE_LIMIT_ACTIVE and self.gemini_available:
-            config = {
+            return {
                 "model": GEMINI_MODEL,
                 "api_key": self.gemini_api_key,
                 "base_url": GEMINI_API_BASE_URL,
@@ -281,13 +430,12 @@ class LLMConfigManager:
                     "family": "gemini-2.0",
                     "structured_output": False,
                 },
-                "provider": "gemini"
+                "provider": "gemini",
             }
-            return config
-        
-        # Default to Groq
+            
+        # Default to current provider
         config = self.get_config(use_fallback=False)
-        config["provider"] = "groq"
+        config["provider"] = self.current_provider
         return config
     
     def validate_at_startup(self) -> bool:
@@ -306,10 +454,18 @@ class LLMConfigManager:
         logger.info(f"Environment: {self.settings.environment}")
         logger.info(f"Debug Mode: {self.settings.debug}")
         
-        # Log PRIMARY provider (Groq)
-        logger.info(f"Primary Provider: Groq (https://groq.com)")
-        logger.info(f"Primary Base URL: {self.base_url}")
-        logger.info(f"Primary Model: {self.primary_model}")
+        # Log PRIMARY provider
+        if self.current_provider == "huggingface":
+            logger.info("Primary Provider: Hugging Face (API)")
+            logger.info(f"Hugging Face Base URL: {self.base_url}")
+            logger.info(f"Hugging Face Model: {self.primary_model}")
+            primary_valid = True
+        else:
+            logger.info("Primary Provider: Groq (https://groq.com)")
+            logger.info(f"Primary Base URL: {self.base_url}")
+            logger.info(f"Primary Model: {self.primary_model}")
+            primary_valid = GroqModel.validate(self.primary_model)
+            
         logger.info(f"Primary Fallback: {self.fallback_model}")
         
         # Log mode
@@ -319,7 +475,6 @@ class LLMConfigManager:
             logger.info("✅ Production Mode - Using real Groq API key")
         
         # Validate Groq models
-        primary_valid = GroqModel.validate(self.primary_model)
         fallback_valid = GroqModel.validate(self.fallback_model)
         
         logger.info(f"Primary Valid: {'✅ Yes' if primary_valid else '❌ No'}")

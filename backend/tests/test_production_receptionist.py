@@ -163,6 +163,7 @@ async def test_graceful_emergency_mode():
     
     # Manually trip circuit breaker
     ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = True
+    ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED_AT = time.time()
     
     try:
         # Process query while circuit breaker is tripped

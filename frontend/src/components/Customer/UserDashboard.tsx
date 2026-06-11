@@ -335,6 +335,19 @@ export const UserDashboard: React.FC = () => {
 
   const handleAcceptRecommendation = async (rec: any) => {
     if (!user?.customer_id) return;
+    
+    // If no appointment is associated with the recommendation and we didn't just book one,
+    // redirect the user to the booking wizard with this service pre-selected.
+    if (!rec.appointment_id && !justBookedAppt) {
+      setSelectedService(rec.service_id);
+      setSelectedBranch(prefBranch || (branches.length > 0 ? branches[0].id : ''));
+      setSelectedStylist(prefStylist || 'any');
+      setBookingStep(4); // Move to date/time selection step
+      setActiveTab('book');
+      showToast('Please select your preferred date and time for this service.', 'success');
+      return;
+    }
+    
     try {
       const res = await apiClient.post('/recommendations/accept', {
         customer_id: user.customer_id,

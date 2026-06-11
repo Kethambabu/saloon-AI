@@ -90,6 +90,7 @@ def create_api_app() -> FastAPI:
             try:
                 from rag.ingest import RAGIngestor
                 from rag.retriever import get_retriever
+                from services.receptionist_rag_service import ReceptionistRAGService
                 
                 retriever = get_retriever()
                 status = retriever.get_status()
@@ -98,6 +99,16 @@ def create_api_app() -> FastAPI:
                     logger.info("FAISS indices missing or incomplete. Initiating automatic ingestion...")
                     ingestor = RAGIngestor()
                     ingestor.ingest_all(force_rebuild=True)
+                    
+                    # Also build dynamic receptionist knowledge RAG index from database
+                    db = SessionLocal()
+                    try:
+                        rag_service = ReceptionistRAGService()
+                        rag_service.rebuild_receptionist_knowledge_index(db)
+                        logger.info("Automatic receptionist knowledge RAG ingestion completed successfully.")
+                    finally:
+                        db.close()
+                        
                     logger.info("Automatic RAG ingestion completed successfully.")
                 else:
                     logger.info("RAG FAISS indices verified and loaded.")

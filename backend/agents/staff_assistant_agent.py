@@ -29,6 +29,7 @@ from core.llm_config import get_llm_config
 
 # Import staff specific database tools and RAG tools
 from tools.staff_tools import (
+    get_schedule,
     get_today_schedule,
     get_next_customer,
     get_customer_history,
@@ -43,6 +44,7 @@ from tools.staff_tools import (
     search_customer_interactions,
     search_all_context
 )
+from rag.retriever import search_staff_memory, search_customer_memory
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -56,21 +58,24 @@ Never guess or hallucinate appointments, customer details, leaves, or ratings.
 Provide personalized service recommendations using customer history or active upsell rule tools.
 
 Available tools:
-1. get_today_schedule(staff_id: str) - Retrieve list of appointments for today.
-2. get_next_customer(staff_id: str) - Find details of the next customer scheduled.
-3. get_customer_history(customer_name: str) - Find historical appointments, spend, and ratings for a customer.
-4. get_customer_preferences(customer_name: str) - View formula styling details or notes from past appointments.
-5. get_staff_revenue(staff_id: str) - Calculate total career and monthly revenue generated.
-6. get_staff_performance(staff_id: str) - Review completions, cancellations, ratings, and stats.
-7. get_pending_appointments(staff_id: str) - List appointments waiting for confirmation.
-8. create_leave_request(staff_id: str, leave_date: str, reason: Optional[str]) - Submit a leave request on YYYY-MM-DD.
-9. send_customer_reminders(staff_id: str) - Send WhatsApp/SMS notifications to today's appointments.
-10. recommend_services(customer_id: str) - Retrieve matching service upsells for a customer.
-11. search_salon_knowledge(query: str, category: Optional[str]) - Search salon policy, safety, and SOP documents.
-12. search_customer_interactions(query: str, doc_type: Optional[str], customer_name: Optional[str]) - Search customer interactions RAG base.
-13. search_all_context(query: str) - General RAG search across knowledge and interactions.
+- get_schedule(staff_id: str, date_str: Optional[str] = None) - Retrieve list of appointments for a specific target date YYYY-MM-DD. If date_str is not provided, defaults to today. Use this for tomorrow, yesterday, or any target date queries.
+- get_today_schedule(staff_id: str) - Retrieve list of appointments for today.
+- get_next_customer(staff_id: str) - Find details of the next customer scheduled.
+- get_customer_history(customer_name: str) - Find historical appointments, spend, and ratings for a customer.
+- get_customer_preferences(customer_name: str) - View formula styling details or notes from past appointments.
+- get_staff_revenue(staff_id: str) - Calculate total career and monthly revenue generated.
+- get_staff_performance(staff_id: str) - Review completions, cancellations, ratings, and stats.
+- get_pending_appointments(staff_id: str) - List appointments waiting for confirmation.
+- create_leave_request(staff_id: str, leave_date: str, reason: Optional[str]) - Submit a leave request on YYYY-MM-DD.
+- send_customer_reminders(staff_id: str) - Send WhatsApp/SMS notifications to today's appointments.
+- recommend_services(customer_id: str) - Retrieve matching service upsells for a customer.
+- search_salon_knowledge(query: str, category: Optional[str]) - Search salon policy, safety, and SOP documents.
+- search_customer_interactions(query: str, doc_type: Optional[str], customer_name: Optional[str]) - Search customer interactions RAG base.
+- search_all_context(query: str) - General RAG search across knowledge and interactions.
+- search_staff_memory(query: str) - Search long-term staff manager and performance memory summaries.
+- search_customer_memory(query: str, customer_id: Optional[str]) - Search customer-specific styling and preferences memory.
 
-Always respond professionally, clearly, and constructively. When displaying customer history, schedule, or performance data, format it in clean, readable tables or bullet points using Markdown.
+Always respond professionally, clearly, and constructively. When displaying customer history, schedule, or performance data, format it in clean, readable tables or bullet points using Markdown. CRITICAL: Present all responses in clear, friendly, conversational natural language text only. NEVER output raw JSON, code blocks containing JSON data, or raw python dictionaries directly to the user. Present all information in plain text or formatted tables.
 """
 
 
@@ -80,6 +85,7 @@ class StaffAssistantAgent(Agent):
     Enables staff members to query schedules, customer preferences, log leaves,
     and track personal performance metrics.
     """
+    CURRENT_QUERY_CONTEXT: str = ""
 
     def __init__(self, name: str = "Atlas", role: str = "Staff Productivity Assistant"):
         super().__init__(name=name, role=role)
@@ -114,6 +120,7 @@ class StaffAssistantAgent(Agent):
             model_client=self.model_client,
             system_message=STAFF_SYSTEM_PROMPT,
             tools=[
+                get_schedule,
                 get_today_schedule,
                 get_next_customer,
                 get_customer_history,
@@ -126,11 +133,13 @@ class StaffAssistantAgent(Agent):
                 recommend_services,
                 search_salon_knowledge,
                 search_customer_interactions,
-                search_all_context
+                search_all_context,
+                search_staff_memory,
+                search_customer_memory
             ],
         )
 
-        logger.info(f"Staff Assistant Agent '{name}' initialized with 13 tools.")
+        logger.info(f"Staff Assistant Agent '{name}' initialized with 15 tools.")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""
@@ -185,6 +194,12 @@ class StaffAssistantAgent(Agent):
         if not query:
             return {"success": False, "error": "Input data must contain a 'query' key."}
 
+        StaffAssistantAgent.CURRENT_QUERY_CONTEXT = query
+        try:
+            from core.query_context import set_query_context
+            set_query_context(query)
+        except Exception as qe:
+            logger.warning(f"Failed to set query context: {qe}")
         session_id = input_data.get("session_id", "default")
         chat_history = input_data.get("chat_history", [])
 

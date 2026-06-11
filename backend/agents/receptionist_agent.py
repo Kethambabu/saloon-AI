@@ -1,3 +1,4 @@
+
 """
 AI Receptionist Agent for SalonAI Workforce Platform.
 Built using Microsoft AutoGen.
@@ -688,6 +689,29 @@ def format_receptionist_tool_output(intent: str, raw_res_str: str) -> str:
         return "Here is your styling history:\n" + "\n".join(lines)
         
     elif intent == "availability":
+        if data.get("staff_on_leave"):
+            staff_name = data.get("staff_name") or "The requested stylist"
+            date_str = data.get("date", "your selected date")
+            slots = data.get("slots", [])
+            if not slots:
+                return f"{staff_name} is on leave on {date_str}. Please choose another staff member. Unfortunately, no other stylists are available on this date."
+            
+            lines = []
+            for slot in slots:
+                start_str = slot.get("start_time", "")
+                try:
+                    dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    nice_time = dt.strftime("%I:%M %p")
+                except Exception:
+                    nice_time = start_str
+                names = slot.get("available_staff_names", [])
+                if names:
+                    lines.append(f"• {nice_time} (Available: {', '.join(names)})")
+                else:
+                    lines.append(f"• {nice_time}")
+            
+            return f"{staff_name} is on leave on {date_str}. Please choose another staff member. Here are the available stylists and their slots:\n" + "\n".join(lines)
+
         slots = data.get("slots", [])
         if not slots:
             return f"I'm sorry, but there are no available slots for {data.get('date', 'your selected date')}."
@@ -737,7 +761,10 @@ def get_available_branches() -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(list_available_branches)
         try:
-            return future.result(timeout=5.0)
+
+
+
+            return future.result(timeout=25.0)
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -751,12 +778,12 @@ def get_available_services() -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(list_available_services)
         try:
-            return future.result(timeout=5.0)
+            return future.result(timeout=25.0)
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
 
-def get_available_staff(branch_id: str = None) -> str:
+def get_available_staff(branch_id: Optional[str] = None) -> str:
     """
     Discover all available stylists/staff members.
     Optionally filter by a specific branch.
@@ -766,7 +793,7 @@ def get_available_staff(branch_id: str = None) -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(list_available_staff, repaired_branch)
         try:
-            return future.result(timeout=5.0)
+            return future.result(timeout=25.0)
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -786,7 +813,7 @@ def search_customers(customer_query: str) -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(search_for_customers, customer_query)
         try:
-            return future.result(timeout=5.0)
+            return future.result(timeout=25.0)
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -815,7 +842,7 @@ def check_stylist_availability(
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
-            return str(future.result(timeout=5.0))
+            return str(future.result(timeout=25.0))
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -867,7 +894,7 @@ def book_new_appointment(
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
-            return str(future.result(timeout=5.0))
+            return str(future.result(timeout=25.0))
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -901,7 +928,7 @@ def cancel_existing_appointment(appointment_id: str) -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
-            return str(future.result(timeout=5.0))
+            return str(future.result(timeout=25.0))
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -953,7 +980,7 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
-            return str(future.result(timeout=5.0))
+            return str(future.result(timeout=25.0))
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -969,7 +996,7 @@ def check_customer_booking_history(customer_id: str) -> str:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
-            return str(future.result(timeout=5.0))
+            return str(future.result(timeout=25.0))
         except concurrent.futures.TimeoutError:
             return "Error: Tool execution timed out."
 
@@ -1032,7 +1059,7 @@ def normalize_response(text: str) -> str:
 # HYPER-FOCUSED 10-RULE SYSTEM PROMPT (REDUCED BY >50%)
 # ============================================================================
 
-RECEPTIONIST_SYSTEM_PROMPT = """You are Clara, a professional AI Salon Receptionist. You manage appointments and nothing else.
+RECEPTIONIST_SYSTEM_PROMPT = """You are Clara, a professional AI Salon Receptionist. You manage appointments and salon inquiries.
 Absolute Rules:
 1. NEVER INVENT DATA: If user provides service, branch, stylist, date, time, price, use those EXACT values. Never alter, replace, or suggest alternatives.
 2. BOOKING REQUESTS ARE TOOL TASKS: Immediately execute the appropriate tool. DO NOT CHAT, explain, list services/branches, or greet again.
@@ -1051,7 +1078,8 @@ Absolute Rules:
    Status: Confirmed
 8. AVAILABILITY QUESTIONS: For "Is this slot available?", immediately call availability tool. Do not explain services or suggest options.
 9. TOOL FAILURE: If tool fails, output exactly "I could not verify availability right now." Never fake availability.
-10. ROLE: You are purely an appointment booking, cancellation, rescheduling, and history management assistant. Never act as sales or marketing agent.
+10. ROLE: You are purely an appointment booking, cancellation, rescheduling, history management, and salon information/policies assistant. Never act as sales or marketing agent.
+11. RECEPTIONIST KNOWLEDGE BASE: For any questions about salon policies, business hours/timings, active offers/promotions, refunds, cancellations, FAQs, or general salon information, ALWAYS execute `search_receptionist_knowledge()` first. Never invent timings, policies, or offers. If no information is found in the knowledge base, state exactly: 'I couldn't find that information in the salon knowledge base.'
 For every booking-related message, TOOL EXECUTION IS MANDATORY."""
 
 
@@ -1059,17 +1087,146 @@ For every booking-related message, TOOL EXECUTION IS MANDATORY."""
 # RECEPTIONIST AGENT CLASS WITH SEQUENTIAL COOLDOWN TIMEOUT FALLBACKS
 # ============================================================================
 
+# ============================================================================
+# KEYWORD-ONLY INTENT SHORTCUT — saves ~200 tokens/call for greetings & FAQs
+# ============================================================================
+
+_CHAT_KEYWORDS = [
+    "hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye",
+    "who are you", "what can you do", "help me", "how are you",
+]
+_POLICY_KEYWORDS = [
+    "policy", "policies", "timings", "hours", "offer", "discount",
+    "promotion", "refund", "cancel policy", "faq", "working hours",
+    "opening", "closing", "how much", "price list"
+]
+_HISTORY_KEYWORDS = ["my appointment", "my booking", "past appointment", "history", "previous visit"]
+_AVAILABILITY_KEYWORDS = ["available", "availability", "free slot", "open slot", "check slot"]
+_BOOK_KEYWORDS = ["book", "schedule", "reserve", "appointment at", "book me", "make appointment"]
+_CANCEL_KEYWORDS = ["cancel", "delete appointment", "remove booking"]
+_RESCHEDULE_KEYWORDS = ["reschedule", "move appointment", "change appointment", "postpone"]
+
+
+def _fast_intent_classify(query: str) -> str:
+    """
+    Lightweight keyword-based intent classifier.
+    Returns a detected intent string ('chat', 'policy', 'book', 'cancel',
+    'reschedule', 'history', 'availability', or 'unknown' if ambiguous).
+    Called BEFORE the LLM extraction to skip the LLM call entirely for obvious inputs.
+    """
+    q = query.lower()
+    if any(kw in q for kw in _CANCEL_KEYWORDS):
+        return "cancel"
+    if any(kw in q for kw in _RESCHEDULE_KEYWORDS):
+        return "reschedule"
+    if any(kw in q for kw in _BOOK_KEYWORDS):
+        return "book"
+    if any(kw in q for kw in _AVAILABILITY_KEYWORDS):
+        return "availability"
+    if any(kw in q for kw in _HISTORY_KEYWORDS):
+        return "history"
+    if any(kw in q for kw in _POLICY_KEYWORDS):
+        return "policy"
+    if any(kw in q for kw in _CHAT_KEYWORDS):
+        return "chat"
+    return "unknown"
+
+
+def _select_agent_tools(query: str, intent: str) -> List[Any]:
+    """Dynamically select only the necessary tools for this query to minimize token footprint."""
+    from tools.receptionist_rag_tools import (
+        search_receptionist_knowledge,
+        get_active_offers,
+        get_business_timings,
+        get_cancellation_policy,
+        get_refund_policy,
+        get_faq_answer,
+    )
+    
+    q = query.lower()
+    tools = []
+    
+    # Intent-specific core tools
+    if intent == "book":
+        tools.extend([book_new_appointment, check_stylist_availability, get_available_branches, get_available_services, get_available_staff])
+    elif intent == "cancel":
+        tools.extend([cancel_existing_appointment, check_customer_booking_history])
+    elif intent == "reschedule":
+        tools.extend([reschedule_existing_appointment, check_stylist_availability, check_customer_booking_history])
+    elif intent == "availability":
+        tools.extend([check_stylist_availability, get_available_branches, get_available_services, get_available_staff])
+    elif intent == "history":
+        tools.extend([check_customer_booking_history])
+        
+    # Dynamic additions based on query keywords
+    if any(k in q for k in ["branch", "location", "where", "place", "address", "map"]):
+        if get_available_branches not in tools:
+            tools.append(get_available_branches)
+            
+    if any(k in q for k in ["service", "haircut", "color", "massage", "facial", "treatment", "price", "cost", "how much", "menu"]):
+        if get_available_services not in tools:
+            tools.append(get_available_services)
+            
+    if any(k in q for k in ["staff", "stylist", "who", "employee", "person", "worker", "team"]):
+        if get_available_staff not in tools:
+            tools.append(get_available_staff)
+            
+    if any(k in q for k in ["book", "schedule", "reserve", "appointment"]):
+        if book_new_appointment not in tools:
+            tools.append(book_new_appointment)
+        if check_stylist_availability not in tools:
+            tools.append(check_stylist_availability)
+            
+    if any(k in q for k in ["cancel", "delete", "remove"]):
+        if cancel_existing_appointment not in tools:
+            tools.append(cancel_existing_appointment)
+            
+    if any(k in q for k in ["reschedule", "move", "change", "postpone"]):
+        if reschedule_existing_appointment not in tools:
+            tools.append(reschedule_existing_appointment)
+            
+    if any(k in q for k in ["history", "previous", "past", "last appointment", "visited", "visits"]):
+        if check_customer_booking_history not in tools:
+            tools.append(check_customer_booking_history)
+            
+    if any(k in q for k in ["offer", "discount", "promotion", "deal", "special"]):
+        if get_active_offers not in tools:
+            tools.append(get_active_offers)
+    if any(k in q for k in ["timing", "hour", "open", "close", "time", "when"]):
+        if get_business_timings not in tools:
+            tools.append(get_business_timings)
+    if any(k in q for k in ["cancel policy", "cancellation policy", "rules for cancelling"]):
+        if get_cancellation_policy not in tools:
+            tools.append(get_cancellation_policy)
+    if any(k in q for k in ["refund policy", "refunds", "money back"]):
+        if get_refund_policy not in tools:
+            tools.append(get_refund_policy)
+        
+    # Standard safety fallbacks
+    if not tools:
+        tools = [search_receptionist_knowledge, get_faq_answer]
+    else:
+        if search_receptionist_knowledge not in tools:
+            tools.append(search_receptionist_knowledge)
+        if get_faq_answer not in tools:
+            tools.append(get_faq_answer)
+            
+    return tools
+
+
 class ReceptionistAgent(Agent):
     """
     Salon Receptionist Agent powered by Microsoft AutoGen and multi-tier LLM Fallback chain.
     Provides professional, error-free booking automation.
     """
 
-    MODEL_COOLDOWN = {}
+    MODEL_COOLDOWN: Dict[str, float] = {}  # model_name -> cooldown expiry timestamp
     FAILURE_COUNT = 0
     CIRCUIT_BREAKER_TRIPPED = False
-    MAX_FAILURES = 5
-    
+    CIRCUIT_BREAKER_TRIPPED_AT: float = 0.0  # timestamp when circuit tripped
+    MAX_FAILURES = 8  # raised from 5 — tolerate a few more errors before tripping
+    CIRCUIT_BREAKER_RESET_SECONDS = 300  # auto-reset after 5 minutes
+
     CURRENT_QUERY_CONTEXT = ""
 
     def __init__(self, name: str = "Clara", role: str = "AI Salon Receptionist"):
@@ -1087,6 +1244,15 @@ class ReceptionistAgent(Agent):
             timeout=8.0
         )
 
+        from tools.receptionist_rag_tools import (
+            search_receptionist_knowledge,
+            get_active_offers,
+            get_business_timings,
+            get_cancellation_policy,
+            get_refund_policy,
+            get_faq_answer,
+        )
+
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
@@ -1101,6 +1267,12 @@ class ReceptionistAgent(Agent):
                 cancel_existing_appointment,
                 reschedule_existing_appointment,
                 check_customer_booking_history,
+                search_receptionist_knowledge,
+                get_active_offers,
+                get_business_timings,
+                get_cancellation_policy,
+                get_refund_policy,
+                get_faq_answer,
             ]
         )
 
@@ -1116,16 +1288,101 @@ class ReceptionistAgent(Agent):
             "provider": "emergency_mode"
         }
 
+    @classmethod
+    def _check_and_reset_circuit_breaker(cls) -> None:
+        """Auto-reset circuit breaker after CIRCUIT_BREAKER_RESET_SECONDS."""
+        if cls.CIRCUIT_BREAKER_TRIPPED:
+            elapsed = time.time() - cls.CIRCUIT_BREAKER_TRIPPED_AT
+            if elapsed >= cls.CIRCUIT_BREAKER_RESET_SECONDS:
+                logger.info(f"🔄 Circuit breaker auto-reset after {elapsed:.0f}s cooldown. Resuming LLM calls.")
+                cls.CIRCUIT_BREAKER_TRIPPED = False
+                cls.CIRCUIT_BREAKER_TRIPPED_AT = 0.0
+                cls.FAILURE_COUNT = 0
+                # Also clear model cooldowns older than now so we retry immediately
+                now = time.time()
+                cls.MODEL_COOLDOWN = {k: v for k, v in cls.MODEL_COOLDOWN.items() if v > now}
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Processes booking queries with strict timeouts, direct database routing, and Ollama support."""
+        """Processes booking queries with strict timeouts, direct database routing, and Hugging Face support."""
         query = input_data.get("query", "").strip()
         if not query:
             return {"success": False, "error": "Please provide a booking request."}
 
+        latest_message = input_data.get("latest_message", "").strip()
+        if not latest_message:
+            if "Latest User Message:" in query:
+                latest_message = query.split("Latest User Message:")[-1].strip()
+            else:
+                latest_message = query
+
+        from core.query_context import set_query_context
+        set_query_context(query)
         ReceptionistAgent.CURRENT_QUERY_CONTEXT = query
+
+        # Auto-reset circuit breaker if enough time has passed
+        ReceptionistAgent._check_and_reset_circuit_breaker()
 
         if ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED:
             return self._emergency_mode_response()
+
+        # ── FAST PATH: pure chat/greeting handled without LLM at all ──────────
+        fast_intent = _fast_intent_classify(latest_message)
+        if fast_intent == "chat":
+            # Pure greeting — return canned warm response, ZERO LLM or RAG tokens spent
+            # (Do NOT call get_faq_answer here — it would return raw RAG offer blocks for "hi")
+            greeting = (
+                "Hello! I'm Clara, your AI Salon Receptionist. I'm here to help you book, "
+                "reschedule, or cancel appointments, check slot availability, and answer any questions "
+                "about our services, pricing, and policies. How can I assist you today?"
+            )
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": greeting,
+                "provider": "keyword_shortcut"
+            }
+
+        # ── FAST PATH: policy/FAQ handled via RAG without LLM ─────────────────
+        if fast_intent == "policy":
+            from tools.receptionist_rag_tools import search_receptionist_knowledge, get_business_timings, get_active_offers, get_cancellation_policy, get_refund_policy
+            try:
+                q_lower = latest_message.lower()
+                if any(k in q_lower for k in ["timing", "hour", "open", "close", "working"]):
+                    rag_result = get_business_timings()
+                elif any(k in q_lower for k in ["offer", "discount", "promotion"]):
+                    rag_result = get_active_offers()
+                elif any(k in q_lower for k in ["cancel", "cancellation"]):
+                    rag_result = get_cancellation_policy()
+                elif any(k in q_lower for k in ["refund"]):
+                    rag_result = get_refund_policy()
+                else:
+                    rag_result = search_receptionist_knowledge(latest_message)
+
+                # Strip raw markdown wrapper — return only the document content
+                if rag_result and "--- Matches found in Receptionist Knowledge Base ---" in rag_result:
+                    # Extract just the page_content lines, skipping source/metadata lines
+                    content_lines = []
+                    skip_next = False
+                    for line in rag_result.split("\n"):
+                        stripped = line.strip()
+                        if stripped.startswith("--- Matches found") or stripped.startswith("--- End of Context"):
+                            continue
+                        if stripped.startswith("[") and "Source:" in stripped:
+                            skip_next = False
+                            continue
+                        if stripped:
+                            content_lines.append(stripped)
+                    rag_result = "\n".join(content_lines).strip()
+
+                if rag_result and len(rag_result) > 20:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": rag_result,
+                        "provider": "rag_shortcut"
+                    }
+            except Exception as rag_err:
+                logger.warning(f"RAG fast path failed: {rag_err}")
 
         settings = get_settings()
         gemini_key = settings.gemini_api_key or settings.google_api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
@@ -1134,31 +1391,34 @@ class ReceptionistAgent(Agent):
         fallback_queue = []
         now = time.time()
 
-        # Tier 1: Qwen3 8B via Ollama
-        if "qwen2.5:8b" in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN["qwen2.5:8b"]:
-            logger.info("⏭️ Skipping Ollama model 'qwen2.5:8b' due to active cooldown.")
-        else:
-            fallback_queue.append({
-                "provider": "ollama",
-                "model": "qwen2.5:8b",
-                "api_key": "ollama",
-                "base_url": "http://localhost:11434/v1"
-            })
-
-        # Tier 2: Gemini Flash (gemini-2.0-flash or gemini-1.5-flash)
-        if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
-            model = "gemini-2.0-flash"
-            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
-                logger.info(f"⏭️ Skipping Gemini model '{model}' due to active cooldown.")
+        # Tier 1: Hugging Face (API)
+        huggingface_enabled = settings.huggingface_enabled
+        huggingface_model = settings.huggingface_model
+        if huggingface_enabled:
+            if huggingface_model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[huggingface_model]:
+                logger.info(f"⏭️ Skipping Hugging Face model '{huggingface_model}' due to active cooldown.")
             else:
                 fallback_queue.append({
-                    "provider": "gemini",
-                    "model": model,
-                    "api_key": gemini_key,
-                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"
+                    "provider": "huggingface",
+                    "model": huggingface_model,
+                    "api_key": settings.huggingface_api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN", ""),
+                    "base_url": settings.huggingface_api_base_url
                 })
 
-        # Tier 3: Groq llama-3.1-8b-instant
+        # Tier 2: Groq llama-3.3-70b-versatile (primary — best quality)
+        if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
+            model = "llama-3.3-70b-versatile"
+            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
+                logger.info(f"⏭️ Skipping Groq model '{model}' due to active cooldown.")
+            else:
+                fallback_queue.append({
+                    "provider": "groq",
+                    "model": model,
+                    "api_key": groq_key,
+                    "base_url": "https://api.groq.com/openai/v1"
+                })
+
+        # Tier 3: Groq llama-3.1-8b-instant (fast, lightweight fallback)
         if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
             model = "llama-3.1-8b-instant"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
@@ -1171,74 +1431,215 @@ class ReceptionistAgent(Agent):
                     "base_url": "https://api.groq.com/openai/v1"
                 })
 
-        if not fallback_queue:
-            fallback_queue.append({"provider": "groq", "model": "llama-3.1-8b-instant", "api_key": "mock-groq-key", "base_url": "https://api.groq.com/openai/v1"})
+        # Tier 4: Gemini Flash (gemini-2.0-flash)
+        if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
+            model = "gemini-2.0-flash"
+            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
+                logger.info(f"⏭️ Skipping Gemini model '{model}' due to active cooldown.")
+            else:
+                fallback_queue.append({
+                    "provider": "gemini",
+                    "model": model,
+                    "api_key": gemini_key,
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"
+                })
 
-        # Step 1: High-speed Intent & Entity Extractor (Priority 2 & 3)
+        # Tier 5: Gemini Flash Lite (cheaper, higher quota limits)
+        if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
+            model = "gemini-2.0-flash-lite"
+            if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
+                logger.info(f"⏭️ Skipping Gemini model '{model}' due to active cooldown.")
+            else:
+                fallback_queue.append({
+                    "provider": "gemini",
+                    "model": model,
+                    "api_key": gemini_key,
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"
+                })
+
+        if not fallback_queue:
+            logger.warning("⚠️ All LLM providers are on cooldown. Returning emergency response.")
+            return self._emergency_mode_response()
+
+        # Step 1: Fast keyword-shortcut entity extraction (skips LLM for obvious intents)
+        # Only call LLM extractor for 'book', 'cancel', 'reschedule', 'availability', 'history'
+        # where entity extraction actually matters. 'chat' and 'policy' were handled above.
         intent_json = None
-        for tier in fallback_queue:
-            model_name = tier["model"]
-            api_key = tier["api_key"]
-            base_url = tier["base_url"]
-            
-            try:
-                extraction_sys_prompt = (
-                    "You are a strict JSON intent and entity extractor. Output raw JSON only. Do not write explanations.\n"
-                    "Format:\n"
-                    "{\n"
-                    '  "intent": "book" | "cancel" | "reschedule" | "history" | "availability" | "chat",\n'
-                    '  "service": string or null,\n'
-                    '  "branch": string or null,\n'
-                    '  "stylist": string or null,\n'
-                    '  "date": string or null,\n'
-                    '  "time": string or null,\n'
-                    '  "appointment_id": string or null\n'
-                    "}\n"
-                    "Intents:\n"
-                    "- 'book': customer wants to create/schedule a booking, same service, same appointment, or book again.\n"
-                    "- 'cancel': cancel an appointment.\n"
-                    "- 'reschedule': move/reschedule an appointment.\n"
-                    "- 'history': review history or check past bookings.\n"
-                    "- 'availability': checking slot availability.\n"
-                    "- 'chat': greetings or other talk.\n\n"
-                    "TIME EXTRACTION RULES (CRITICAL):\n"
-                    "- Extract EXACTLY what the user specifies for time, including time ranges\n"
-                    "- If user says '3-4PM', extract '3-4PM' or '3-4pm'\n"
-                    "- If user says '5-6PM SLOT', extract '5-6pm'\n"
-                    "- If user says '3 PM', extract '3pm' or '3 PM'\n"
-                    "- If user says '15:00', extract '15:00'\n"
-                    "- Always extract time as provided by user, never leave as null if time is mentioned\n"
-                    "- The repair function will extract the START time from ranges like '3-4PM' -> '3PM'"
-                )
-                
-                client = OpenAIChatCompletionClient(
-                    model=model_name,
-                    api_key=api_key,
-                    base_url=base_url,
-                    timeout=8.0
-                )
-                
-                from autogen_core.models import SystemMessage, UserMessage
-                sys_msg = SystemMessage(content=extraction_sys_prompt)
-                user_msg = UserMessage(content=f"User Query:\n{query}", source="user")
-                
-                res = await asyncio.wait_for(client.create(messages=[sys_msg, user_msg], max_tokens=150), timeout=8.0)
-                res_content = res.content.strip()
-                
-                import json
-                if "```" in res_content:
-                    res_content = res_content.split("```")[1]
-                    if res_content.startswith("json"):
-                        res_content = res_content[4:]
-                intent_json = json.loads(res_content.strip())
-                break
-            except Exception as e:
-                logger.warning(f"Fast extraction failed on model '{model_name}': {e}")
-                # Cooldown model on failure
-                ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 1800
+
+        # If fast_intent already resolved a known action intent, seed intent_json directly
+        # This avoids a wasteful LLM round-trip for simple requests
+        if fast_intent in ("book", "cancel", "reschedule", "availability", "history"):
+            # Still need entity extraction (service/date/time/branch) — use LLM but with
+            # a stripped-down prompt to save tokens
+            import json as _json
+            for tier in fallback_queue:
+                model_name = tier["model"]
+                api_key = tier["api_key"]
+                base_url = tier["base_url"]
+
+                try:
+                    # Compact extraction prompt — ~40% fewer tokens than original
+                    extraction_sys_prompt = (
+                        'Extract booking entities as raw JSON only. No explanation.\n'
+                        '{"intent":"book|cancel|reschedule|history|availability|chat",'
+                        '"service":str|null,"branch":str|null,"stylist":str|null,'
+                        '"date":str|null,"time":str|null,"appointment_id":str|null}\n'
+                        'Time rules: extract exactly as stated. Ranges like "3-4PM" -> "3-4PM".'
+                    )
+                    timeout_val = 90.0 if tier["provider"] == "huggingface" else 15.0
+                    client = OpenAIChatCompletionClient(
+                        model=model_name,
+                        api_key=api_key,
+                        base_url=base_url,
+                        timeout=timeout_val
+                    )
+                    from autogen_core.models import SystemMessage, UserMessage
+                    res = await asyncio.wait_for(
+                        client.create(
+                            messages=[
+                                SystemMessage(content=extraction_sys_prompt),
+                                UserMessage(content=f"Query: {latest_message}", source="user")
+                            ],
+                            max_tokens=120  # reduced from 150
+                        ),
+                        timeout=timeout_val
+                    )
+                    res_content = res.content.strip()
+                    if "```" in res_content:
+                        res_content = res_content.split("```")[1]
+                        if res_content.startswith("json"):
+                            res_content = res_content[4:]
+                    intent_json = _json.loads(res_content.strip())
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    is_auth_error = "401" in err_str or "unauthorized" in err_str.lower() or "invalid api key" in err_str.lower()
+                    if is_auth_error:
+                        # Auth errors won't resolve with retry — short cooldown only (5 min)
+                        logger.error(f"🔑 Auth error for model '{model_name}' (401/Unauthorized). Short cooldown 5 min.")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
+                    else:
+                        logger.warning(f"Fast extraction failed on model '{model_name}': {err_str[:120]}")
+                        cooldown_secs = 15 if tier["provider"] == "huggingface" else 1800
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
+        else:
+            # 'unknown' intent — use LLM to classify AND extract
+            import json as _json
+            for tier in fallback_queue:
+                model_name = tier["model"]
+                api_key = tier["api_key"]
+                base_url = tier["base_url"]
+                try:
+                    extraction_sys_prompt = (
+                        'Extract booking entities as raw JSON only. No explanation.\n'
+                        '{"intent":"book|cancel|reschedule|history|availability|chat",'
+                        '"service":str|null,"branch":str|null,"stylist":str|null,'
+                        '"date":str|null,"time":str|null,"appointment_id":str|null}\n'
+                        'Time rules: extract exactly as stated. Ranges like "3-4PM" -> "3-4PM".'
+                    )
+                    timeout_val = 90.0 if tier["provider"] == "huggingface" else 15.0
+                    client = OpenAIChatCompletionClient(
+                        model=model_name,
+                        api_key=api_key,
+                        base_url=base_url,
+                        timeout=timeout_val
+                    )
+                    from autogen_core.models import SystemMessage, UserMessage
+                    res = await asyncio.wait_for(
+                        client.create(
+                            messages=[
+                                SystemMessage(content=extraction_sys_prompt),
+                                UserMessage(content=f"Query: {latest_message}", source="user")
+                            ],
+                            max_tokens=120
+                        ),
+                        timeout=timeout_val
+                    )
+                    res_content = res.content.strip()
+                    if "```" in res_content:
+                        res_content = res_content.split("```")[1]
+                        if res_content.startswith("json"):
+                            res_content = res_content[4:]
+                    intent_json = _json.loads(res_content.strip())
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    is_auth_error = "401" in err_str or "unauthorized" in err_str.lower() or "invalid api key" in err_str.lower()
+                    if is_auth_error:
+                        logger.error(f"🔑 Auth error for model '{model_name}' (401). Short cooldown 5 min.")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
+                    else:
+                        logger.warning(f"Intent extraction failed on model '{model_name}': {err_str[:120]}")
+                        cooldown_secs = 15 if tier["provider"] == "huggingface" else 1800
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
 
         if not intent_json:
-            intent_json = {"intent": "chat", "service": None, "branch": None, "stylist": None, "date": None, "time": None}
+            intent_json = {"intent": fast_intent if fast_intent != "unknown" else "chat",
+                           "service": None, "branch": None, "stylist": None,
+                           "date": None, "time": None}
+
+        intent = intent_json.get("intent", "chat")
+
+        # ── MULTI-TURN ENTITY ACCUMULATION ─────────────────────────────────────────
+        # If any booking entities are missing from the current message, scan the last
+        # 3 turns of chat history and fill them in. This allows the user to provide
+        # service on one turn and date/time on another without losing context.
+        _history_entity_fields = ["service", "branch", "stylist", "date", "time"]
+        _needs_fill = any(not intent_json.get(f) or _is_placeholder_value(intent_json.get(f, ""))
+                          for f in _history_entity_fields)
+        if _needs_fill and "Here is the conversation history so far for context:" in query:
+            # Parse history block from query
+            import re as _re
+            history_block = ""
+            history_match = _re.search(
+                r"Here is the conversation history so far for context:\n(.*?)\nLatest User Message:",
+                query, _re.DOTALL
+            )
+            if history_match:
+                history_block = history_match.group(1)
+            # Extract last 3 user turns from history
+            history_user_lines = [
+                line[len("- User:"):].strip()
+                for line in history_block.split("\n")
+                if line.strip().startswith("- User:")
+            ][-3:]
+            # For each missing entity, do a quick rule-based extraction from history
+            _combined_history = " ".join(history_user_lines)
+            import json as _json2
+            for _hist_msg in reversed(history_user_lines):
+                if not _hist_msg:
+                    continue
+                # Simple regex-based date extraction from history
+                if not intent_json.get("date"):
+                    _date_m = _re.search(r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2}(?:st|nd|rd|th)?,? \d{4}|tomorrow|today|next \w+day)\b", _hist_msg, _re.IGNORECASE)
+                    if _date_m:
+                        intent_json["date"] = _date_m.group(1)
+                # Simple regex-based time extraction from history
+                if not intent_json.get("time"):
+                    _time_m = _re.search(r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|slot\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b", _hist_msg, _re.IGNORECASE)
+                    if _time_m:
+                        intent_json["time"] = _time_m.group(1)
+                # Service/Branch/Stylist extraction from history (look for quoted combos)
+                if not intent_json.get("service") or not intent_json.get("branch"):
+                    _quoted_m = _re.search(r'"([^"]+)\s+([^"]+)\s+([^"]+)"', _hist_msg)
+                    if _quoted_m:
+                        # Format: "Service  Branch  Stylist"
+                        parts = [p.strip() for p in _hist_msg.split('"') if p.strip()]
+                        for part in parts:
+                            sub = [s.strip() for s in part.split("\t") if s.strip()]
+                            if len(sub) == 3:
+                                if not intent_json.get("service"):
+                                    intent_json["service"] = sub[0]
+                                if not intent_json.get("branch"):
+                                    intent_json["branch"] = sub[1]
+                                if not intent_json.get("stylist"):
+                                    intent_json["stylist"] = sub[2]
+                                break
+                        if not (intent_json.get("service") and intent_json.get("branch")):
+                            # Fallback: plain text with tab separators
+                            words = part.strip().split()
+                            if len(words) >= 2 and not intent_json.get("service"):
+                                intent_json["service"] = words[0]
 
         intent = intent_json.get("intent", "chat")
         
@@ -1387,6 +1788,47 @@ class ReceptionistAgent(Agent):
                 service_id=repaired_service
             )
             
+            import ast
+            slots_dict = {}
+            try:
+                slots_dict = ast.literal_eval(slots_data)
+            except Exception:
+                pass
+
+            if slots_dict.get("staff_on_leave"):
+                staff_name = slots_dict.get("staff_name") or "The stylist"
+                slots = slots_dict.get("slots", [])
+                available_alternatives = []
+                for s in slots:
+                    start_iso = s.get("start_time", "")
+                    if f"T{repaired_time}" in start_iso or repaired_time in start_iso:
+                        available_alternatives = s.get("available_staff_names", [])
+                        break
+                
+                if available_alternatives:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{pref_str}\n\n{staff_name} is on leave on {repaired_date}. Please choose another staff member. At {repaired_time}, the following stylists are available: {', '.join(available_alternatives)}.",
+                        "provider": "booking_engine"
+                    }
+                else:
+                    alt_slots = []
+                    for s in slots:
+                        start_iso = s.get("start_time", "")
+                        try:
+                            dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                            alt_slots.append(dt.strftime("%I:%M %p"))
+                        except Exception:
+                            pass
+                    alt_str = ", ".join(alt_slots[:3]) if alt_slots else "none today"
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{pref_str}\n\n{staff_name} is on leave on {repaired_date}. Please choose another staff member. No other stylists are available at {repaired_time}. Other available times with stylists: {alt_str}.",
+                        "provider": "booking_engine"
+                    }
+
             if "error" in slots_data.lower() or not slots_data:
                 return {
                     "success": True,
@@ -1439,7 +1881,7 @@ class ReceptionistAgent(Agent):
                 }
 
             # Create appointment directly via Python tool
-            booking_res = book_new_appointment(
+            booking_res_str = book_new_appointment(
                 customer_id=repaired_cust,
                 branch_id=repaired_branch,
                 service_id=repaired_service,
@@ -1447,6 +1889,21 @@ class ReceptionistAgent(Agent):
                 staff_id=repaired_staff,
                 notes="Self-guided booking"
             )
+            
+            try:
+                import ast
+                booking_res = ast.literal_eval(booking_res_str)
+            except Exception:
+                booking_res = {"success": False, "error": booking_res_str}
+                
+            if not isinstance(booking_res, dict) or not booking_res.get("success"):
+                error_detail = booking_res.get("error", "Unknown booking error") if isinstance(booking_res, dict) else booking_res_str
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": f"{pref_str}\n\nI apologize, but I could not book the appointment. Error: {error_detail}",
+                    "provider": "booking_engine"
+                }
             
             # Format confirmed response using strict summary structure
             db = SessionLocal()
@@ -1510,7 +1967,16 @@ class ReceptionistAgent(Agent):
                 service_id=repaired_service
             )
             
-            if "error" in slots_data.lower() or not slots_data:
+            import ast
+            is_staff_leave_err = False
+            try:
+                data = ast.literal_eval(slots_data)
+                if data.get("staff_on_leave"):
+                    is_staff_leave_err = True
+            except Exception:
+                pass
+
+            if ("error" in slots_data.lower() and not is_staff_leave_err) or not slots_data:
                 return {
                     "success": True,
                     "agent_name": self.name,
@@ -1604,6 +2070,33 @@ class ReceptionistAgent(Agent):
                 }
 
         # Chat / Discovery queries fall back to standard Agent execution
+        # ── TOKEN OPTIMISATION: Dynamically select tools based on user query keywords and intent ──
+        _agent_tools = _select_agent_tools(query, intent)
+
+        if intent in ("book", "cancel", "reschedule"):
+            _agent_system_prompt = RECEPTIONIST_SYSTEM_PROMPT
+        elif intent == "history":
+            _agent_system_prompt = (
+                "You are Clara, a professional AI Salon Receptionist. "
+                "Answer questions about the customer's appointment history using the provided history data. "
+                "Summarize or count appointments precisely based on the history log. "
+                "Do NOT confirm any new bookings or generate an 'Appointment Summary' unless explicitly asked to book. "
+                "Answer warmly and concisely under 150 words."
+            )
+        elif intent == "availability":
+            _agent_system_prompt = (
+                "You are Clara, a professional AI Salon Receptionist. "
+                "Check slot availability using the appropriate tools and list the available slots. "
+                "Answer warmly and concisely. Do NOT generate a confirmed 'Appointment Summary' or confirm any booking."
+            )
+        else:
+            _agent_system_prompt = (
+                "You are Clara, a professional AI Salon Receptionist. "
+                "Answer salon questions warmly and concisely. "
+                "Use available tools to provide accurate information about branches, services, staff, and offers. "
+                "Never invent data. Keep responses under 200 words."
+            )
+
         last_error = None
         for idx, tier in enumerate(fallback_queue, 1):
             model_name = tier["model"]
@@ -1619,36 +2112,35 @@ class ReceptionistAgent(Agent):
                         "vision": False,
                         "function_calling": True,
                         "json_output": True,
-                        "family": "gemini-2.0" if "2.0" in model_name else "gemini-1.5" if "1.5" in model_name else "qwen" if "qwen" in model_name else "llama-3.1",
+                        "family": (
+                            "gemini-2.0" if "gemini-2.0" in model_name
+                            else "gemini-1.5" if "gemini-1.5" in model_name
+                            else "llama-3.3" if "3.3" in model_name
+                            else "qwen" if "qwen" in model_name
+                            else "llama-3.1"
+                        ),
                         "structured_output": False,
                     }
+
+                    client_timeout = 90.0 if provider == "huggingface" else 30.0
+                    run_timeout = 90.0 if provider == "huggingface" else 30.0
 
                     model_client = OpenAIChatCompletionClient(
                         model=model_name,
                         api_key=api_key,
                         base_url=base_url,
                         model_info=model_info,
-                        timeout=8.0
+                        timeout=client_timeout
                     )
 
                     assistant = AssistantAgent(
                         name=self.name,
                         model_client=model_client,
-                        system_message=RECEPTIONIST_SYSTEM_PROMPT,
-                        tools=[
-                            get_available_branches,
-                            get_available_services,
-                            get_available_staff,
-                            search_customers,
-                            check_stylist_availability,
-                            book_new_appointment,
-                            cancel_existing_appointment,
-                            reschedule_existing_appointment,
-                            check_customer_booking_history,
-                        ]
+                        system_message=_agent_system_prompt,
+                        tools=_agent_tools
                     )
 
-                    result = await asyncio.wait_for(assistant.run(task=query), timeout=10.0)
+                    result = await asyncio.wait_for(assistant.run(task=query), timeout=run_timeout)
                     latency = time.perf_counter() - start_time
 
                     if result.messages and len(result.messages) > 0:
@@ -1677,14 +2169,14 @@ class ReceptionistAgent(Agent):
                             api_key=api_key,
                             base_url=base_url,
                             model_info=model_info,
-                            timeout=8.0
+                            timeout=client_timeout
                         )
                         
                         sys_msg = SystemMessage(content=formatter_sys_prompt)
                         user_msg = UserMessage(content=f"Raw System Result:\n{response_stripped}", source="user")
                         
                         try:
-                            fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg], max_tokens=250), timeout=10.0)
+                            fmt_result = await asyncio.wait_for(formatter_client.create(messages=[sys_msg, user_msg], max_tokens=250), timeout=run_timeout)
                             formatted_response = fmt_result.content.strip()
                             
                             # Validate formatter response - ensure it's not truncated or incomplete
@@ -1722,25 +2214,47 @@ class ReceptionistAgent(Agent):
                     from openai import RateLimitError, APITimeoutError
                     import httpx
 
+                    is_auth_error = "401" in err_str or "unauthorized" in err_str.lower() or "invalid api key" in err_str.lower()
                     is_rate_limit = "429" in err_str or "rate" in err_str.lower() or "quota" in err_str.lower() or isinstance(ex, RateLimitError)
                     is_timeout = "timeout" in err_str.lower() or isinstance(ex, APITimeoutError) or isinstance(ex, httpx.TimeoutException) or isinstance(ex, asyncio.TimeoutError)
 
-                    if is_rate_limit or is_timeout:
-                        logger.error(f"🚨 Model '{model_name}' rate limit or timeout. Cooldown for 30 minutes.")
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 1800
-                        
+                    if is_auth_error:
+                        # 401 = bad API key — don't wait 30 min, short cooldown so system can recover
+                        logger.error(f"🔑 Model '{model_name}' returned 401 Unauthorized. Short cooldown 5 min (check API key).")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
+                        ReceptionistAgent.FAILURE_COUNT += 1
+                        break
+                    elif is_rate_limit:
+                        # Detect daily quota exhaustion (limit: 0) vs transient rate limit
+                        is_daily_quota = "limit: 0" in err_str or "GenerateRequestsPerDay" in err_str or "free_tier_requests" in err_str
+                        if is_daily_quota:
+                            cooldown_secs = 21600  # 6 hours for daily quota exhaustion
+                            logger.error(f"🚨 Model '{model_name}' daily quota exhausted. Cooldown 6 hours.")
+                        else:
+                            cooldown_secs = 1200  # 20 minutes for transient rate limits
+                            logger.error(f"🚨 Model '{model_name}' rate-limited (429). Cooldown 20 minutes.")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
                         ReceptionistAgent.FAILURE_COUNT += 1
                         if ReceptionistAgent.FAILURE_COUNT >= ReceptionistAgent.MAX_FAILURES:
                             ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = True
+                            ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED_AT = time.time()
+                        break
+                    elif is_timeout:
+                        cooldown_secs = 15 if provider == "huggingface" else 180
+                        logger.warning(f"⏱️ Model '{model_name}' timed out. Short cooldown {cooldown_secs} seconds.")
+                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
+                        ReceptionistAgent.FAILURE_COUNT += 1
                         break
 
                     ReceptionistAgent.FAILURE_COUNT += 1
                     if ReceptionistAgent.FAILURE_COUNT >= ReceptionistAgent.MAX_FAILURES:
                         ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = True
+                        ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED_AT = time.time()
                     break
 
         ReceptionistAgent.FAILURE_COUNT += 1
         if ReceptionistAgent.FAILURE_COUNT >= ReceptionistAgent.MAX_FAILURES:
             ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = True
+            ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED_AT = time.time()
 
         return self._emergency_mode_response()

@@ -31,6 +31,10 @@ from services.insights_service import InsightsService
 from services.forecast_service import ForecastService
 from services.rag_service import RAGService
 from tools.bi_tools import execute_bi_sql_query
+from rag.retriever import (
+    search_salon_knowledge,
+    search_bi_memory,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -236,6 +240,8 @@ Always try to use standard metric tools before writing custom database queries:
 10. `retrieve_business_context` - Multi-dimensional **Business Metrics RAG** context retrieval (pulls daily snapshots).
 11. `query_raw_analytics_database` - Run raw SELECT queries on database schemas.
 12. `trigger_returning_cohort_reminders` - Manually trigger/process the daily cohort loyalty reminder dispatch to eligible returning clients.
+13. `search_salon_knowledge` - Search general salon policies and FAQs.
+14. `search_bi_memory` - Search long-term Business Intelligence summary memories.
 
 🧠 THE POWER OF BUSINESS METRICS RAG:
 When asked comparative business questions (e.g. "Why is revenue decreasing?" or "How does this compare to last month?"),
@@ -324,10 +330,12 @@ class BIAgent(Agent):
                 retrieve_business_context,
                 query_raw_analytics_database,
                 trigger_returning_cohort_reminders,
+                search_salon_knowledge,
+                search_bi_memory,
             ],
         )
 
-        logger.info(f"Business Intelligence Agent '{name}' initialized with 12 tools.")
+        logger.info(f"Business Intelligence Agent '{name}' initialized with 14 tools (12 BI tools, 2 RAG).")
 
     def _get_memory_context(self, session_id: str) -> str:
         """Build conversation context string from memory for a given session."""

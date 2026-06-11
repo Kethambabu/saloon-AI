@@ -510,6 +510,13 @@ async def get_my_appointments(
         if not current_user.customer_id:
             return []
         
+        # Trigger auto-cancellation of past customer appointments
+        try:
+            from tools.booking_tools import auto_cancel_past_customer_appointments
+            auto_cancel_past_customer_appointments(str(current_user.customer_id), db)
+        except Exception as cancel_err:
+            logger.error(f"Auto-cancellation of past customer appointments failed: {cancel_err}")
+            
         # Trigger lazy reminders (Rule 11)
         try:
             from tools.booking_tools import send_appointment_reminders
@@ -521,6 +528,14 @@ async def get_my_appointments(
     elif current_user.role == UserRole.STAFF or current_user.role.value == "STAFF":
         if not current_user.staff_id:
             return []
+            
+        # Trigger auto-cancellation of past staff appointments
+        try:
+            from tools.booking_tools import auto_cancel_past_staff_appointments
+            auto_cancel_past_staff_appointments(str(current_user.staff_id), db)
+        except Exception as cancel_err:
+            logger.error(f"Auto-cancellation of past staff appointments failed: {cancel_err}")
+            
         query = db.query(Appointment).filter(Appointment.staff_id == current_user.staff_id)
     else:
         query = db.query(Appointment)

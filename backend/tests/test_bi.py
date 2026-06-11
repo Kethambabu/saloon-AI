@@ -201,9 +201,9 @@ def test_bi_agent_initialization():
     assert "appointments" in sys_msg
     assert "SELECT" in sys_msg
 
-    # Check 11 BI tools are bound
+    # Check 14 BI tools are bound
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 11
+    assert len(bound_tools) == 14
     
     names = [t.name for t in bound_tools]
     assert "get_dashboard_summary" in names
@@ -217,6 +217,9 @@ def test_bi_agent_initialization():
     assert "forecast_revenue" in names
     assert "retrieve_business_context" in names
     assert "query_raw_analytics_database" in names
+    assert "trigger_returning_cohort_reminders" in names
+    assert "search_salon_knowledge" in names
+    assert "search_bi_memory" in names
 
 
 @pytest.mark.asyncio
@@ -248,3 +251,29 @@ async def test_bi_agent_process():
         context = agent._get_memory_context(session_id)
         assert "User: Show me the revenue report" in context
         assert "Assistant: Total completed revenue for the period" in context
+
+
+def test_execute_bi_sql_query_repair():
+    from tools.bi_tools import execute_bi_sql_query
+    from unittest.mock import patch, MagicMock
+
+    with patch("tools.bi_tools.SessionLocal") as mock_session_class:
+        mock_db = MagicMock()
+        mock_session_class.return_value = mock_db
+        
+        # Mock execute returning a cursor
+        mock_cursor = MagicMock()
+        mock_cursor.keys.return_value = ["col1"]
+        mock_cursor.fetchall.return_value = [[123]]
+        mock_db.execute.return_value = mock_cursor
+
+        query = "SELECT SUM(revenue) FROM appointments WHERE start_time::date = (CURRENT_DATE - INTERVAL '2 day)'"
+        res = execute_bi_sql_query(query)
+        
+        assert res["success"] is True
+        assert res["rows"] == [[123]]
+        
+        # Verify db.execute was called with cleaned SQL including appended LIMIT
+        called_sql = mock_db.execute.call_args[0][0].text
+        expected_sql = "SELECT SUM(revenue) FROM appointments WHERE start_time::date = (CURRENT_DATE - INTERVAL '2 day') LIMIT 50"
+        assert called_sql == expected_sql

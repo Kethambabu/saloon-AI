@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -319,7 +319,7 @@ def get_customer_profile(
 )
 def get_customer_appointments(
     limit: int = 50,
-    status: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by appointment status"),
     customer: Customer = Depends(get_current_customer),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -337,15 +337,15 @@ def get_customer_appointments(
         Appointment.customer_id == customer.id
     ).order_by(Appointment.created_at.desc())
     
-    if status:
+    if status_filter:
         from db.models import AppointmentStatus
         try:
-            status_enum = AppointmentStatus[status.upper()]
+            status_enum = AppointmentStatus[status_filter.upper()]
             query = query.filter(Appointment.status == status_enum)
         except KeyError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status: {status}"
+                detail=f"Invalid status: {status_filter}"
             )
     
     appointments = query.limit(limit).all()

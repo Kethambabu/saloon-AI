@@ -589,7 +589,7 @@ async def chat_with_staff_agent(
     now_dt = datetime.now(timezone.utc)
     context_prefix = (
         f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (Today is {now_dt.strftime('%A, %B %d, %Y')})]\n"
-        f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff member '{staff.full_name}' (ID: {staff.id}, Role: {staff.role}, Branch ID: {staff.branch_id}). ALWAYS use this Staff ID ({staff.id}) when querying schedules, revenue, performance, or submitting leaves on their behalf. Do NOT ask them for their ID.]\n"
+        f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff member '{staff.full_name}' (ID: {staff.id}, Role: {staff.role}, Branch ID: {staff.branch_id}). Use this Staff ID ({staff.id}) when they query their own schedule, revenue, performance, or leaves. If they ask about another staff member's details, resolve the correct staff ID using list_available_staff or by name, and do NOT use the logged-in user's Staff ID. Do NOT ask them for their ID.]\n"
     )
 
     full_query = context_prefix + "\n"
@@ -626,6 +626,8 @@ async def chat_with_staff_agent(
     agent = get_staff_assistant_agent()
 
     try:
+        from core.query_context import set_query_context
+        set_query_context(full_query)
         # Process query through AutoGen StaffAssistantAgent
         agent_response = await agent.process({"query": full_query})
 

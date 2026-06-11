@@ -47,7 +47,12 @@ from tools.lead_tools import (
     get_lead_conversion_analytics,
     get_lead_pipeline_summary,
 )
-from rag.retriever import search_customer_interactions
+from rag.retriever import (
+    search_salon_knowledge,
+    search_customer_interactions,
+    search_lead_memory,
+    search_customer_memory,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -241,6 +246,10 @@ Responsibilities:
 - Convert leads into appointments
 - Analyze lead conversion rate
 - Recommend best customers to contact first
+- Search salon policies and timings using `search_salon_knowledge`
+- Search customer interactions history using `search_customer_interactions`
+- Search lead follow-up summaries memory using `search_lead_memory`
+- Search customer-specific memory using `search_customer_memory`
 
 Always use tools.
 """
@@ -303,10 +312,13 @@ class LeadFollowupAgent(Agent):
                 view_conversion_analytics,
                 view_pipeline_snapshot,
                 search_customer_interactions,
+                search_salon_knowledge,
+                search_lead_memory,
+                search_customer_memory,
             ],
         )
 
-        logger.info(f"Lead Follow-Up Agent '{name}' initialized with 8 CRM tools.")
+        logger.info(f"Lead Follow-Up Agent '{name}' initialized with 12 tools (8 CRM, 4 RAG/Memory).")
 
     # ------------------------------------------------------------------
     # Conversation Memory

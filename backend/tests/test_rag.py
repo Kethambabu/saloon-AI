@@ -82,11 +82,14 @@ def test_rag_ingestion_and_retrieval(mock_embedding_model):
             chunk_overlap=20
         )
 
-        # 1. Ingest static knowledge base
-        res = ingestor.ingest_knowledge_base(force_rebuild=True)
+        # 1. Ingest custom receptionist knowledge base
+        custom_kb = [
+            Document(page_content="Our cancellation policy requires appointments to be cancelled at least 24 hours in advance to avoid a fee.", metadata={"source": "salon_knowledge_base", "type": "policy", "document_type": "cancellation_policy", "title": "Cancellation Policy"}),
+        ]
+        res = ingestor.ingest_custom_documents(custom_kb, index_name="receptionist_knowledge")
         assert res["success"] is True
         assert res["chunks_indexed"] > 0
-        assert os.path.exists(os.path.join(tmpdir, "salon_knowledge", "index.faiss"))
+        assert os.path.exists(os.path.join(tmpdir, "receptionist_knowledge", "index.faiss"))
 
         # 2. Ingest custom test documents
         custom_docs = [
@@ -143,7 +146,10 @@ async def test_rag_autogen_agent_tools(mock_embedding_model):
             
             # Ingest to temp directory
             ingestor = RAGIngestor(index_dir=tmpdir)
-            ingestor.ingest_knowledge_base(force_rebuild=True)
+            custom_kb = [
+                Document(page_content="Our cancellation policy requires appointments to be cancelled at least 24 hours in advance to avoid a fee.", metadata={"source": "salon_knowledge_base", "type": "policy", "document_type": "cancellation_policy", "title": "Cancellation Policy"}),
+            ]
+            ingestor.ingest_custom_documents(custom_kb, index_name="receptionist_knowledge")
 
             # Test knowledge search tool wrapper
             res_str = search_salon_knowledge("What is the cancellation policy?")

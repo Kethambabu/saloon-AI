@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     supabase_service_role_key: Optional[str] = Field(default=None, alias="SUPABASE_SERVICE_ROLE_KEY")
     max_prompt_tokens: int = Field(default=4500, alias="MAX_PROMPT_TOKENS")
 
+    # Hugging Face LLM Configuration
+    huggingface_enabled: bool = Field(default=True, alias="HUGGINGFACE_ENABLED")
+    huggingface_model: str = Field(default="Qwen/Qwen2.5-72B-Instruct", alias="HUGGINGFACE_MODEL")
+    huggingface_api_base_url: str = Field(default="https://router.huggingface.co/v1", alias="HUGGINGFACE_API_BASE_URL")
+    huggingface_api_key: Optional[str] = Field(default=None, alias="HUGGINGFACE_API_KEY")
+
     # Features
     enable_rag: bool = Field(default=True, alias="ENABLE_RAG")
     enable_agents: bool = Field(default=True, alias="ENABLE_AGENTS")

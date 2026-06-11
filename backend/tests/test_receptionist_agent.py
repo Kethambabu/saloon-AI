@@ -34,9 +34,9 @@ def test_receptionist_agent_initialization():
     assert "never invent data" in sys_msg.lower()
     assert "tool execution is mandatory" in sys_msg.lower()
 
-    # 4. Verify that the 5 custom booking tools wrapper functions are bound to the agent
+    # 4. Verify that the custom booking, RAG, and memory tools wrapper functions are bound to the agent
     bound_tools = receptionist.assistant._tools
-    assert len(bound_tools) == 9
+    assert len(bound_tools) == 15
 
     tool_names = [tool.name for tool in bound_tools]
     assert "check_stylist_availability" in tool_names
@@ -44,5 +44,10 @@ def test_receptionist_agent_initialization():
     assert "cancel_existing_appointment" in tool_names
     assert "reschedule_existing_appointment" in tool_names
     assert "check_customer_booking_history" in tool_names
+    assert "search_receptionist_knowledge" in tool_names
+    assert "get_business_timings" in tool_names
+    assert "get_cancellation_policy" in tool_names
+    assert "get_refund_policy" in tool_names
+    assert "get_active_offers" in tool_names
 
     print("AI Receptionist Agent initialized and configured perfectly!")

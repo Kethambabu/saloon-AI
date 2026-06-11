@@ -7,7 +7,7 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from core.llm_config import get_llm_config
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+from core.openai_client_adapter import OpenAIChatCompletionClient
 from autogen_core.models import SystemMessage, UserMessage
 
 async def main():

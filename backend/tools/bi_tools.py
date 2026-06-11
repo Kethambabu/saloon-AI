@@ -433,15 +433,17 @@ def execute_bi_sql_query(sql_query: str) -> Dict[str, Any]:
     """
     logger.info(f"[BI Tool] Request to execute raw SQL query: '{sql_query[:120]}'")
 
-    # 1. Strict safety validation
-    is_safe, error_msg = validate_sql_safety(sql_query)
+    # 1. Clean and repair SQL to be PostgreSQL-compatible
+    sql_clean = _repair_sql_for_postgres(sql_query.strip())
+    logger.info(f"[BI Tool] SQL after repair: '{sql_clean[:200]}'")
+
+    # 2. Strict safety validation
+    is_safe, error_msg = validate_sql_safety(sql_clean)
     if not is_safe:
         logger.warning(f"[BI Tool] SQL Safety violation block: {error_msg}")
         return {"success": False, "error": error_msg}
 
-    # 2. Enforce limits on the query results to prevent memory issues
-    # Append LIMIT 50 if it doesn't already specify a limit
-    sql_clean = sql_query.strip()
+    # 3. Enforce limits on the query results to prevent memory issues
     if "LIMIT" not in sql_clean.upper():
         if sql_clean.endswith(";"):
             sql_clean = sql_clean[:-1]
@@ -449,16 +451,13 @@ def execute_bi_sql_query(sql_query: str) -> Dict[str, Any]:
 
     db: Session = SessionLocal()
     try:
-        # 3. Execute query inside transaction
-        # Note: We execute raw SELECT queries, but we always rollback at the end 
-        # as a secondary line of absolute defense against mutations.
         cursor = db.execute(text(sql_clean))
-        
+
         # Parse column headers and rows
         columns = list(cursor.keys())
         rows = [list(row) for row in cursor.fetchall()]
 
-        # Convert Decimals and datetimes to float/strings for standard JSON serialization compatibility
+        # Convert Decimals and datetimes to float/strings for JSON serialization
         serialized_rows = []
         for row in rows:
             new_row = []
@@ -471,7 +470,7 @@ def execute_bi_sql_query(sql_query: str) -> Dict[str, Any]:
                     new_row.append(item)
             serialized_rows.append(new_row)
 
-        db.rollback()  # Primary safety rollback to ensure 100% read-only operations
+        db.rollback()  # Safety rollback — always read-only
         logger.info(f"[BI Tool] Raw SQL executed successfully (returned {len(rows)} rows)")
 
         return {
@@ -486,3 +485,138 @@ def execute_bi_sql_query(sql_query: str) -> Dict[str, Any]:
         return {"success": False, "error": f"Database execution error: {str(e)}"}
     finally:
         db.close()
+
+
+def _repair_sql_for_postgres(sql: str) -> str:
+    """
+    Converts MySQL/generic SQL dialect patterns to valid PostgreSQL syntax.
+    Called automatically before every query execution.
+
+    Fixes:
+      - INTERVAL 1 DAY            -> INTERVAL '1 day'
+      - INTERVAL 1 HOUR           -> INTERVAL '1 hour'
+      - INTERVAL 2 WEEKS          -> INTERVAL '2 weeks'
+      - INTERVAL 3 MONTHS         -> INTERVAL '3 months'
+      - INTERVAL '2 day)'         -> INTERVAL '2 day'   (malformed closing paren)
+      - DATE_SUB(x, INTERVAL ...) -> (x - INTERVAL '...')
+      - DATE_ADD(x, INTERVAL ...) -> (x + INTERVAL '...')
+      - DATEDIFF(a, b)            -> DATE_PART('day', a - b)::int
+      - DATE(NOW() - INTERVAL ..) -> (NOW() - INTERVAL '...')::date
+      - DATE(column_name)         -> column_name::date
+      - YEAR(col)                 -> EXTRACT(YEAR FROM col)
+      - MONTH(col)                -> EXTRACT(MONTH FROM col)
+      - DAY(col)                  -> EXTRACT(DAY FROM col)
+      - ISNULL(x)                 -> x IS NULL
+      - IFNULL(x, y)              -> COALESCE(x, y)
+      - GROUP_CONCAT(x)           -> STRING_AGG(x, ',')
+      - Trailing semicolons
+    """
+
+    # Step 1: Fix unquoted INTERVAL values — MySQL/generic style: INTERVAL 1 DAY
+    # Matches: INTERVAL <digits> <unit> where unit is NOT already surrounded by quotes
+    def quote_interval(match):
+        number = match.group(1)
+        unit = match.group(2).lower()
+        unit_map = {
+            'day': 'day', 'days': 'day',
+            'hour': 'hour', 'hours': 'hour',
+            'minute': 'minute', 'minutes': 'minute',
+            'second': 'second', 'seconds': 'second',
+            'week': 'week', 'weeks': 'week',
+            'month': 'month', 'months': 'month',
+            'year': 'year', 'years': 'year',
+        }
+        pg_unit = unit_map.get(unit, unit)
+        return f"INTERVAL '{number} {pg_unit}'"
+
+    sql = re.sub(
+        r"\bINTERVAL\s+(\d+)\s+(DAY|DAYS|HOUR|HOURS|MINUTE|MINUTES|SECOND|SECONDS|WEEK|WEEKS|MONTH|MONTHS|YEAR|YEARS)\b",
+        quote_interval,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 2: Fix malformed INTERVAL quotes with closing paren inside the string
+    # e.g. INTERVAL '2 day)' -> INTERVAL '2 day')
+    sql = re.sub(
+        r"INTERVAL\s+'([^'\)]+)\)'",
+        r"INTERVAL '\1')",
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 3: Fix DATE_SUB(expr, INTERVAL '...') -> (expr - INTERVAL '...')
+    def replace_date_sub(match):
+        expr = match.group(1).strip()
+        interval_val = match.group(2).strip()
+        return f"({expr} - INTERVAL '{interval_val}')"
+
+    sql = re.sub(
+        r"\bDATE_SUB\s*\(\s*([^,]+),\s*INTERVAL\s+'?([^')]+)'?\s*\)",
+        replace_date_sub,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 4: Fix DATE_ADD(expr, INTERVAL '...') -> (expr + INTERVAL '...')
+    def replace_date_add(match):
+        expr = match.group(1).strip()
+        interval_val = match.group(2).strip()
+        return f"({expr} + INTERVAL '{interval_val}')"
+
+    sql = re.sub(
+        r"\bDATE_ADD\s*\(\s*([^,]+),\s*INTERVAL\s+'?([^')]+)'?\s*\)",
+        replace_date_add,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 5: Fix DATE(NOW() - INTERVAL '...') -> (NOW() - INTERVAL '...')::date
+    def replace_date_interval_cast(match):
+        inner = match.group(1).strip()
+        return f"({inner})::date"
+
+    sql = re.sub(
+        r"\bDATE\s*\(\s*((?:NOW\s*\(\s*\)|CURRENT_TIMESTAMP|CURRENT_DATE)\s*[-+]\s*INTERVAL\s+'[^']+')\s*\)",
+        replace_date_interval_cast,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 6: Fix DATE(column_name) -> column_name::date
+    sql = re.sub(
+        r"\bDATE\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\)",
+        r"\1::date",
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 7: Fix DATEDIFF(a, b) -> DATE_PART('day', a - b)::int
+    def replace_datediff(match):
+        a = match.group(1).strip()
+        b = match.group(2).strip()
+        return f"DATE_PART('day', {a} - {b})::int"
+
+    sql = re.sub(
+        r"\bDATEDIFF\s*\(\s*([^,]+),\s*([^)]+)\)",
+        replace_datediff,
+        sql,
+        flags=re.IGNORECASE
+    )
+
+    # Step 8: Fix MySQL date extraction functions
+    sql = re.sub(r"\bYEAR\s*\(\s*([^)]+)\)", r"EXTRACT(YEAR FROM \1)", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bMONTH\s*\(\s*([^)]+)\)", r"EXTRACT(MONTH FROM \1)", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bDAY\s*\(\s*([^)]+)\)", r"EXTRACT(DAY FROM \1)", sql, flags=re.IGNORECASE)
+
+    # Step 9: Fix MySQL NULL handling functions
+    sql = re.sub(r"\bIFNULL\s*\(", "COALESCE(", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bISNULL\s*\(\s*([^)]+)\)", r"\1 IS NULL", sql, flags=re.IGNORECASE)
+
+    # Step 10: Fix MySQL GROUP_CONCAT -> PostgreSQL STRING_AGG
+    sql = re.sub(r"\bGROUP_CONCAT\s*\(\s*([^)]+)\)", r"STRING_AGG(\1, ',')", sql, flags=re.IGNORECASE)
+
+    # Step 11: Strip trailing semicolons (SQLAlchemy text() rejects them)
+    sql = sql.rstrip().rstrip(";").rstrip()
+
+    return sql
