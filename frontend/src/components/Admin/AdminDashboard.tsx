@@ -218,6 +218,7 @@ export const AdminDashboard: React.FC = () => {
     next_sync_start: string;
     next_sync_end: string;
     sync_available: boolean;
+    is_syncing: boolean;
   } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncStatusLoading, setIsSyncStatusLoading] = useState(false);

@@ -49,6 +49,114 @@ def _is_valid_uuid(value: str) -> bool:
         return False
 
 
+def _clean_identifier_placeholders(identifier: Any) -> Any:
+    """Strip common descriptive placeholder suffixes from LLM generated values."""
+    if not isinstance(identifier, str):
+        return identifier
+    
+    val = identifier.strip()
+    if _is_valid_uuid(val):
+        return val
+        
+    val_lower = val.lower()
+    
+    # Suffixes to strip
+    suffixes = [
+        "'s staff id", " staff id", " staff name", " staff uuid", " staff",
+        "'s service id", " service id", " service name", " service uuid", " service",
+        "'s branch id", " branch id", " branch name", " branch uuid", " branch",
+        "'s customer id", " customer id", " customer name", " customer uuid", " customer",
+        "'s user id", " user id", " user uuid",
+        "'s id", " id", "'s uuid", " uuid",
+    ]
+    
+    for suffix in suffixes:
+        if val_lower.endswith(suffix):
+            cleaned = val[:-len(suffix)].strip()
+            if cleaned:
+                logger.info(f"[EntityResolver] Cleaned placeholder suffix '{suffix}' from '{val}' → '{cleaned}'")
+                return cleaned
+                
+    return val
+
+
+def _get_context_customer_id() -> Optional[str]:
+    """Extract logged-in customer ID from system/query context."""
+    context = ""
+    try:
+        from core.query_context import get_query_context
+        context = get_query_context()
+    except Exception:
+        pass
+        
+    if not context:
+        try:
+            from agents.receptionist_agent import ReceptionistAgent
+            context = getattr(ReceptionistAgent, "CURRENT_QUERY_CONTEXT", "") or ""
+        except Exception:
+            pass
+            
+    if not context:
+        try:
+            from agents.staff_assistant_agent import StaffAssistantAgent
+            context = getattr(StaffAssistantAgent, "CURRENT_QUERY_CONTEXT", "") or ""
+        except Exception:
+            pass
+            
+    if context and "[SYSTEM CUSTOMER CONTEXT:" in context:
+        import re
+        match = re.search(r"\[SYSTEM CUSTOMER CONTEXT:[^\]]*?\bID:\s*([a-f0-9\-]{36})", context, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        try:
+            parts = context.split("ID: ")
+            if len(parts) > 1:
+                cust_id = parts[1].split(",")[0].strip()
+                return cust_id
+        except Exception:
+            pass
+    return None
+
+
+def _get_context_staff_id() -> Optional[str]:
+    """Extract logged-in staff ID from system/query context."""
+    context = ""
+    try:
+        from core.query_context import get_query_context
+        context = get_query_context()
+    except Exception:
+        pass
+        
+    if not context:
+        try:
+            from agents.receptionist_agent import ReceptionistAgent
+            context = getattr(ReceptionistAgent, "CURRENT_QUERY_CONTEXT", "") or ""
+        except Exception:
+            pass
+            
+    if not context:
+        try:
+            from agents.staff_assistant_agent import StaffAssistantAgent
+            context = getattr(StaffAssistantAgent, "CURRENT_QUERY_CONTEXT", "") or ""
+        except Exception:
+            pass
+            
+    if context and "[SYSTEM STAFF CONTEXT:" in context:
+        import re
+        match = re.search(r"\[SYSTEM STAFF CONTEXT:[^\]]*?\bID:\s*([a-f0-9\-]{36})", context, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        try:
+            parts = context.split("ID: ")
+            if len(parts) > 1:
+                staff_id = parts[1].split(",")[0].strip()
+                return staff_id
+        except Exception:
+            pass
+    return None
+
+
+
 # ============================================================================
 # BRANCH RESOLVER
 # ============================================================================
@@ -78,6 +186,7 @@ def resolve_branch(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
+    identifier = _clean_identifier_placeholders(identifier)
     if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "select", "choose"]:
         first_branch = db.query(Branch).filter(Branch.is_active == True).first()
         if first_branch:
@@ -184,7 +293,13 @@ def resolve_customer(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
-    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "me", "my", "myself"]:
+    identifier = _clean_identifier_placeholders(identifier)
+    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "me", "my", "myself", "current_user", "current_user_id", "anonymous"]:
+        ctx_cust_id = _get_context_customer_id()
+        if ctx_cust_id and _is_valid_uuid(ctx_cust_id):
+            logger.info(f"Customer resolved to logged-in user from context: {ctx_cust_id}")
+            return uuid.UUID(ctx_cust_id)
+            
         first_cust = db.query(Customer).filter(Customer.is_active == True).first()
         if first_cust:
             logger.info(f"Customer resolved to default customer: {first_cust.full_name} ({first_cust.id})")
@@ -302,6 +417,7 @@ def resolve_service(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
+    identifier = _clean_identifier_placeholders(identifier)
     if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "select", "choose", "service", "appointment", "booking"]:
         first_service = db.query(Service).filter(Service.is_active == True).first()
         if first_service:
@@ -415,10 +531,21 @@ def resolve_staff(
     Raises:
         ValueError: If identifier is invalid and raise_on_missing=True
     """
-    if identifier is None:
-        if raise_on_missing:
-            raise ValueError("Staff identifier cannot be None")
-        return None
+    identifier = _clean_identifier_placeholders(identifier)
+    if identifier is None or str(identifier).strip().lower() in ["none", "null", "undefined", "", "placeholder", "any", "default", "me", "my", "myself", "current_user_id", "anonymous", "current_user", "self"]:
+        ctx_staff_id = _get_context_staff_id()
+        if ctx_staff_id and _is_valid_uuid(ctx_staff_id):
+            logger.info(f"Staff resolved to logged-in user from context: {ctx_staff_id}")
+            return uuid.UUID(ctx_staff_id)
+            
+        first_staff = db.query(Staff).filter(Staff.is_active == True).first()
+        if first_staff:
+            logger.info(f"Staff resolved to default staff: {first_staff.full_name} ({first_staff.id})")
+            return first_staff.id
+        if identifier is None:
+            if raise_on_missing:
+                raise ValueError("Staff identifier cannot be None")
+            return None
     
     identifier_str = str(identifier).strip()
     

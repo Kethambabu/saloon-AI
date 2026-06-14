@@ -1,4 +1,4 @@
-"""AI Agents module using Microsoft AutoGen"""
+"""AI Agents module using Microsoft AutoGen — Phase 1 Architecture"""
 
 from typing import Dict, Any, Optional
 
@@ -39,16 +39,31 @@ from agents.lead_followup_agent import LeadFollowupAgent
 from agents.reputation_agent import ReputationAgent
 from agents.upsell_agent import UpsellAgent
 from agents.staff_assistant_agent import StaffAssistantAgent
-from agents.orchestrator import MultiAgentOrchestrator
+from agents.bi_agent import BIAgent
+from agents.orchestrator import (
+    MultiAgentOrchestrator,
+    get_phase1_orchestrator,
+    get_entity_resolver,
+    get_conversation_state_service,
+    get_permission_guard,
+)
 
 __all__ = [
+    # Base classes
     "Agent",
     "AgentOrchestrator",
+    # Specialist agents (all preserved)
     "ReceptionistAgent",
     "LeadFollowupAgent",
     "ReputationAgent",
     "UpsellAgent",
     "StaffAssistantAgent",
-    "MultiAgentOrchestrator"
+    "BIAgent",
+    # Orchestrators
+    "MultiAgentOrchestrator",      # legacy (backward-compatible)
+    "get_phase1_orchestrator",     # Phase 1 factory
+    # Phase 1 service accessors
+    "get_entity_resolver",
+    "get_conversation_state_service",
+    "get_permission_guard",
 ]
-

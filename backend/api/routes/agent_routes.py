@@ -18,17 +18,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-# Thread-safe global singleton for ReceptionistAgent to optimize load times
-_receptionist_agent: Optional[ReceptionistAgent] = None
+# Thread-safe global singleton for the Orchestrator/Agent to optimize load times
+_agent_orchestrator: Any = None
+_receptionist_agent: Any = None
 
 
-def get_receptionist_agent() -> ReceptionistAgent:
-    """Helper to lazily load and cache the ReceptionistAgent singleton."""
-    global _receptionist_agent
-    if _receptionist_agent is None:
-        logger.info("Initializing lazy ReceptionistAgent singleton...")
-        _receptionist_agent = ReceptionistAgent()
-    return _receptionist_agent
+def get_receptionist_agent() -> Any:
+    """Helper to lazily load and cache the OrchestratorV3 singleton."""
+    global _agent_orchestrator, _receptionist_agent
+    if _agent_orchestrator is None:
+        logger.info("Initializing lazy OrchestratorV3 singleton...")
+        from agents.orchestrator_v3 import get_phase2_orchestrator
+        _agent_orchestrator = get_phase2_orchestrator(tenant_id="default")
+        _receptionist_agent = _agent_orchestrator
+    return _agent_orchestrator
 
 
 # Pydantic models for structured requests & responses
@@ -103,58 +106,7 @@ async def chat_with_agent(
     from datetime import datetime
     import asyncio
 
-    # Route to Orchestrator if intent_override is specified
-    if payload.intent_override:
-        logger.info(f"Routing to Multi-Agent Orchestrator with intent override: {payload.intent_override}")
-        try:
-            from agents.orchestrator import MultiAgentOrchestrator
-            global _orchestrator
-            if "_orchestrator" not in globals() or globals()["_orchestrator"] is None:
-                globals()["_orchestrator"] = MultiAgentOrchestrator()
-            
-            orch = globals()["_orchestrator"]
-            agent_response = await orch.process({
-                "query": payload.message,
-                "intent_override": payload.intent_override,
-                "session_id": payload.session_id,
-                "chat_history": payload.chat_history
-            })
-            
-            if not agent_response.get("success"):
-                logger.error(f"Orchestration failed: {agent_response.get('error')}")
-                # Use the user-friendly response from the orchestrator if available
-                friendly_msg = agent_response.get("response") or "I encountered an issue processing your request. Please try again."
-                return ChatResponse(
-                    success=True,  # Return success=True so frontend renders the message instead of crashing
-                    session_id=payload.session_id,
-                    response=friendly_msg,
-                    agent_name=agent_response.get("agent_name", "Atlas_BI")
-                )
-                
-            return ChatResponse(
-                success=True,
-                session_id=payload.session_id,
-                response=agent_response.get("response", ""),
-                agent_name=agent_response.get("agent_name", "Atlas_BI")
-            )
-        except Exception as ex:
-            logger.error(f"Orchestrator processing crashed: {ex}", exc_info=True)
-            error_str = str(ex)
-            if "429" in error_str or "rate_limit" in error_str.lower():
-                friendly_msg = "Our AI service is temporarily at capacity. Please wait a minute and try again."
-            elif "timeout" in error_str.lower():
-                friendly_msg = "Your request took longer than expected. Please try again shortly."
-            else:
-                friendly_msg = "I encountered an unexpected issue. Please try again in a moment."
-            
-            return ChatResponse(
-                success=True,  # Return success=True so frontend renders the error message in chat
-                session_id=payload.session_id,
-                response=friendly_msg,
-                agent_name="Atlas_BI"
-            )
-    
-    # Role-based agent enforcement
+    # Enforce Customer Role profile requirement
     if current_user.role.value == "CUSTOMER" and not current_user.customer_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -188,11 +140,11 @@ async def chat_with_agent(
         
     full_query += f"Latest User Message: {payload.message}"
     
-    # 2. Lazy load the agent
+    # 2. Lazy load the agent (returns the Multi-Agent Orchestrator in production)
     try:
         agent = get_receptionist_agent()
     except Exception as e:
-        logger.error(f"Failed to load ReceptionistAgent: {str(e)}", exc_info=True)
+        logger.error(f"Failed to load agent: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Agent service is currently initializing or unavailable: {str(e)}"
@@ -271,7 +223,15 @@ async def chat_with_agent(
         
         # Try to wait for the agent response for a maximum of 30.0 seconds
         agent_response = await asyncio.wait_for(
-            agent.process({"query": full_query}),
+            agent.process({
+                "query": payload.message,
+                "full_query": full_query,
+                "intent_override": payload.intent_override,
+                "user_role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+                "session_id": payload.session_id,
+                "customer_id": current_user.customer_id,
+                "user_id": current_user.id,
+            }),
             timeout=30.0
         )
         
@@ -312,12 +272,22 @@ async def chat_with_agent(
             success=True,
             session_id=payload.session_id,
             response=agent_response.get("response", "").strip(),
-            agent_name=agent_response.get("agent_name", "Clara")
+            agent_name=agent_response.get("agent_name", "Clara"),
+            response_type=agent_response.get("response_type", "general_chat"),
+            data=agent_response.get("data")
         )
 
     except asyncio.TimeoutError:
         logger.warning(f"⏰ Agent execution exceeded 30.0 seconds. Forking task to FastAPI background worker.")
-        background_tasks.add_task(run_agent_in_background, {"query": full_query})
+        background_tasks.add_task(run_agent_in_background, {
+            "query": payload.message,
+            "full_query": full_query,
+            "intent_override": payload.intent_override,
+            "user_role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+            "session_id": payload.session_id,
+            "customer_id": current_user.customer_id,
+            "user_id": current_user.id,
+        })
         
         return ChatResponse(
             success=True,

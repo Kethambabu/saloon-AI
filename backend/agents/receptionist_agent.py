@@ -25,7 +25,6 @@ from tools.booking_tools import (
     get_available_slots,
     cancel_appointment,
     reschedule_appointment,
-    get_customer_history,
 )
 from tools.discovery_tools import (
     list_available_branches,
@@ -33,6 +32,7 @@ from tools.discovery_tools import (
     list_available_staff,
     search_for_customers,
 )
+from tools.mcp_tool import mcp_execute
 from db.database import SessionLocal
 from utils.entity_resolver import (
     resolve_branch,
@@ -72,7 +72,14 @@ def compress_history_for_prompt(history_data: Any) -> str:
     if not isinstance(data, dict):
         return str(history_data)
 
-    history = data.get("history", [])
+    history = data.get("history") or data.get("records")
+    if not history and isinstance(data.get("data"), dict):
+        history = data["data"].get("records") or data["data"].get("history")
+    if not history and isinstance(data.get("data"), list):
+        history = data["data"]
+    if not history:
+        history = []
+
     if not history:
         return "No past styling appointments on record."
 
@@ -83,9 +90,14 @@ def compress_history_for_prompt(history_data: Any) -> str:
 
     total_spent = sum(float(a.get("service_price") or 0.0) for a in history if str(a.get("status")).upper() == "COMPLETED")
 
+    active_statuses = {"CONFIRMED", "PENDING", "confirmed", "pending"}
+    active_appts = [a for a in history if str(a.get("status")) in active_statuses]
+    past_appts = [a for a in history if str(a.get("status")) not in active_statuses]
+    
+    selected_appts = active_appts[:15] + past_appts[:8]
+
     compressed_records = []
-    # Keep details for the 8 most recent appointments to prevent prompt token bloat
-    for appt in history[:8]:
+    for appt in selected_appts:
         start_time = appt.get("start_time", "")
         date_part = start_time.split("T")[0] if "T" in start_time else start_time
         time_part = ""
@@ -93,11 +105,11 @@ def compress_history_for_prompt(history_data: Any) -> str:
             time_part = start_time.split("T")[1][:5]
 
         compressed_records.append({
-            "id": appt.get("appointment_id"),
+            "id": appt.get("appointment_id") or appt.get("id"),
             "date": date_part,
             "time": time_part,
             "service": appt.get("service_name"),
-            "price": appt.get("service_price"),
+            "price": appt.get("service_price") or appt.get("price"),
             "stylist": appt.get("staff_name"),
             "status": appt.get("status")
         })
@@ -647,31 +659,47 @@ def format_receptionist_tool_output(intent: str, raw_res_str: str) -> str:
         if data.get("success"):
             return "Your appointment has been successfully cancelled. The database has been updated accordingly."
         else:
-            err = data.get("error") or "Cancellation failed."
+            # Also check nested data (TypedAgentResponse format)
+            inner = data.get("data") or {}
+            if inner.get("success"):
+                return "Your appointment has been successfully cancelled. The database has been updated accordingly."
+            err = data.get("error") or inner.get("error") or "Cancellation failed."
             return f"I apologize, but we encountered an issue cancelling your appointment: {err}"
             
     elif intent == "reschedule":
         if data.get("success"):
-            start_str = data.get("start_time", "")
+            # start_time may be at top level or nested under data (TypedAgentResponse format)
+            inner = data.get("data") or {}
+            start_str = data.get("start_time") or inner.get("start_time") or inner.get("new_start_time") or ""
             try:
                 dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                 nice_dt = dt.strftime("%A, %B %d, %Y at %I:%M %p")
             except Exception:
-                nice_dt = start_str
+                nice_dt = start_str or "your requested time"
             return f"Your appointment has been successfully rescheduled to {nice_dt}."
         else:
-            err = data.get("error") or "Rescheduling failed."
+            inner = data.get("data") or {}
+            err = data.get("error") or inner.get("error") or "Rescheduling failed."
             if "cancelled" in str(err).lower():
                 return "I apologize, but we cannot reschedule a cancelled appointment. Please book a new styling session instead."
             return f"I apologize, but we encountered an issue rescheduling your appointment: {err}"
             
     elif intent == "history":
-        history = data.get("history", [])
+        history = data.get("history") or data.get("records")
+        if not history and isinstance(data.get("data"), dict):
+            history = data["data"].get("records") or data["data"].get("history")
+        if not history and isinstance(data.get("data"), list):
+            history = data["data"]
+        if not history:
+            history = []
+
         if not history:
             return "You do not have any past styling appointments on record with us."
         
         lines = []
         for appt in history:
+            if not isinstance(appt, dict):
+                continue
             start_str = appt.get("start_time", "")
             try:
                 dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
@@ -752,23 +780,6 @@ def sanitize_tool_arguments(func_name: str, arguments: Dict[str, Any]) -> Dict[s
         return arguments
 
 
-def get_available_branches() -> str:
-    """
-    Discover all available branches at SalonAI before booking.
-    Use this to learn which branches exist and their names/codes.
-    """
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(list_available_branches)
-        try:
-
-
-
-            return future.result(timeout=25.0)
-        except concurrent.futures.TimeoutError:
-            return "Error: Tool execution timed out."
-
-
 def get_available_services() -> str:
     """
     Discover all available services at SalonAI before booking.
@@ -783,15 +794,85 @@ def get_available_services() -> str:
             return "Error: Tool execution timed out."
 
 
-def get_available_staff(branch_id: Optional[str] = None) -> str:
+def get_available_staff(
+    date: Optional[str] = None,
+    time: Optional[str] = None,
+    branch_id: Optional[str] = None
+) -> str:
     """
-    Discover all available stylists/staff members.
-    Optionally filter by a specific branch.
+    Discover all stylists/staff members who are active and available for a specific date and time slot.
+    Checks staff leaves and overlapping appointments.
     """
     import concurrent.futures
-    repaired_branch = repair_branch(branch_id) if branch_id else None
+    def run():
+        from datetime import datetime, time as dt_time, timedelta, timezone
+        from db.models import Staff, Appointment, AppointmentStatus
+        from db.database import SessionLocal
+        from tools.booking_tools import is_staff_on_leave
+        
+        repaired_branch = repair_branch(branch_id)
+        repaired_date = repair_date(date)
+        repaired_time = repair_time(time)
+        
+        session = SessionLocal()
+        try:
+            # Resolve target date and time
+            target_date = datetime.strptime(repaired_date, "%Y-%m-%d").date()
+            slot_start = datetime.combine(target_date, datetime.strptime(repaired_time, "%H:%M").time(), tzinfo=timezone.utc)
+            # Default duration of 30 minutes for slot check
+            slot_end = slot_start + timedelta(minutes=30)
+            
+            # Fetch all active staff at the branch
+            staff_list = session.query(Staff).filter(Staff.branch_id == repaired_branch, Staff.is_active == True).all()
+            
+            # Fetch all non-cancelled appointments for this branch on the target date
+            day_start = datetime.combine(target_date, dt_time(0, 0), tzinfo=timezone.utc)
+            day_end = datetime.combine(target_date, dt_time(23, 59, 59), tzinfo=timezone.utc)
+            appointments = session.query(Appointment).filter(
+                Appointment.branch_id == repaired_branch,
+                Appointment.status != AppointmentStatus.CANCELLED,
+                Appointment.start_time >= day_start,
+                Appointment.start_time <= day_end
+            ).all()
+            
+            available_staff = []
+            for member in staff_list:
+                # Check leave
+                on_leave, _ = is_staff_on_leave(member.id, repaired_date, session)
+                if on_leave:
+                    continue
+                    
+                # Check overlap
+                has_overlap = False
+                for appt in appointments:
+                    if appt.staff_id == member.id:
+                        appt_start = appt.start_time.replace(tzinfo=timezone.utc) if appt.start_time.tzinfo is None else appt.start_time.astimezone(timezone.utc)
+                        appt_end = appt.end_time.replace(tzinfo=timezone.utc) if appt.end_time.tzinfo is None else appt.end_time.astimezone(timezone.utc)
+                        if slot_start < appt_end and slot_end > appt_start:
+                            has_overlap = True
+                            break
+                
+                if not has_overlap:
+                    available_staff.append(member)
+            
+            if not available_staff:
+                return f"No stylists are available at {repaired_time} on {repaired_date}."
+                
+            formatted = f"Available Staff at {repaired_time} on {repaired_date}:\n\n"
+            for staff in available_staff:
+                formatted += f"• {staff.full_name} ({staff.role})\n"
+                formatted += f"  Email: {staff.email}\n"
+                formatted += f"  ID: {staff.id}\n\n"
+            return formatted
+            
+        except Exception as e:
+            logger.error(f"Error in get_available_staff: {str(e)}", exc_info=True)
+            return f"Error checking available staff: {str(e)}"
+        finally:
+            session.close()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(list_available_staff, repaired_branch)
+        future = executor.submit(run)
         try:
             return future.result(timeout=25.0)
         except concurrent.futures.TimeoutError:
@@ -833,7 +914,8 @@ def check_stylist_availability(
         repaired_date = repair_date(date)
         repaired_staff = repair_staff(staff_id, repaired_branch)
         repaired_service = repair_service(service_id)
-        return get_available_slots(
+        from workflows.booking_workflow import check_availability_workflow
+        return check_availability_workflow(
             branch_id=repaired_branch,
             date_str=repaired_date,
             staff_id=repaired_staff,
@@ -867,12 +949,14 @@ def book_new_appointment(
         
         dt_str = str(start_time).strip()
         try:
-            if "t" not in dt_str.lower():
-                rep_d = repair_date(dt_str)
-                rep_t = repair_time(dt_str)
-                rep_d = adjust_past_date_today(rep_d, rep_t)
-                repaired_time_str = f"{rep_d}T{rep_t}:00Z"
-            else:
+            import re
+            is_iso = False
+            if "T" in dt_str:
+                parts = dt_str.split("T")
+                if len(parts) == 2 and re.match(r"^\d{4}-\d{2}-\d{2}$", parts[0]):
+                    is_iso = True
+            
+            if is_iso:
                 parts = dt_str.split("T")
                 rep_d = repair_date(parts[0])
                 rep_t = repair_time(parts[1])
@@ -880,10 +964,16 @@ def book_new_appointment(
                 repaired_time_str = f"{rep_d}T{rep_t}:00"
                 if not repaired_time_str.endswith("Z") and not "+" in repaired_time_str:
                     repaired_time_str += "Z"
+            else:
+                rep_d = repair_date(dt_str)
+                rep_t = repair_time(dt_str)
+                rep_d = adjust_past_date_today(rep_d, rep_t)
+                repaired_time_str = f"{rep_d}T{rep_t}:00Z"
         except Exception:
             repaired_time_str = f"{repair_date(None)}T17:00:00Z"
             
-        return create_appointment(
+        from workflows.booking_workflow import book_appointment_workflow
+        return book_appointment_workflow(
             customer_id=repaired_cust,
             branch_id=repaired_branch,
             service_id=repaired_service,
@@ -924,7 +1014,8 @@ def cancel_existing_appointment(appointment_id: str) -> str:
                     db.close()
                     
         sys_c = get_query_customer_id()
-        return cancel_appointment(appointment_id=repaired_appt, customer_id=sys_c)
+        from workflows.booking_workflow import cancel_appointment_workflow
+        return cancel_appointment_workflow(appointment_id=repaired_appt, customer_id=sys_c)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
@@ -959,12 +1050,14 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
                     
         dt_str = str(new_start_time).strip()
         try:
-            if "t" not in dt_str.lower():
-                rep_d = repair_date(dt_str)
-                rep_t = repair_time(dt_str)
-                rep_d = adjust_past_date_today(rep_d, rep_t)
-                repaired_time_str = f"{rep_d}T{rep_t}:00Z"
-            else:
+            import re
+            is_iso = False
+            if "T" in dt_str:
+                parts = dt_str.split("T")
+                if len(parts) == 2 and re.match(r"^\d{4}-\d{2}-\d{2}$", parts[0]):
+                    is_iso = True
+            
+            if is_iso:
                 parts = dt_str.split("T")
                 rep_d = repair_date(parts[0])
                 rep_t = repair_time(parts[1])
@@ -972,11 +1065,17 @@ def reschedule_existing_appointment(appointment_id: str, new_start_time: str) ->
                 repaired_time_str = f"{rep_d}T{rep_t}:00"
                 if not repaired_time_str.endswith("Z") and not "+" in repaired_time_str:
                     repaired_time_str += "Z"
+            else:
+                rep_d = repair_date(dt_str)
+                rep_t = repair_time(dt_str)
+                rep_d = adjust_past_date_today(rep_d, rep_t)
+                repaired_time_str = f"{rep_d}T{rep_t}:00Z"
         except Exception:
             repaired_time_str = f"{repair_date(None)}T17:00:00Z"
             
         sys_c = get_query_customer_id()
-        return reschedule_appointment(appointment_id=repaired_appt, new_start_time=repaired_time_str, customer_id=sys_c)
+        from workflows.booking_workflow import reschedule_appointment_workflow
+        return reschedule_appointment_workflow(appointment_id=repaired_appt, new_start_time=repaired_time_str, customer_id=sys_c)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
@@ -992,7 +1091,23 @@ def check_customer_booking_history(customer_id: str) -> str:
     import concurrent.futures
     def run():
         repaired_cust = repair_customer(customer_id)
-        return get_customer_history(customer_id=repaired_cust)
+        from tools.mcp_tool import mcp_execute
+        sys_c = get_query_customer_id()
+        user_ctx = {"user_id": sys_c or "system", "role": "CUSTOMER", "customer_id": repaired_cust}
+        res = mcp_execute(
+            resource="appointments",
+            operation="select",
+            filters={"customer_id": repaired_cust},
+            agent_name="Clara",
+            user_context=user_ctx,
+            limit=50
+        )
+        from utils.typed_responses import TypedAgentResponse
+        if res.get("success"):
+            records = res.get("data", [])
+            return str(TypedAgentResponse.appointment_history(records).to_agent_dict())
+        else:
+            return str(TypedAgentResponse.general_error(res.get("error", "Failed to retrieve booking history")).to_agent_dict())
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(run)
         try:
@@ -1004,6 +1119,58 @@ def check_customer_booking_history(customer_id: str) -> str:
 # ============================================================================
 # RESPONSE NORMALIZATION LAYER
 # ============================================================================
+
+def append_upsells_if_booking_confirmed(text: str) -> str:
+    """
+    Checks if the response is a successful booking confirmation.
+    If it is, and the '🎁 Recommended Add-on Treatments' block is missing,
+    detects the Service and appends the appropriate Zenoti smart upsells.
+    """
+    if not text:
+        return text
+        
+    # Check if this is a confirmed booking
+    import re
+    # Match "status: confirmed" or "status:\nconfirmed" or "status:\n\nconfirmed" or "status: CONFIRMED"
+    status_match = re.search(r"status:\s*(\n\s*)*confirmed", text, re.IGNORECASE)
+    if not status_match:
+        return text
+        
+    # Check if upsells are already present
+    if "Zenoti smart upsell" in text or "Recommended Add-on" in text or "🎁" in text:
+        return text
+        
+    # Extract Service Name to determine the correct upsell recommendations
+    service_match = re.search(r"service:\s*([^\n\r]+)", text, re.IGNORECASE)
+    service_name = "Styling Session"
+    if service_match:
+        service_name = service_match.group(1).strip()
+        # Clean any markdown/asterisks/underscores
+        service_name = re.sub(r"[\*\_]", "", service_name)
+        
+    # Determine correct upsell recommendations based on Service Name
+    upsells = []
+    if "haircut" in service_name.lower():
+        upsells = ["Hair Spa ($55)", "Special Head Massage ($25)", "Professional Beard Styling ($35)"]
+    elif "massage" in service_name.lower():
+        upsells = ["Luxury Facial Treatment ($120)", "Himalayan Sea Salt foot wash ($30)"]
+    else:
+        upsells = ["Signature Precision Haircut ($85)", "Special Head Massage ($25)"]
+        
+    # Replace the Status: Confirmed line with the full Status and Recommended Add-on block
+    status_line_regex = r"status:\s*(\n\s*)*confirmed"
+    
+    upsell_block = (
+        "Status:\n\nConfirmed\n\n"
+        "🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n" +
+        "\n".join(upsells)
+    )
+    
+    # We perform case-insensitive substitution of the status line with the new block
+    # Only replace the first occurrence
+    text_with_upsells = re.sub(status_line_regex, upsell_block, text, count=1, flags=re.IGNORECASE)
+    return text_with_upsells
+
 
 def normalize_response(text: str) -> str:
     """Convert raw system JSON or stack traces into beautiful customer-facing replies."""
@@ -1020,10 +1187,21 @@ def normalize_response(text: str) -> str:
             import json
             data = json.loads(text_clean)
             if isinstance(data, dict):
-                if data.get("success") and "appointment" in str(data).lower():
+                if data.get("success") and "appointment_id" in data and data.get("operation") != "select":
+                    service_name = data.get("service_name") or "Styling Session"
+                    upsells = []
+                    if "haircut" in service_name.lower():
+                        upsells = ["Hair Spa ($55)", "Special Head Massage ($25)", "Professional Beard Styling ($35)"]
+                    elif "massage" in service_name.lower():
+                        upsells = ["Luxury Facial Treatment ($120)", "Himalayan Sea Salt foot wash ($30)"]
+                    else:
+                        upsells = ["Signature Precision Haircut ($85)", "Special Head Massage ($25)"]
                     return (
                         f"I have successfully secured your styling appointment! "
-                        f"Your booking has been confirmed. Please let me know if you would like to make any other changes!"
+                        f"Your booking has been confirmed.\n\n"
+                        f"Status:\n\nConfirmed\n\n"
+                        f"🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n" +
+                        "\n".join(upsells)
                     )
                 if data.get("error"):
                     return f"I apologize, but we encountered an issue: {data['error']}. Let's try another time slot or stylist!"
@@ -1052,7 +1230,9 @@ def normalize_response(text: str) -> str:
             import re
             text_clean = re.sub(re.escape(tech_term), clean_term, text_clean, flags=re.IGNORECASE)
             
+    text_clean = append_upsells_if_booking_confirmed(text_clean)
     return text_clean
+
 
 
 # ============================================================================
@@ -1060,10 +1240,11 @@ def normalize_response(text: str) -> str:
 # ============================================================================
 
 RECEPTIONIST_SYSTEM_PROMPT = """You are Clara, a professional AI Salon Receptionist. You manage appointments and salon inquiries.
+
 Absolute Rules:
 1. NEVER INVENT DATA: If user provides service, branch, stylist, date, time, price, use those EXACT values. Never alter, replace, or suggest alternatives.
 2. BOOKING REQUESTS ARE TOOL TASKS: Immediately execute the appropriate tool. DO NOT CHAT, explain, list services/branches, or greet again.
-3. REQUIRED BOOKING FLOW: Extract service, branch, stylist, date, time -> Call check_stylist_availability(). If available, return booking confirmation. If not, offer alternatives.
+3. REQUIRED BOOKING FLOW: Extract service, branch, stylist, date, time -> Call mcp_read(resource="appointments", operation="check_availability", filters={"branch_id": ..., "date": ..., "staff_id": ..., "service_id": ...}). If available, return booking confirmation. If not, offer alternatives.
 4. REBOOKING FLOW: On "same appointment", "book again", "same service/stylist", extract last appointment from history. Reuse service, branch, staff, price. Only update changed fields.
 5. STRICT EXTRACTION: Extract fields exactly as: {service, branch, stylist, date, time}. No modifications allowed.
 6. NO HALLUCINATIONS: Never invent staff, branches, services, prices, availability, appointments, or bookings.
@@ -1075,11 +1256,31 @@ Absolute Rules:
    Date: [YYYY-MM-DD]
    Time: [HH:MM]
    Price: [Price]
-   Status: Confirmed
-8. AVAILABILITY QUESTIONS: For "Is this slot available?", immediately call availability tool. Do not explain services or suggest options.
+   Status:
+
+   Confirmed
+
+   🎁 Recommended Add-on Treatments (Zenoti smart upsell):
+
+   [Upsell Items]
+
+   Where [Upsell Items] are determined as:
+   - If Service contains "haircut" (case-insensitive):
+     Hair Spa ($55)
+     Special Head Massage ($25)
+     Professional Beard Styling ($35)
+   - If Service contains "massage" (case-insensitive):
+     Luxury Facial Treatment ($120)
+     Himalayan Sea Salt foot wash ($30)
+   - Otherwise:
+     Signature Precision Haircut ($85)
+     Special Head Massage ($25)
+8. AVAILABILITY QUESTIONS: For "Is this slot available?", immediately call availability check via mcp_read. Do not explain services or suggest options.
 9. TOOL FAILURE: If tool fails, output exactly "I could not verify availability right now." Never fake availability.
 10. ROLE: You are purely an appointment booking, cancellation, rescheduling, history management, and salon information/policies assistant. Never act as sales or marketing agent.
-11. RECEPTIONIST KNOWLEDGE BASE: For any questions about salon policies, business hours/timings, active offers/promotions, refunds, cancellations, FAQs, or general salon information, ALWAYS execute `search_receptionist_knowledge()` first. Never invent timings, policies, or offers. If no information is found in the knowledge base, state exactly: 'I couldn't find that information in the salon knowledge base.'
+11. RECEPTIONIST KNOWLEDGE BASE: For any questions about salon policies, business hours/timings, active offers/promotions, refunds, cancellations, FAQs, or general salon information, ALWAYS execute `search_knowledge_base(domain="policies", query=...)` first. Never invent timings, policies, or offers. If no information is found in the knowledge base, state exactly: 'I couldn't find that information in the salon knowledge base.'
+12. TRANSACTIONAL WORKFLOWS: All modifications/mutations to appointments (booking, canceling, rescheduling) are processed securely through execute_transaction().
+
 For every booking-related message, TOOL EXECUTION IS MANDATORY."""
 
 
@@ -1088,129 +1289,171 @@ For every booking-related message, TOOL EXECUTION IS MANDATORY."""
 # ============================================================================
 
 # ============================================================================
-# KEYWORD-ONLY INTENT SHORTCUT — saves ~200 tokens/call for greetings & FAQs
+# RECEPTIONIST PLANNER — Structured Task Decomposition
+# ============================================================================
+# Replaces the old fragile keyword-only intent shortcut.
+#
+# The planner asks a tiny LLM call to return a structured JSON plan with:
+#   - confidence  : float 0-1 (< 0.70 triggers a clarifying question)
+#   - tasks       : list of task dicts, each with 'action' and optional args
+#
+# Example plan for "Cancel my haircut and rebook for next Friday at 3pm":
+#   {
+#     "confidence": 0.97,
+#     "tasks": [
+#       {"action": "cancel",   "appointment_reference": "current"},
+#       {"action": "book",     "date": "next friday", "time": "3pm",
+#        "service": "haircut", "stylist": null, "branch": null}
+#     ]
+#   }
 # ============================================================================
 
-_CHAT_KEYWORDS = [
-    "hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye",
-    "who are you", "what can you do", "help me", "how are you",
-]
-_POLICY_KEYWORDS = [
-    "policy", "policies", "timings", "hours", "offer", "discount",
-    "promotion", "refund", "cancel policy", "faq", "working hours",
-    "opening", "closing", "how much", "price list"
-]
-_HISTORY_KEYWORDS = ["my appointment", "my booking", "past appointment", "history", "previous visit"]
-_AVAILABILITY_KEYWORDS = ["available", "availability", "free slot", "open slot", "check slot"]
-_BOOK_KEYWORDS = ["book", "schedule", "reserve", "appointment at", "book me", "make appointment"]
-_CANCEL_KEYWORDS = ["cancel", "delete appointment", "remove booking"]
-_RESCHEDULE_KEYWORDS = ["reschedule", "move appointment", "change appointment", "postpone"]
+_PLANNER_SYSTEM_PROMPT = """\
+You are a task planning assistant for a salon receptionist AI.
+Given the user's message, return a JSON plan (no extra text, raw JSON only).
+
+Schema:
+{
+  "confidence": <float 0.0-1.0>,
+  "tasks": [
+    {
+      "action": "<one of: book|cancel|reschedule|availability|history|policy_faq|general_chat>",
+      "service": "<service name or null>",
+      "branch": "<branch name or null>",
+      "stylist": "<stylist name or null>",
+      "date": "<date string or null>",
+      "time": "<time string or null>",
+      "appointment_reference": "<'current'|'last'|appointment_id or null>"
+    }
+  ]
+}
+
+Rules:
+- Set confidence < 0.70 if the user's intent is truly ambiguous.
+- Include ALL actions from the message (e.g. cancel + rebook = two tasks).
+- Extract date/time/service/stylist EXACTLY as stated — do not paraphrase.
+- Output ONLY valid JSON. No explanation.
+- Distinguish 'history' vs 'availability':
+  * Use 'history' when the user asks about their own booked/existing appointments (e.g., "do I have any appointments", "is I have any appointments", "when is my booking", "give me my appointments", "check my schedule").
+  * Use 'availability' ONLY when the user asks if the salon or a stylist has open/free slots for booking a new appointment (e.g., "is there any slot open", "are you free", "check openings")."""
+
+_PLANNER_CONFIDENCE_THRESHOLD = 0.70  # Below this -> ask a clarifying question
 
 
-def _fast_intent_classify(query: str) -> str:
+async def _run_planner(
+    latest_message: str,
+    fallback_queue: List[Dict],
+) -> Dict:
     """
-    Lightweight keyword-based intent classifier.
-    Returns a detected intent string ('chat', 'policy', 'book', 'cancel',
-    'reschedule', 'history', 'availability', or 'unknown' if ambiguous).
-    Called BEFORE the LLM extraction to skip the LLM call entirely for obvious inputs.
+    Run the ReceptionistPlanner against the given message using the fastest
+    available LLM in the fallback queue.
+
+    Returns the parsed plan dict, or a safe default plan on failure.
     """
-    q = query.lower()
-    if any(kw in q for kw in _CANCEL_KEYWORDS):
-        return "cancel"
-    if any(kw in q for kw in _RESCHEDULE_KEYWORDS):
-        return "reschedule"
-    if any(kw in q for kw in _BOOK_KEYWORDS):
-        return "book"
-    if any(kw in q for kw in _AVAILABILITY_KEYWORDS):
-        return "availability"
-    if any(kw in q for kw in _HISTORY_KEYWORDS):
-        return "history"
-    if any(kw in q for kw in _POLICY_KEYWORDS):
-        return "policy"
-    if any(kw in q for kw in _CHAT_KEYWORDS):
-        return "chat"
-    return "unknown"
+    import json as _json
+
+    default_plan = {
+        "confidence": 0.50,
+        "tasks": [{"action": "unknown", "service": None, "branch": None,
+                   "stylist": None, "date": None, "time": None,
+                   "appointment_reference": None}],
+    }
+
+    for tier in fallback_queue:
+        model_name = tier["model"]
+        if model_name in ReceptionistAgent.MODEL_COOLDOWN and \
+                time.time() < ReceptionistAgent.MODEL_COOLDOWN[model_name]:
+            continue
+        try:
+            timeout_val = 10.0 if tier["provider"] == "huggingface" else 12.0
+            client = OpenAIChatCompletionClient(
+                model=model_name,
+                api_key=tier["api_key"],
+                base_url=tier["base_url"],
+                timeout=timeout_val,
+            )
+            from autogen_core.models import SystemMessage, UserMessage
+            import asyncio as _asyncio
+            res = await _asyncio.wait_for(
+                client.create(
+                    messages=[
+                        SystemMessage(content=_PLANNER_SYSTEM_PROMPT),
+                        UserMessage(content=f"User message: {latest_message[:500]}", source="user"),
+                    ],
+                    max_tokens=300,
+                ),
+                timeout=timeout_val,
+            )
+            raw = (res.content or "").strip()
+            # Strip markdown fences if present
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            plan = _json.loads(raw.strip())
+            # Convert legacy intent JSON structure if present (e.g. from tests or old models)
+            if "intent" in plan and "tasks" not in plan:
+                action = plan.get("intent")
+                task = {
+                    "action": action,
+                    "service": plan.get("service"),
+                    "branch": plan.get("branch"),
+                    "stylist": plan.get("stylist"),
+                    "date": plan.get("date"),
+                    "time": plan.get("time"),
+                    "appointment_reference": plan.get("appointment_id")
+                }
+                plan = {
+                    "confidence": 0.95,
+                    "tasks": [task]
+                }
+            # Validate minimal schema
+            if "tasks" in plan and isinstance(plan["tasks"], list):
+                plan.setdefault("confidence", 0.90)
+                return plan
+        except Exception as exc:
+            logger.warning("[Planner] Failed on model '%s': %s", model_name, str(exc)[:100])
+            err_str = str(exc)
+            if "401" in err_str or "unauthorized" in err_str.lower():
+                ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
+            else:
+                cooldown_secs = 15 if tier["provider"] == "huggingface" else 1800
+                ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
+
+    return default_plan
 
 
-def _select_agent_tools(query: str, intent: str) -> List[Any]:
-    """Dynamically select only the necessary tools for this query to minimize token footprint."""
-    from tools.receptionist_rag_tools import (
-        search_receptionist_knowledge,
-        get_active_offers,
-        get_business_timings,
-        get_cancellation_policy,
-        get_refund_policy,
-        get_faq_answer,
-    )
+def _select_agent_tools(planned_tasks: List[Dict]) -> List[Any]:
+    """
+    Dynamically select only the tools required by the planned tasks from the consolidated tool suite.
+    """
+    from tools.mcp_tool import mcp_read
+    from tools.rag_unified import search_knowledge_base
+    from tools.transaction_unified import execute_transaction
+
+    actions = {t.get("action", "") for t in planned_tasks}
+    tools: List[Any] = []
+
+    # Map actions to consolidated tools
+    # 1. Reads
+    if any(act in actions for act in ("book", "cancel", "reschedule", "availability", "history")):
+        tools.append(mcp_read)
     
-    q = query.lower()
-    tools = []
-    
-    # Intent-specific core tools
-    if intent == "book":
-        tools.extend([book_new_appointment, check_stylist_availability, get_available_branches, get_available_services, get_available_staff])
-    elif intent == "cancel":
-        tools.extend([cancel_existing_appointment, check_customer_booking_history])
-    elif intent == "reschedule":
-        tools.extend([reschedule_existing_appointment, check_stylist_availability, check_customer_booking_history])
-    elif intent == "availability":
-        tools.extend([check_stylist_availability, get_available_branches, get_available_services, get_available_staff])
-    elif intent == "history":
-        tools.extend([check_customer_booking_history])
+    # 2. Writes / Transactions
+    if any(act in actions for act in ("book", "cancel", "reschedule")):
+        tools.append(execute_transaction)
         
-    # Dynamic additions based on query keywords
-    if any(k in q for k in ["branch", "location", "where", "place", "address", "map"]):
-        if get_available_branches not in tools:
-            tools.append(get_available_branches)
-            
-    if any(k in q for k in ["service", "haircut", "color", "massage", "facial", "treatment", "price", "cost", "how much", "menu"]):
-        if get_available_services not in tools:
-            tools.append(get_available_services)
-            
-    if any(k in q for k in ["staff", "stylist", "who", "employee", "person", "worker", "team"]):
-        if get_available_staff not in tools:
-            tools.append(get_available_staff)
-            
-    if any(k in q for k in ["book", "schedule", "reserve", "appointment"]):
-        if book_new_appointment not in tools:
-            tools.append(book_new_appointment)
-        if check_stylist_availability not in tools:
-            tools.append(check_stylist_availability)
-            
-    if any(k in q for k in ["cancel", "delete", "remove"]):
-        if cancel_existing_appointment not in tools:
-            tools.append(cancel_existing_appointment)
-            
-    if any(k in q for k in ["reschedule", "move", "change", "postpone"]):
-        if reschedule_existing_appointment not in tools:
-            tools.append(reschedule_existing_appointment)
-            
-    if any(k in q for k in ["history", "previous", "past", "last appointment", "visited", "visits"]):
-        if check_customer_booking_history not in tools:
-            tools.append(check_customer_booking_history)
-            
-    if any(k in q for k in ["offer", "discount", "promotion", "deal", "special"]):
-        if get_active_offers not in tools:
-            tools.append(get_active_offers)
-    if any(k in q for k in ["timing", "hour", "open", "close", "time", "when"]):
-        if get_business_timings not in tools:
-            tools.append(get_business_timings)
-    if any(k in q for k in ["cancel policy", "cancellation policy", "rules for cancelling"]):
-        if get_cancellation_policy not in tools:
-            tools.append(get_cancellation_policy)
-    if any(k in q for k in ["refund policy", "refunds", "money back"]):
-        if get_refund_policy not in tools:
-            tools.append(get_refund_policy)
-        
-    # Standard safety fallbacks
+    # 3. RAG/Knowledge
+    if "policy_faq" in actions or "general_chat" in actions:
+        tools.append(search_knowledge_base)
+
     if not tools:
-        tools = [search_receptionist_knowledge, get_faq_answer]
-    else:
-        if search_receptionist_knowledge not in tools:
-            tools.append(search_receptionist_knowledge)
-        if get_faq_answer not in tools:
-            tools.append(get_faq_answer)
-            
+        tools = [mcp_read, search_knowledge_base]
+
+    # Ensure search_knowledge_base is always available as a fallback
+    if search_knowledge_base not in tools:
+        tools.append(search_knowledge_base)
+
     return tools
 
 
@@ -1241,38 +1484,21 @@ class ReceptionistAgent(Agent):
             api_key=config["api_key"],
             base_url=config["base_url"],
             model_info=config["model_info"],
-            timeout=8.0
+            timeout=30.0
         )
 
-        from tools.receptionist_rag_tools import (
-            search_receptionist_knowledge,
-            get_active_offers,
-            get_business_timings,
-            get_cancellation_policy,
-            get_refund_policy,
-            get_faq_answer,
-        )
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
 
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=RECEPTIONIST_SYSTEM_PROMPT,
             tools=[
-                get_available_branches,
-                get_available_services,
-                get_available_staff,
-                search_customers,
-                check_stylist_availability,
-                book_new_appointment,
-                cancel_existing_appointment,
-                reschedule_existing_appointment,
-                check_customer_booking_history,
-                search_receptionist_knowledge,
-                get_active_offers,
-                get_business_timings,
-                get_cancellation_policy,
-                get_refund_policy,
-                get_faq_answer,
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ]
         )
 
@@ -1304,7 +1530,7 @@ class ReceptionistAgent(Agent):
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Processes booking queries with strict timeouts, direct database routing, and Hugging Face support."""
-        query = input_data.get("query", "").strip()
+        query = (input_data.get("full_query") or input_data.get("query", "")).strip()
         if not query:
             return {"success": False, "error": "Please provide a booking request."}
 
@@ -1325,64 +1551,9 @@ class ReceptionistAgent(Agent):
         if ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED:
             return self._emergency_mode_response()
 
-        # ── FAST PATH: pure chat/greeting handled without LLM at all ──────────
-        fast_intent = _fast_intent_classify(latest_message)
-        if fast_intent == "chat":
-            # Pure greeting — return canned warm response, ZERO LLM or RAG tokens spent
-            # (Do NOT call get_faq_answer here — it would return raw RAG offer blocks for "hi")
-            greeting = (
-                "Hello! I'm Clara, your AI Salon Receptionist. I'm here to help you book, "
-                "reschedule, or cancel appointments, check slot availability, and answer any questions "
-                "about our services, pricing, and policies. How can I assist you today?"
-            )
-            return {
-                "success": True,
-                "agent_name": self.name,
-                "response": greeting,
-                "provider": "keyword_shortcut"
-            }
-
-        # ── FAST PATH: policy/FAQ handled via RAG without LLM ─────────────────
-        if fast_intent == "policy":
-            from tools.receptionist_rag_tools import search_receptionist_knowledge, get_business_timings, get_active_offers, get_cancellation_policy, get_refund_policy
-            try:
-                q_lower = latest_message.lower()
-                if any(k in q_lower for k in ["timing", "hour", "open", "close", "working"]):
-                    rag_result = get_business_timings()
-                elif any(k in q_lower for k in ["offer", "discount", "promotion"]):
-                    rag_result = get_active_offers()
-                elif any(k in q_lower for k in ["cancel", "cancellation"]):
-                    rag_result = get_cancellation_policy()
-                elif any(k in q_lower for k in ["refund"]):
-                    rag_result = get_refund_policy()
-                else:
-                    rag_result = search_receptionist_knowledge(latest_message)
-
-                # Strip raw markdown wrapper — return only the document content
-                if rag_result and "--- Matches found in Receptionist Knowledge Base ---" in rag_result:
-                    # Extract just the page_content lines, skipping source/metadata lines
-                    content_lines = []
-                    skip_next = False
-                    for line in rag_result.split("\n"):
-                        stripped = line.strip()
-                        if stripped.startswith("--- Matches found") or stripped.startswith("--- End of Context"):
-                            continue
-                        if stripped.startswith("[") and "Source:" in stripped:
-                            skip_next = False
-                            continue
-                        if stripped:
-                            content_lines.append(stripped)
-                    rag_result = "\n".join(content_lines).strip()
-
-                if rag_result and len(rag_result) > 20:
-                    return {
-                        "success": True,
-                        "agent_name": self.name,
-                        "response": rag_result,
-                        "provider": "rag_shortcut"
-                    }
-            except Exception as rag_err:
-                logger.warning(f"RAG fast path failed: {rag_err}")
+        # ── NOTE: Greeting / thanks / farewell fast-path is handled at the ────────
+        # ── Orchestrator level (zero LLM tokens). Only real intent queries ────────
+        # ── reach this point inside ReceptionistAgent.process()            ────────
 
         settings = get_settings()
         gemini_key = settings.gemini_api_key or settings.google_api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
@@ -1461,124 +1632,48 @@ class ReceptionistAgent(Agent):
             logger.warning("⚠️ All LLM providers are on cooldown. Returning emergency response.")
             return self._emergency_mode_response()
 
-        # Step 1: Fast keyword-shortcut entity extraction (skips LLM for obvious intents)
-        # Only call LLM extractor for 'book', 'cancel', 'reschedule', 'availability', 'history'
-        # where entity extraction actually matters. 'chat' and 'policy' were handled above.
-        intent_json = None
+        # ── STEP 1: PLANNER — Structured task decomposition (replaces dual extraction) ─
+        plan = await _run_planner(latest_message, fallback_queue)
+        plan_confidence = float(plan.get("confidence", 0.50))
+        plan_tasks: List[Dict] = plan.get("tasks", [{}])
 
-        # If fast_intent already resolved a known action intent, seed intent_json directly
-        # This avoids a wasteful LLM round-trip for simple requests
-        if fast_intent in ("book", "cancel", "reschedule", "availability", "history"):
-            # Still need entity extraction (service/date/time/branch) — use LLM but with
-            # a stripped-down prompt to save tokens
-            import json as _json
-            for tier in fallback_queue:
-                model_name = tier["model"]
-                api_key = tier["api_key"]
-                base_url = tier["base_url"]
+        logger.info(
+            "[Planner] confidence=%.2f  tasks=%s",
+            plan_confidence,
+            [{t.get('action'): {k: v for k, v in t.items() if k != 'action' and v}} for t in plan_tasks]
+        )
 
-                try:
-                    # Compact extraction prompt — ~40% fewer tokens than original
-                    extraction_sys_prompt = (
-                        'Extract booking entities as raw JSON only. No explanation.\n'
-                        '{"intent":"book|cancel|reschedule|history|availability|chat",'
-                        '"service":str|null,"branch":str|null,"stylist":str|null,'
-                        '"date":str|null,"time":str|null,"appointment_id":str|null}\n'
-                        'Time rules: extract exactly as stated. Ranges like "3-4PM" -> "3-4PM".'
-                    )
-                    timeout_val = 90.0 if tier["provider"] == "huggingface" else 15.0
-                    client = OpenAIChatCompletionClient(
-                        model=model_name,
-                        api_key=api_key,
-                        base_url=base_url,
-                        timeout=timeout_val
-                    )
-                    from autogen_core.models import SystemMessage, UserMessage
-                    res = await asyncio.wait_for(
-                        client.create(
-                            messages=[
-                                SystemMessage(content=extraction_sys_prompt),
-                                UserMessage(content=f"Query: {latest_message}", source="user")
-                            ],
-                            max_tokens=120  # reduced from 150
-                        ),
-                        timeout=timeout_val
-                    )
-                    res_content = res.content.strip()
-                    if "```" in res_content:
-                        res_content = res_content.split("```")[1]
-                        if res_content.startswith("json"):
-                            res_content = res_content[4:]
-                    intent_json = _json.loads(res_content.strip())
-                    break
-                except Exception as e:
-                    err_str = str(e)
-                    is_auth_error = "401" in err_str or "unauthorized" in err_str.lower() or "invalid api key" in err_str.lower()
-                    if is_auth_error:
-                        # Auth errors won't resolve with retry — short cooldown only (5 min)
-                        logger.error(f"🔑 Auth error for model '{model_name}' (401/Unauthorized). Short cooldown 5 min.")
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
-                    else:
-                        logger.warning(f"Fast extraction failed on model '{model_name}': {err_str[:120]}")
-                        cooldown_secs = 15 if tier["provider"] == "huggingface" else 1800
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
-        else:
-            # 'unknown' intent — use LLM to classify AND extract
-            import json as _json
-            for tier in fallback_queue:
-                model_name = tier["model"]
-                api_key = tier["api_key"]
-                base_url = tier["base_url"]
-                try:
-                    extraction_sys_prompt = (
-                        'Extract booking entities as raw JSON only. No explanation.\n'
-                        '{"intent":"book|cancel|reschedule|history|availability|chat",'
-                        '"service":str|null,"branch":str|null,"stylist":str|null,'
-                        '"date":str|null,"time":str|null,"appointment_id":str|null}\n'
-                        'Time rules: extract exactly as stated. Ranges like "3-4PM" -> "3-4PM".'
-                    )
-                    timeout_val = 90.0 if tier["provider"] == "huggingface" else 15.0
-                    client = OpenAIChatCompletionClient(
-                        model=model_name,
-                        api_key=api_key,
-                        base_url=base_url,
-                        timeout=timeout_val
-                    )
-                    from autogen_core.models import SystemMessage, UserMessage
-                    res = await asyncio.wait_for(
-                        client.create(
-                            messages=[
-                                SystemMessage(content=extraction_sys_prompt),
-                                UserMessage(content=f"Query: {latest_message}", source="user")
-                            ],
-                            max_tokens=120
-                        ),
-                        timeout=timeout_val
-                    )
-                    res_content = res.content.strip()
-                    if "```" in res_content:
-                        res_content = res_content.split("```")[1]
-                        if res_content.startswith("json"):
-                            res_content = res_content[4:]
-                    intent_json = _json.loads(res_content.strip())
-                    break
-                except Exception as e:
-                    err_str = str(e)
-                    is_auth_error = "401" in err_str or "unauthorized" in err_str.lower() or "invalid api key" in err_str.lower()
-                    if is_auth_error:
-                        logger.error(f"🔑 Auth error for model '{model_name}' (401). Short cooldown 5 min.")
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + 300
-                    else:
-                        logger.warning(f"Intent extraction failed on model '{model_name}': {err_str[:120]}")
-                        cooldown_secs = 15 if tier["provider"] == "huggingface" else 1800
-                        ReceptionistAgent.MODEL_COOLDOWN[model_name] = time.time() + cooldown_secs
+        # ── STEP 2: Confidence gating — ask clarifying question if ambiguous ──────
+        if plan_confidence < _PLANNER_CONFIDENCE_THRESHOLD:
+            clarify_msg = (
+                f"I want to make sure I understand you correctly. Could you clarify — "
+                f"are you looking to **book**, **cancel**, **reschedule**, or **check "
+                f"availability** for an appointment, or did you have a different question?"
+            )
+            logger.info("[Planner] Low confidence (%.2f) — returning clarification request.", plan_confidence)
+            return {
+                "success": True,
+                "agent_name": self.name,
+                "response": clarify_msg,
+                "provider": "planner_clarification",
+                "response_type": "clarification_needed",
+            }
 
-        if not intent_json:
-            intent_json = {"intent": fast_intent if fast_intent != "unknown" else "chat",
-                           "service": None, "branch": None, "stylist": None,
-                           "date": None, "time": None}
+        # ── STEP 3: Map plan to backward-compatible intent_json ───────────────────
+        # Use the FIRST task as the primary intent; all tasks drive tool selection.
+        primary_task = plan_tasks[0] if plan_tasks else {}
+        intent_json = {
+            "intent":   primary_task.get("action", "chat"),
+            "service":  primary_task.get("service"),
+            "branch":   primary_task.get("branch"),
+            "stylist":  primary_task.get("stylist"),
+            "date":     primary_task.get("date"),
+            "time":     primary_task.get("time"),
+            "appointment_id": primary_task.get("appointment_reference"),
+        }
 
         intent = intent_json.get("intent", "chat")
+
 
         # ── MULTI-TURN ENTITY ACCUMULATION ─────────────────────────────────────────
         # If any booking entities are missing from the current message, scan the last
@@ -1789,15 +1884,47 @@ class ReceptionistAgent(Agent):
             )
             
             import ast
+            import json as _json
             slots_dict = {}
             try:
                 slots_dict = ast.literal_eval(slots_data)
             except Exception:
-                pass
+                try:
+                    slots_dict = _json.loads(slots_data)
+                except Exception:
+                    pass
 
-            if slots_dict.get("staff_on_leave"):
-                staff_name = slots_dict.get("staff_name") or "The stylist"
-                slots = slots_dict.get("slots", [])
+            # Handle TypedAgentResponse wrapper: slots may be nested under data.slots
+            def _extract_slots(d):
+                """Extract slots list from dict, handling both flat and nested TypedAgentResponse formats."""
+                if not isinstance(d, dict):
+                    return []
+                # Direct top-level slots key
+                if d.get("slots") is not None:
+                    return d.get("slots", [])
+                # TypedAgentResponse format: data.slots
+                data_field = d.get("data")
+                if isinstance(data_field, dict) and data_field.get("slots") is not None:
+                    return data_field.get("slots", [])
+                return []
+
+            # Handle staff_on_leave: check both top-level and nested under data
+            def _get_field(d, key, default=None):
+                """Get field from dict, checking top-level and data nested key."""
+                if not isinstance(d, dict):
+                    return default
+                val = d.get(key)
+                if val is not None:
+                    return val
+                data_field = d.get("data")
+                if isinstance(data_field, dict):
+                    return data_field.get(key, default)
+                return default
+
+            staff_on_leave = _get_field(slots_dict, "staff_on_leave", False)
+            if staff_on_leave:
+                staff_name = _get_field(slots_dict, "staff_name") or "The stylist"
+                slots = _extract_slots(slots_dict)
                 available_alternatives = []
                 for s in slots:
                     start_iso = s.get("start_time", "")
@@ -1829,7 +1956,22 @@ class ReceptionistAgent(Agent):
                         "provider": "booking_engine"
                     }
 
-            if "error" in slots_data.lower() or not slots_data:
+            has_error = False
+            if not slots_data:
+                has_error = True
+            elif slots_dict:
+                # Check success from top-level or TypedAgentResponse wrapper
+                is_success = slots_dict.get("success", True)
+                if not is_success and not staff_on_leave:
+                    # Also check if there's an error field
+                    err_val = slots_dict.get("error")
+                    if err_val:
+                        has_error = True
+            else:
+                if "error" in str(slots_data).lower():
+                    has_error = True
+
+            if has_error:
                 return {
                     "success": True,
                     "agent_name": self.name,
@@ -1839,13 +1981,8 @@ class ReceptionistAgent(Agent):
 
             # Smart Slot Suggestions (Rule 12)
             # Parse available slots to check if the requested time is free
-            import ast
-            slots = []
-            try:
-                slots_dict = ast.literal_eval(slots_data)
-                slots = slots_dict.get("slots", [])
-            except Exception:
-                pass
+            # Handle TypedAgentResponse format: slots may be nested under data.slots
+            slots = _extract_slots(slots_dict)
                 
             is_requested_slot_available = False
             for s in slots:
@@ -1853,6 +1990,11 @@ class ReceptionistAgent(Agent):
                 if f"{repaired_date}T{repaired_time}" in start_iso:
                     is_requested_slot_available = True
                     break
+            
+            # If no slots returned at all but availability check succeeded, allow booking
+            # (the slot validation inside create_appointment will handle conflicts)
+            if not slots and slots_dict.get("success", True):
+                is_requested_slot_available = True
                     
             if not is_requested_slot_available:
                 alternatives = []
@@ -1894,7 +2036,22 @@ class ReceptionistAgent(Agent):
                 import ast
                 booking_res = ast.literal_eval(booking_res_str)
             except Exception:
-                booking_res = {"success": False, "error": booking_res_str}
+                try:
+                    import json as _bjson
+                    booking_res = _bjson.loads(booking_res_str)
+                except Exception:
+                    booking_res = {"success": False, "error": booking_res_str}
+            
+            # Handle TypedAgentResponse wrapper: unwrap if needed
+            if isinstance(booking_res, dict) and "response_type" in booking_res and "data" in booking_res:
+                inner_data = booking_res.get("data") or {}
+                booking_res = {
+                    "success": booking_res.get("success", False),
+                    "appointment_id": inner_data.get("appointment_id"),
+                    "error": booking_res.get("error"),
+                }
+                if inner_data.get("appointment_id"):
+                    booking_res["success"] = True
                 
             if not isinstance(booking_res, dict) or not booking_res.get("success"):
                 error_detail = booking_res.get("error", "Unknown booking error") if isinstance(booking_res, dict) else booking_res_str
@@ -1942,16 +2099,42 @@ class ReceptionistAgent(Agent):
                 f"Date: {repaired_date}\n"
                 f"Time: {repaired_time}\n"
                 f"Price: ${price_val}\n\n"
-                f"Status:\nConfirmed\n\n"
-                f"🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n" + 
-                "\n".join([f"• {u}" for u in upsells])
+                f"Status:\n\nConfirmed\n\n"
+                f"🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n" + 
+                "\n".join(upsells)
             )
             
+            # Parse upsells to get name and price
+            smart_upsells = []
+            for u in upsells:
+                try:
+                    name_part, price_part = u.split("($")
+                    name = name_part.strip()
+                    price = float(price_part.replace(")", "").strip())
+                    smart_upsells.append({"name": name, "price": price})
+                except Exception:
+                    smart_upsells.append({"name": u, "price": 0.0})
+
+            data_payload = {
+                "transaction_type": "booking_confirmation",
+                "appointment": {
+                    "id": booking_res.get("appointment_id") if isinstance(booking_res, dict) else None,
+                    "service": service_name,
+                    "price": float(price_val) if price_val else 0.0,
+                    "stylist": stylist_name,
+                    "date": repaired_date,
+                    "time": repaired_time,
+                    "status": "Confirmed"
+                },
+                "smart_upsells": smart_upsells
+            }
+
             return {
                 "success": True,
                 "agent_name": self.name,
                 "response": confirm_msg,
-                "provider": "booking_engine"
+                "provider": "booking_engine",
+                "data": data_payload
             }
 
         elif intent == "availability" and not is_discovery_query:
@@ -1968,15 +2151,26 @@ class ReceptionistAgent(Agent):
             )
             
             import ast
+            slots_dict = {}
             is_staff_leave_err = False
             try:
-                data = ast.literal_eval(slots_data)
-                if data.get("staff_on_leave"):
+                slots_dict = ast.literal_eval(slots_data)
+                if slots_dict.get("staff_on_leave"):
                     is_staff_leave_err = True
             except Exception:
                 pass
 
-            if ("error" in slots_data.lower() and not is_staff_leave_err) or not slots_data:
+            has_error = False
+            if not slots_data:
+                has_error = True
+            elif slots_dict:
+                if not slots_dict.get("success") and not is_staff_leave_err:
+                    has_error = True
+            else:
+                if "error" in slots_data.lower() and not is_staff_leave_err:
+                    has_error = True
+
+            if has_error:
                 return {
                     "success": True,
                     "agent_name": self.name,
@@ -2053,9 +2247,15 @@ class ReceptionistAgent(Agent):
             repaired_cust = repair_customer(cust_id)
             history_data = check_customer_booking_history(customer_id=repaired_cust)
             
-            # Check if this is a specific natural language query about history
-            specific_keywords = ["spend", "cost", "pay", "charge", "last", "recent", "how many", "count", "this month", "this year", "year", "month", "total"]
-            is_specific_query = any(k in query.lower() for k in specific_keywords)
+            # Check if this is a specific natural language query about history (contains dates, question words, or specific keywords)
+            specific_keywords = [
+                "spend", "cost", "pay", "charge", "last", "recent", "how many", "count", 
+                "this month", "this year", "year", "month", "total", "sum", "price", "value",
+                "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+                "mon", "tue", "wed", "thu", "fri", "sat", "sun", "today", "tomorrow", "yesterday",
+                "week", "slot", "when", "which", "do i", "is i", "have i", "any", "are there", "is there"
+            ]
+            is_specific_query = any(k in query.lower() for k in specific_keywords) or any(char.isdigit() for char in query)
             
             if is_specific_query:
                 # Let's route to the LLM agent, but inject the history data into the query so the LLM can see it!
@@ -2071,7 +2271,7 @@ class ReceptionistAgent(Agent):
 
         # Chat / Discovery queries fall back to standard Agent execution
         # ── TOKEN OPTIMISATION: Dynamically select tools based on user query keywords and intent ──
-        _agent_tools = _select_agent_tools(query, intent)
+        _agent_tools = _select_agent_tools(plan_tasks)
 
         if intent in ("book", "cancel", "reschedule"):
             _agent_system_prompt = RECEPTIONIST_SYSTEM_PROMPT
@@ -2122,8 +2322,8 @@ class ReceptionistAgent(Agent):
                         "structured_output": False,
                     }
 
-                    client_timeout = 90.0 if provider == "huggingface" else 30.0
-                    run_timeout = 90.0 if provider == "huggingface" else 30.0
+                    client_timeout = 10.0 if provider == "huggingface" else 30.0
+                    run_timeout = 15.0 if provider == "huggingface" else 30.0
 
                     model_client = OpenAIChatCompletionClient(
                         model=model_name,
@@ -2154,15 +2354,83 @@ class ReceptionistAgent(Agent):
                     response_stripped = response_text.strip()
                     if (response_stripped.startswith("{") or response_stripped.startswith("[") or response_stripped.startswith("{'")) or ("success" in response_stripped.lower() and ("true" in response_stripped.lower() or "false" in response_stripped.lower())):
                         from autogen_core.models import SystemMessage, UserMessage
-                        formatter_sys_prompt = (
-                            "You are Clara, a professional AI Salon Receptionist.\n"
-                            "Translate this raw system/tool result into a warm, professional booking confirmation.\n"
-                            "Rules:\n"
-                            "- Confirm precisely using the exact values from the tool results.\n"
-                            "- Follow the confirmation format: Service, Branch, Stylist, Date, Time, Price, and Status.\n"
-                            "- Address the client politely.\n"
-                            "- NEVER invent or alter values."
-                        )
+                        
+                        # Parse the JSON response to see if it is a SELECT/history/list operation vs an INSERT/new booking confirmation
+                        formatter_sys_prompt = None
+                        try:
+                            import json
+                            data = json.loads(response_stripped)
+                        except Exception:
+                            try:
+                                import ast
+                                data = ast.literal_eval(response_stripped)
+                            except Exception:
+                                data = None
+                                
+                        if isinstance(data, dict):
+                            response_type = str(data.get("response_type", "")).lower()
+                            resource = str(data.get("resource", "")).lower()
+                            operation = str(data.get("operation", "")).lower()
+                            
+                            # Check if the raw result failed
+                            if not data.get("success", True) or response_type == "general_error" or (data.get("error") is not None and data.get("error") != ""):
+                                formatter_sys_prompt = (
+                                    "You are Clara, a professional AI Salon Receptionist.\n"
+                                    "Translate this raw system/tool error into a warm, polite customer-facing explanation.\n"
+                                    "Rules:\n"
+                                    "- Explain the error politely without technical terms (do not say 'database', 'UUID', 'SQL', etc.).\n"
+                                    "- Ask the user if they would like to try a different time, date, or stylist."
+                                )
+                            elif (resource == "appointments" and operation == "select") or response_type == "appointment_history":
+                                formatter_sys_prompt = (
+                                    "You are Clara, a professional AI Salon Receptionist.\n"
+                                    "Translate this booking history list into a warm, professional styling history summary.\n"
+                                    "Rules:\n"
+                                    "- List each appointment clearly: Service, Stylist, Branch, Date, Time, and Status.\n"
+                                    "- Format it nicely using markdown lists.\n"
+                                    "- Address the client politely."
+                                )
+                            elif (resource == "reviews" and operation == "select") or response_type in ("review_submitted", "review_escalated"):
+                                formatter_sys_prompt = (
+                                    "You are Clara, a professional AI Salon Receptionist.\n"
+                                    "Translate this customer reviews list into a clean, warm, and professional summary of the customer's reviews.\n"
+                                    "Rules:\n"
+                                    "- List each review: Rating (stars), Service, Stylist, Comment, and Date.\n"
+                                    "- Address the client politely."
+                                )
+                            elif resource == "services" and operation == "select":
+                                formatter_sys_prompt = (
+                                    "You are Clara, a professional AI Salon Receptionist.\n"
+                                    "Translate this services list into a clean, professional catalog listing of available services and prices.\n"
+                                    "Rules:\n"
+                                    "- Present each service with its name, description, duration, and price.\n"
+                                    "- Format it nicely using markdown lists or tables."
+                                )
+                                
+                        if not formatter_sys_prompt:
+                            formatter_sys_prompt = (
+                                "You are Clara, a professional AI Salon Receptionist.\n"
+                                "Translate this raw system/tool result into a warm, professional booking confirmation.\n"
+                                "Rules:\n"
+                                "- Confirm precisely using the exact values from the tool results.\n"
+                                "- Follow the confirmation format: Service, Branch, Stylist, Date, Time, Price, and Status.\n"
+                                "- Under the Status line, you MUST append the following recommended add-on treatments based on the Service:\n"
+                                "  - If Service contains 'haircut' (case-insensitive):\n"
+                                "    🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n"
+                                "    Hair Spa ($55)\n"
+                                "    Special Head Massage ($25)\n"
+                                "    Professional Beard Styling ($35)\n"
+                                "  - If Service contains 'massage' (case-insensitive):\n"
+                                "    🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n"
+                                "    Luxury Facial Treatment ($120)\n"
+                                "    Himalayan Sea Salt foot wash ($30)\n"
+                                "  - Otherwise:\n"
+                                "    🎁 Recommended Add-on Treatments (Zenoti smart upsell):\n\n"
+                                "    Signature Precision Haircut ($85)\n"
+                                "    Special Head Massage ($25)\n"
+                                "- Address the client politely.\n"
+                                "- NEVER invent or alter values."
+                            )
                         
                         formatter_client = OpenAIChatCompletionClient(
                             model=model_name,
@@ -2195,12 +2463,21 @@ class ReceptionistAgent(Agent):
                     ReceptionistAgent.FAILURE_COUNT = 0
                     ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = False
 
-                    normalized_response_text = normalize_response(response_text)
+                    # Use the Response Renderer instead of the old normalize_response()
+                    # This prevents type mis-detection (e.g. review -> booking_confirmation).
+                    from utils.renderer import render_response as _render_response
+                    _response_type = input_data.get("response_type", "general_chat")
+                    rendered_text = _render_response({
+                        "response_type": _response_type,
+                        "text": response_text,
+                        "data": input_data.get("response_data"),
+                    })
 
                     return {
                         "success": True,
                         "agent_name": self.name,
-                        "response": normalized_response_text,
+                        "response": rendered_text,
+                        "response_type": _response_type,
                         "provider": f"{provider}_tier{idx}_attempt{attempt}"
                     }
 

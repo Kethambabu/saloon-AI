@@ -37,22 +37,14 @@ except ImportError:
 from agents import Agent
 from core.config import get_settings
 from core.llm_config import get_llm_config
-from tools.lead_tools import (
-    detect_abandoned_bookings,
-    get_all_leads,
-    create_lead,
-    update_lead_status,
-    create_followup_reminder,
-    generate_followup_message,\
-    get_lead_conversion_analytics,
-    get_lead_pipeline_summary,
-)
+# lead_tools imports removed to use workflows and mcp
 from rag.retriever import (
     search_salon_knowledge,
     search_customer_interactions,
     search_lead_memory,
     search_customer_memory,
 )
+from tools.mcp_tool import mcp_execute
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -68,14 +60,10 @@ def find_abandoned_bookings(
 ) -> str:
     """
     Detect customers who cancelled or no-showed and haven't rebooked since.
-    These represent high-value re-engagement opportunities.
-
-    Args:
-        branch_id: Optional UUID string of a specific branch. Omit for all branches.
-        lookback_days: How many days back to scan for abandoned bookings (default 30).
     """
     logger.info(f"[LeadFollowupAgent] Tool call: find_abandoned_bookings(branch={branch_id}, days={lookback_days})")
-    result = detect_abandoned_bookings(branch_id=branch_id, lookback_days=lookback_days)
+    from workflows.lead_workflow import detect_abandoned_bookings_workflow
+    result = detect_abandoned_bookings_workflow(branch_id=branch_id, lookback_days=lookback_days)
     return str(result)
 
 
@@ -86,15 +74,16 @@ def search_leads(
 ) -> str:
     """
     Search and filter leads in the CRM database by status, branch, or acquisition source.
-
-    Args:
-        status_filter: Filter by lead status: 'NEW', 'CONTACTED', 'CONVERTED', or 'LOST'. Omit for all.
-        branch_id: Optional UUID string of a branch to filter by.
-        source_filter: Filter by lead source (e.g. 'Instagram Ad', 'Website Form', 'Referral').
     """
-    logger.info(f"[LeadFollowupAgent] Tool call: search_leads(status={status_filter}, branch={branch_id}, source={source_filter})")
-    result = get_all_leads(status_filter=status_filter, branch_id=branch_id, source_filter=source_filter)
-    return str(result)
+    logger.info(f"[LeadFollowupAgent] Tool call: search_leads(status={status_filter}, branch={branch_id})")
+    filters = {}
+    if status_filter:
+        filters["status"] = status_filter.upper()
+    if branch_id:
+        filters["branch_id"] = branch_id
+    if source_filter:
+        filters["source"] = source_filter
+    return str(mcp_execute(resource="leads", operation="select", filters=filters, agent_name="Mia"))
 
 
 def register_new_lead(
@@ -108,18 +97,10 @@ def register_new_lead(
 ) -> str:
     """
     Register a new prospect lead in the CRM pipeline.
-
-    Args:
-        first_name: Lead's first name (required).
-        email: Email address for follow-up.
-        phone: Phone number for SMS/call follow-up.
-        last_name: Last name (optional).
-        source: How they found us (e.g. 'Instagram Ad', 'Walk-in', 'Referral', 'Website Form').
-        branch_id: UUID string of the interested salon branch.
-        notes: Additional notes about the inquiry or interest.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: register_new_lead(name={first_name} {last_name})")
-    result = create_lead(
+    from workflows.lead_workflow import create_lead_workflow
+    result = create_lead_workflow(
         first_name=first_name,
         email=email,
         phone=phone,
@@ -138,14 +119,10 @@ def advance_lead_status(
 ) -> str:
     """
     Move a lead to the next stage in the CRM pipeline.
-
-    Args:
-        lead_id: UUID string of the lead to update.
-        new_status: Target status: 'NEW', 'CONTACTED', 'CONVERTED', or 'LOST'.
-        notes: Optional reason or context for the status change.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: advance_lead_status(lead={lead_id}, status={new_status})")
-    result = update_lead_status(lead_id=lead_id, new_status=new_status, notes=notes)
+    from workflows.lead_workflow import advance_lead_status_workflow
+    result = advance_lead_status_workflow(lead_id=lead_id, new_status=new_status, notes=notes)
     return str(result)
 
 
@@ -157,16 +134,10 @@ def send_followup_reminder(
 ) -> str:
     """
     Schedule and send a follow-up reminder to a lead via email, SMS, or phone.
-    Automatically advances NEW leads to CONTACTED status.
-
-    Args:
-        lead_id: UUID string of the target lead.
-        channel: Communication channel – 'email', 'sms', or 'phone'.
-        message: Personalised message content for the follow-up.
-        scheduled_at: Optional ISO datetime for scheduled send (e.g. '2026-06-01T10:00:00Z'). Omit for immediate.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: send_followup_reminder(lead={lead_id}, channel={channel})")
-    result = create_followup_reminder(
+    from workflows.lead_workflow import create_followup_reminder_workflow
+    result = create_followup_reminder_workflow(
         lead_id=lead_id,
         channel=channel,
         message=message,
@@ -182,17 +153,11 @@ def create_personalized_message(
     tone: str = "warm",
 ) -> str:
     """
-    Generate a personalised follow-up message based on customer/lead history,
-    preferences, and engagement data. The message is tailored per channel format.
-
-    Args:
-        customer_id: UUID string of an existing customer (provide this OR lead_id).
-        lead_id: UUID string of a lead (provide this OR customer_id).
-        channel: Target channel – 'email' (full letter), 'sms' (≤160 chars), or 'phone' (call script).
-        tone: Message tone – 'warm', 'professional', 'urgent', or 'casual'.
+    Generate a personalised follow-up message based on customer/lead history.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: create_personalized_message(customer={customer_id}, lead={lead_id})")
-    result = generate_followup_message(
+    from workflows.lead_workflow import generate_followup_message_workflow
+    result = generate_followup_message_workflow(
         customer_id=customer_id,
         lead_id=lead_id,
         channel=channel,
@@ -206,52 +171,57 @@ def view_conversion_analytics(
     branch_id: Optional[str] = None,
 ) -> str:
     """
-    Get comprehensive lead conversion analytics including pipeline distribution,
-    conversion rates, source effectiveness, and actionable recommendations.
-
-    Args:
-        period_days: Analysis window in days (default 30).
-        branch_id: Optional UUID string of a branch to scope the analytics.
+    Get comprehensive lead conversion analytics.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: view_conversion_analytics(period={period_days}d)")
-    result = get_lead_conversion_analytics(period_days=period_days, branch_id=branch_id)
-    return str(result)
+    return str(mcp_execute(
+        resource="leads",
+        operation="aggregate",
+        metric="group_by",
+        group_by="status",
+        agent_name="Mia"
+    ))
 
 
 def view_pipeline_snapshot(
     branch_id: Optional[str] = None,
 ) -> str:
     """
-    Get a quick snapshot of the current lead pipeline showing counts per stage
-    and overall conversion rate.
-
-    Args:
-        branch_id: Optional UUID string of a branch. Omit for organisation-wide snapshot.
+    Get a quick snapshot of the current lead pipeline.
     """
     logger.info(f"[LeadFollowupAgent] Tool call: view_pipeline_snapshot(branch={branch_id})")
-    result = get_lead_pipeline_summary(branch_id=branch_id)
-    return str(result)
+    return str(mcp_execute(
+        resource="leads",
+        operation="aggregate",
+        metric="count",
+        group_by="status",
+        agent_name="Mia"
+    ))
 
 
 # ---------------------------------------------------------------------------
 # System Prompt
 # ---------------------------------------------------------------------------
 LEAD_FOLLOWUP_SYSTEM_PROMPT = """
-You are SalonAI Lead Follow-up Agent.
+You are Mia, the SalonAI Lead Follow-up Specialist.
 
 Responsibilities:
+- Recover abandoned bookings and nurture leads into appointments
+- Send follow-up reminders and personalized messages
+- Track and analyze lead conversion pipeline
+- Recommend best leads to prioritize
 
-- Recover abandoned bookings
-- Send reminders
-- Convert leads into appointments
-- Analyze lead conversion rate
-- Recommend best customers to contact first
-- Search salon policies and timings using `search_salon_knowledge`
-- Search customer interactions history using `search_customer_interactions`
-- Search lead follow-up summaries memory using `search_lead_memory`
-- Search customer-specific memory using `search_customer_memory`
+PRIMARY DATA TOOL (use for all lead/customer lookups):
+- mcp_read(resource, operation, filters, agent_name, user_context, limit)
+  Use MCP for reading leads, customers, branches, and summaries. Always pass agent_name='Mia'.
+  Examples:
+    mcp_read(resource='leads', operation='select', filters={'status': 'NEW'}, agent_name='Mia')
+    mcp_read(resource='leads', operation='aggregate', metric='count', group_by='status', agent_name='Mia')
 
-Always use tools.
+TRANSACTIONAL WORKFLOWS:
+- execute_transaction(action='register_lead'|'advance_lead_status'|'send_followup'|'create_personalized_message', parameters={...})
+
+Always use tools. Prefer mcp_read for database reads.
 """
 
 
@@ -297,24 +267,19 @@ class LeadFollowupAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full tool suite
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
+
+        # 3. Build AutoGen AssistantAgent with consolidated tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=LEAD_FOLLOWUP_SYSTEM_PROMPT,
             tools=[
-                find_abandoned_bookings,
-                search_leads,
-                register_new_lead,
-                advance_lead_status,
-                send_followup_reminder,
-                create_personalized_message,
-                view_conversion_analytics,
-                view_pipeline_snapshot,
-                search_customer_interactions,
-                search_salon_knowledge,
-                search_lead_memory,
-                search_customer_memory,
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ],
         )
 

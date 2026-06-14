@@ -65,30 +65,39 @@ def fixture_db_session():
 
 def test_staff_leave_management(db_session):
     """Rule 7: Enforce staff leave bounds."""
+    from db.models import StaffLeave
     stylist = db_session.query(Staff).filter(Staff.first_name == "Alexandra").first()
     
-    # June 10 is leave day for Alexandra Chen
-    on_leave, name = is_staff_on_leave(stylist.id, "2026-06-10", db_session)
+    # Create a leave entry for Alexandra Chen for tomorrow
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    tomorrow_date = tomorrow.date()
+    tomorrow_str = tomorrow_date.strftime("%Y-%m-%d")
+    
+    leave = StaffLeave(staff_id=stylist.id, leave_date=tomorrow_date, reason="Sick Leave")
+    db_session.add(leave)
+    db_session.commit()
+    
+    on_leave, name = is_staff_on_leave(stylist.id, tomorrow_str, db_session)
     assert on_leave is True
     assert name == "Alexandra Chen"
 
-    # Try booking Alexandra Chen on June 10
+    # Try booking Alexandra Chen on tomorrow
     branch = db_session.query(Branch).first()
     service = db_session.query(Service).first()
     customer = db_session.query(Customer).first()
     
-    start_time = "2026-06-10T17:00:00Z"
+    start_time = datetime.combine(tomorrow_date, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=17) # 5:00 PM
     
     res = create_appointment(
         customer_id=customer.id,
         branch_id=branch.id,
         service_id=service.id,
-        start_time=start_time,
+        start_time=start_time.isoformat(),
         staff_id=stylist.id,
         db=db_session
     )
     assert res["success"] is False
-    assert "Alexandra Chen is unavailable on 2026-06-10" in res["error"]
+    assert f"Alexandra Chen is unavailable on {tomorrow_str}" in res["error"]
 
 
 def test_duplicate_appointment_detection(db_session):

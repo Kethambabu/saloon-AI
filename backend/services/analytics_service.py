@@ -430,6 +430,8 @@ class AnalyticsService:
         # 2. Get today's local boundaries
         today_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
+        today_start_utc = today_start.astimezone(timezone.utc).replace(tzinfo=None)
+        today_end_utc = today_end.astimezone(timezone.utc).replace(tzinfo=None)
         
         sent_count = 0
         
@@ -448,8 +450,8 @@ class AnalyticsService:
             existing_notif = db.query(Notification).filter(
                 Notification.user_id == user.id,
                 Notification.title == "Returning Cohort Daily Reminder",
-                Notification.created_at >= today_start,
-                Notification.created_at < today_end
+                Notification.created_at >= today_start_utc,
+                Notification.created_at < today_end_utc
             ).first()
             
             if existing_notif:

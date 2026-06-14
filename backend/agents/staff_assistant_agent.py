@@ -45,6 +45,7 @@ from tools.staff_tools import (
     search_all_context
 )
 from rag.retriever import search_staff_memory, search_customer_memory
+from tools.mcp_tool import mcp_execute
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -55,27 +56,24 @@ Your job is to support salon staff members in managing their daily operations, s
 
 Always retrieve information using the database tools provided before answering.
 Never guess or hallucinate appointments, customer details, leaves, or ratings.
-Provide personalized service recommendations using customer history or active upsell rule tools.
 
-Available tools:
-- get_schedule(staff_id: str, date_str: Optional[str] = None) - Retrieve list of appointments for a specific target date YYYY-MM-DD. If date_str is not provided, defaults to today. Use this for tomorrow, yesterday, or any target date queries.
-- get_today_schedule(staff_id: str) - Retrieve list of appointments for today.
-- get_next_customer(staff_id: str) - Find details of the next customer scheduled.
-- get_customer_history(customer_name: str) - Find historical appointments, spend, and ratings for a customer.
-- get_customer_preferences(customer_name: str) - View formula styling details or notes from past appointments.
-- get_staff_revenue(staff_id: str) - Calculate total career and monthly revenue generated.
-- get_staff_performance(staff_id: str) - Review completions, cancellations, ratings, and stats.
-- get_pending_appointments(staff_id: str) - List appointments waiting for confirmation.
-- create_leave_request(staff_id: str, leave_date: str, reason: Optional[str]) - Submit a leave request on YYYY-MM-DD.
-- send_customer_reminders(staff_id: str) - Send WhatsApp/SMS notifications to today's appointments.
-- recommend_services(customer_id: str) - Retrieve matching service upsells for a customer.
-- search_salon_knowledge(query: str, category: Optional[str]) - Search salon policy, safety, and SOP documents.
-- search_customer_interactions(query: str, doc_type: Optional[str], customer_name: Optional[str]) - Search customer interactions RAG base.
-- search_all_context(query: str) - General RAG search across knowledge and interactions.
-- search_staff_memory(query: str) - Search long-term staff manager and performance memory summaries.
-- search_customer_memory(query: str, customer_id: Optional[str]) - Search customer-specific styling and preferences memory.
+PRIMARY DATA TOOL (use this for all database reads):
+- mcp_read(resource, operation, filters, agent_name, user_context, limit) — Use MCP for all schedule, performance, and appointment lookups. Always pass agent_name='Atlas'.
+  Examples:
+    mcp_read(resource='schedule', filters={'staff_id': '<your_staff_id>', 'date': '2026-06-10'})
+    mcp_read(resource='today_schedule', filters={'staff_id': '<your_staff_id>'})
+    mcp_read(resource='staff_revenue', filters={'staff_id': '<your_staff_id>'})
+    mcp_read(resource='staff_performance', filters={'staff_id': '<your_staff_id>'})
+    mcp_read(resource='customer_preferences', filters={'customer_name': '<name>'})
+    mcp_read(resource='pending_appointments', filters={'staff_id': '<your_staff_id>'})
 
-Always respond professionally, clearly, and constructively. When displaying customer history, schedule, or performance data, format it in clean, readable tables or bullet points using Markdown. CRITICAL: Present all responses in clear, friendly, conversational natural language text only. NEVER output raw JSON, code blocks containing JSON data, or raw python dictionaries directly to the user. Present all information in plain text or formatted tables.
+TRANSACTIONAL WORKFLOWS:
+- execute_transaction(action='create_leave_request'|'send_customer_reminders', parameters={...})
+
+SEMANTIC MEMORY & POLICY RAG:
+- search_knowledge_base(domain='policies'|'interactions'|'staff_memory'|'customer_styling', query=...)
+
+Always respond professionally. Format data in clean readable tables or bullet points using Markdown. CRITICAL: NEVER output raw JSON or python dicts directly. Present all information in plain text or formatted tables.
 """
 
 
@@ -114,28 +112,19 @@ class StaffAssistantAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full staff tool suite
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
+
+        # 3. Build AutoGen AssistantAgent with consolidated tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=STAFF_SYSTEM_PROMPT,
             tools=[
-                get_schedule,
-                get_today_schedule,
-                get_next_customer,
-                get_customer_history,
-                get_customer_preferences,
-                get_staff_revenue,
-                get_staff_performance,
-                get_pending_appointments,
-                create_leave_request,
-                send_customer_reminders,
-                recommend_services,
-                search_salon_knowledge,
-                search_customer_interactions,
-                search_all_context,
-                search_staff_memory,
-                search_customer_memory
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ],
         )
 
@@ -242,8 +231,38 @@ class StaffAssistantAgent(Agent):
             # Execute AutoGen run task
             result = await self.assistant.run(task=full_query)
 
-            # Extract response text
-            response_text = result.messages[-1].content
+            # Extract response text using robust reverse search
+            response_text = ""
+            for msg in reversed(result.messages):
+                msg_type = type(msg).__name__
+                source = getattr(msg, "source", getattr(msg, "sender", ""))
+                content = getattr(msg, "content", None)
+                
+                # Check if this is a conversational text message from the specialist agent
+                if msg_type == "TextMessage" and source == self.name and content and isinstance(content, str) and len(content.strip()) > 0:
+                    response_text = content.strip()
+                    break
+                    
+            # Fallback 1: Any TextMessage from a non-user sender
+            if not response_text:
+                for msg in reversed(result.messages):
+                    msg_type = type(msg).__name__
+                    source = getattr(msg, "source", getattr(msg, "sender", ""))
+                    content = getattr(msg, "content", None)
+                    if msg_type == "TextMessage" and source != "user" and content and isinstance(content, str) and len(content.strip()) > 0:
+                        response_text = content.strip()
+                        break
+                        
+            # Fallback 2: Any last non-empty string message content in the history
+            if not response_text:
+                for msg in reversed(result.messages):
+                    content = getattr(msg, "content", None)
+                    if content and isinstance(content, str) and len(content.strip()) > 0:
+                        response_text = content.strip()
+                        break
+
+            if not response_text:
+                response_text = "I've processed your request. Is there anything else I can help with?"
 
             # Store assistant response in memory
             self._store_memory(session_id, "assistant", response_text)

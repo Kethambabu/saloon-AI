@@ -33,7 +33,13 @@ from db.models import (
     AnalyticsRecord,
     ServiceRecommendation,
     BusinessMetricsHistory,
-    Notification
+    Notification,
+    LoyaltyTransaction,
+    Waitlist,
+    ChatLog,
+    CustomerRecommendation,
+    StaffLeave,
+    AgentMemory
 )
 
 # Setup logging
@@ -56,14 +62,25 @@ def seed_database():
         
         # Clear existing transactional tables to ensure they start at 0
         logger.info("Clearing old transactional data for fresh dynamic run...")
+        # 1. Clear child/dependent tables first
         db.query(Notification).delete()
         db.query(Review).delete()
         db.query(Lead).delete()
+        db.query(Waitlist).delete()
+        db.query(ChatLog).delete()
+        db.query(LoyaltyTransaction).delete()
+        db.query(CustomerRecommendation).delete()
+        db.query(StaffLeave).delete()
+        db.query(AgentMemory).delete()
+        
+        # 2. Clear mid-level transaction tables
         db.query(Appointment).delete()
         db.query(AnalyticsRecord).delete()
         db.query(BusinessMetricsHistory).delete()
-        db.query(User).delete()
+        
+        # 3. Clear profile and relation tables
         db.query(Admin).delete()
+        db.query(User).delete()
         db.query(Staff).delete()
         db.query(ServiceRecommendation).delete()
         db.query(Service).delete()

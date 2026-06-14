@@ -110,10 +110,29 @@ def test_appointment_booking_and_history_repaired():
 def test_response_normalization():
     """Test Priority 6: Verifies that normalization cleans raw JSON and leaked technical terms."""
     # 1. Normalize raw confirmed JSON
-    raw_json = '{"success": true, "appointment_id": "uuid-123", "message": "Booking successful"}'
+    raw_json = '{"success": true, "appointment_id": "uuid-123", "message": "Booking successful", "service_name": "Hair Spa"}'
     norm_json = normalize_response(raw_json)
     assert "successfully secured" in norm_json
     assert "{" not in norm_json
+    assert "🎁 Recommended Add-on Treatments (Zenoti smart upsell):" in norm_json
+    assert "Signature Precision Haircut ($85)" in norm_json
+    assert "Special Head Massage ($25)" in norm_json
+    
+    # Test conversational confirmation appending
+    conversational_confirmation = (
+        "Dear Neelam Venkata Sri Lakshmi,\n\n"
+        "We are delighted to confirm your appointment:\n"
+        "Service: Hair Spa\n"
+        "Branch: Main Branch\n"
+        "Stylist: Marcus Johnson\n"
+        "Date: June 13, 2026\n"
+        "Time: 10:00 AM\n"
+        "Status: CONFIRMED\n"
+    )
+    norm_conv = normalize_response(conversational_confirmation)
+    assert "🎁 Recommended Add-on Treatments (Zenoti smart upsell):" in norm_conv
+    assert "Signature Precision Haircut ($85)" in norm_conv
+    assert "Special Head Massage ($25)" in norm_conv
     
     # 2. Clean tech terms leak
     leaked_text = "Rate limit check on Groq 429 quota exceeded for UUID 123"

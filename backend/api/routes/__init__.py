@@ -56,6 +56,15 @@ router.include_router(memory_router)
 from api.routes.admin_knowledge_routes import router as admin_knowledge_router
 router.include_router(admin_knowledge_router)
 
+# Include MCP test sub-routes (Phase 1 — runs alongside existing agent/tool system)
+from api.routes.mcp_routes import router as mcp_router
+router.include_router(mcp_router)
+
+# Include MCP metrics & cache routes
+from api.routes.mcp_metrics_routes import router as mcp_metrics_router
+router.include_router(mcp_metrics_router)
+
+
 
 
 

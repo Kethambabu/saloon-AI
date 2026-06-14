@@ -594,15 +594,16 @@ async def book_appointment(
             detail="Only customer accounts can book appointments."
         )
         
-    from tools.booking_tools import create_appointment
-    result = create_appointment(
+    from domain.appointment_service import get_appointment_service
+    svc = get_appointment_service()
+    result = svc.book(
         customer_id=str(current_user.customer_id),
         branch_id=payload.branch_id,
         service_id=payload.service_id,
         start_time=payload.start_time,
         staff_id=payload.staff_id,
         notes=payload.notes,
-        db=db
+        tenant_id="default"
     )
     
     if not result.get("success"):
@@ -610,8 +611,7 @@ async def book_appointment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Booking failed.")
         )
-    db.commit()
-    return result
+    return result.get("data")
 
 
 @router.delete(
@@ -643,15 +643,19 @@ async def cancel_booking(
             detail="You are not authorized to cancel this appointment."
         )
         
-    from tools.booking_tools import cancel_appointment
-    result = cancel_appointment(appointment_id=appointment_id, customer_id=str(current_user.customer_id) if current_user.customer_id else None, db=db)
+    from domain.appointment_service import get_appointment_service
+    svc = get_appointment_service()
+    result = svc.cancel(
+        appointment_id=appointment_id,
+        customer_id=str(current_user.customer_id) if current_user.customer_id else None,
+        tenant_id="default"
+    )
     if not result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Cancellation failed.")
         )
-    db.commit()
-    return result
+    return result.get("data")
 
 
 @router.post(
@@ -684,12 +688,13 @@ async def reschedule_booking(
             detail="You are not authorized to reschedule this appointment."
         )
         
-    from tools.booking_tools import reschedule_appointment
-    result = reschedule_appointment(
+    from domain.appointment_service import get_appointment_service
+    svc = get_appointment_service()
+    result = svc.reschedule(
         appointment_id=appointment_id,
         new_start_time=payload.new_start_time,
         customer_id=str(current_user.customer_id) if current_user.customer_id else None,
-        db=db
+        tenant_id="default"
     )
     
     if not result.get("success"):
@@ -697,8 +702,7 @@ async def reschedule_booking(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Rescheduling failed.")
         )
-    db.commit()
-    return result
+    return result.get("data")
 
 
 # Reviews routing is now handled by api/routes/review_routes.py (Reputation Agent module)
@@ -759,15 +763,19 @@ async def update_appointment_status(
         )
         
     if target == AppointmentStatus.CANCELLED:
-        from tools.booking_tools import cancel_appointment
-        result = cancel_appointment(appointment_id=appointment_id, customer_id=str(current_user.customer_id) if current_user.customer_id else None, db=db)
+        from domain.appointment_service import get_appointment_service
+        svc = get_appointment_service()
+        result = svc.cancel(
+            appointment_id=appointment_id,
+            customer_id=str(current_user.customer_id) if current_user.customer_id else None,
+            tenant_id="default"
+        )
         if not result.get("success"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=result.get("error", "Cancellation failed.")
             )
-        db.commit()
-        return result
+        return result.get("data")
         
     appt.status = target
     db.commit()

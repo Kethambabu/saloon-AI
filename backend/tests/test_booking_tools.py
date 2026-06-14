@@ -20,8 +20,7 @@ from tools.booking_tools import (
     create_appointment,
     get_available_slots,
     cancel_appointment,
-    reschedule_appointment,
-    get_customer_history
+    reschedule_appointment
 )
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -108,7 +107,7 @@ def test_create_appointment_success_and_overlap_prevention(db_session):
     )
 
     assert result["success"] is True
-    assert result["status"] == "PENDING"
+    assert result["status"] == "CONFIRMED"
     appt_id = result["appointment_id"]
 
     # 2. Overlap Create (same customer, same time)
@@ -232,9 +231,19 @@ def test_get_customer_history(db_session):
         db=db_session
     )
 
-    # Get history
-    history_res = get_customer_history(customer_id=customer.id, db=db_session)
+    # Get history via mcp_execute patched to test DB session
+    from tools.mcp_tool import mcp_execute
+    from unittest.mock import patch
+    
+    with patch("mcp.salon_mcp.SessionLocal", return_value=db_session):
+        history_res = mcp_execute(
+            resource="appointments",
+            operation="select",
+            filters={"customer_id": str(customer.id)},
+            user_context={"user_id": str(customer.id), "role": "CUSTOMER", "customer_id": str(customer.id)}
+        )
+    
     assert history_res["success"] is True
-    assert history_res["appointment_count"] == 1
-    assert history_res["history"][0]["service"]["name"] == "Hair Styling"
-    assert history_res["history"][0]["staff"]["name"] == "John Doe"
+    assert history_res["count"] == 1
+    assert history_res["data"][0]["service_id"] == str(service.id)
+    assert history_res["data"][0]["staff_id"] == str(stylist.id)

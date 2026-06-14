@@ -45,10 +45,10 @@ async def test_receptionist_books_when_all_details_provided():
     mock_llm_res.content = f'{{"intent": "book", "service": "Bridal Makeup", "branch": "Main Salon", "stylist": "Marcus Johnson", "date": "{tomorrow}", "time": "17:00"}}'
     
     # Mock check_stylist_availability to indicate slot is free
-    mock_availability = f'{{"slots": [{{"start_time": "{tomorrow}T17:00:00Z"}}]}}'
+    mock_availability = f'{{"success": True, "slots": [{{"start_time": "{tomorrow}T17:00:00Z"}}]}}'
     
     # Mock book_new_appointment to return success
-    mock_booking = '{"success": true, "appointment_id": "appt-123"}'
+    mock_booking = "{'success': True, 'appointment_id': 'appt-123'}"
     
     with patch("core.openai_client_adapter.OpenAIChatCompletionClient.create", return_value=mock_llm_res), \
          patch("agents.receptionist_agent.check_stylist_availability", return_value=mock_availability), \

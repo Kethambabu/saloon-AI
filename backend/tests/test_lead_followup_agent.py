@@ -29,28 +29,19 @@ def test_lead_followup_agent_initialization():
 
     # 2. Verify system message contains core CRM prompt guidelines
     sys_msg = agent.assistant._system_messages[0].content
-    assert "SalonAI Lead Follow-up Agent" in sys_msg
+    assert "Mia, the SalonAI Lead Follow-up Specialist" in sys_msg
     assert "Recover abandoned bookings" in sys_msg
-    assert "Send reminders" in sys_msg
-    assert "Convert leads into appointments" in sys_msg
+    assert "Send follow-up reminders" in sys_msg
+    assert "nurture leads into appointments" in sys_msg
 
-    # 3. Verify that the 12 custom CRM tools wrapper functions are bound to the agent
+    # Check Phase 2 consolidated tools are bound
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 12
+    assert len(bound_tools) == 3
 
     tool_names = [tool.name for tool in bound_tools]
-    assert "find_abandoned_bookings" in tool_names
-    assert "search_leads" in tool_names
-    assert "register_new_lead" in tool_names
-    assert "advance_lead_status" in tool_names
-    assert "send_followup_reminder" in tool_names
-    assert "create_personalized_message" in tool_names
-    assert "view_conversion_analytics" in tool_names
-    assert "view_pipeline_snapshot" in tool_names
-    assert "search_customer_interactions" in tool_names
-    assert "search_salon_knowledge" in tool_names
-    assert "search_lead_memory" in tool_names
-    assert "search_customer_memory" in tool_names
+    assert "mcp_read" in tool_names
+    assert "search_knowledge_base" in tool_names
+    assert "execute_transaction" in tool_names
 
 
 def test_lead_followup_agent_conversation_memory():

@@ -35,6 +35,7 @@ from rag.retriever import (
     search_salon_knowledge,
     search_bi_memory,
 )
+from tools.mcp_tool import mcp_execute
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -227,25 +228,28 @@ Synthesize complex aggregates across branches, staff performance, customer reten
 CRM leads, and upsells into beautiful data-driven suggestions.
 
 📋 YOUR ANALYTICAL TOOLKIT:
-Always try to use standard metric tools before writing custom database queries:
-1. `get_dashboard_summary` - Core aggregates (revenue, conversions, active bookings, ratings).
-2. `get_revenue_summary` - Revenue line-chart labels and distributions (service, branch, staff).
-3. `get_customer_summary` - Customer LTV ranks and VIP returning client aggregates.
-4. `get_staff_summary` - StylistCompleted bookings, ratings, utilization, and upsell commissions.
-5. `get_lead_summary` - Lead conversions pipeline.
-6. `get_review_summary` - Customer ratings counts and complaints highlights (e.g., Waiting Time).
-7. `get_upsell_summary` - Accepted upgrades earnings and acceptance conversion ratios.
-8. `generate_ai_insights` - Auto-compiled real-time corporate bullet points.
-9. `forecast_revenue` - Next month expected forecasting (+8% model).
-10. `retrieve_business_context` - Multi-dimensional **Business Metrics RAG** context retrieval (pulls daily snapshots).
-11. `query_raw_analytics_database` - Run raw SELECT queries on database schemas.
-12. `trigger_returning_cohort_reminders` - Manually trigger/process the daily cohort loyalty reminder dispatch to eligible returning clients.
-13. `search_salon_knowledge` - Search general salon policies and FAQs.
-14. `search_bi_memory` - Search long-term Business Intelligence summary memories.
+Always use standard metric resources via `mcp_read` before querying database tables directly:
+1. `mcp_read(resource="dashboard")` - Core aggregates (revenue, conversions, active bookings, ratings).
+2. `mcp_read(resource="revenue")` - Revenue distributions (service, branch, staff).
+3. `mcp_read(resource="customer_summary")` - Client retention and LTV cohort metrics.
+4. `mcp_read(resource="staff_summary")` - Stylist performance benchmarks (utilization, ratings).
+5. `mcp_read(resource="lead_summary")` - CRM sales funnel conversion rates.
+6. `mcp_read(resource="review_summary")` - Reputation ratings and complaints statistics.
+7. `mcp_read(resource="upsell_summary")` - Cross-selling accepted offers and ratios.
+8. `mcp_read(resource="ai_insights")` - Auto-compiled real-time corporate analytics.
+9. `mcp_read(resource="forecast")` - Revenue/bookings predictions for next month.
+10. `mcp_read(resource="business_context", filters={"days": X})` - Business snapshot context (equivalent to daily snapshots).
+11. `mcp_read(resource="raw_sql", filters={"sql": "SELECT..."})` - Custom SELECT queries on allowed schemas.
+12. `search_knowledge_base(domain="policies"|"faq"|"bi_memory", query=...)` - Search general rules or past business intelligence memories.
+13. `execute_transaction(action="trigger_returning_cohort_reminders", parameters={})` - Manually trigger daily cohort loyalty reminders.
+
+🔗 GENERAL DATABASE READS:
+Always pass agent_name='Atlas' and user_context={'user_id': 'admin', 'role': 'ADMIN'} for admin-level selects.
+Example: mcp_read(resource='appointments', operation='select', filters={'status': 'CONFIRMED'}, agent_name='Atlas')
 
 🧠 THE POWER OF BUSINESS METRICS RAG:
 When asked comparative business questions (e.g. "Why is revenue decreasing?" or "How does this compare to last month?"),
-you MUST call `retrieve_business_context` first. 
+you MUST query `mcp_read` with resource="business_context" first. 
 Instead of giving static single metric points, leverage RAG history to deliver multi-layered comparisons:
 - Contrast current rates to the last 3 months.
 - Compare drops in lead conversions, ratings shifts, and upsell acceptances.
@@ -312,26 +316,19 @@ class BIAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full Zenoti-style tool suite
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
+
+        # 3. Build AutoGen AssistantAgent with consolidated tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=BI_SYSTEM_PROMPT,
             tools=[
-                get_dashboard_summary,
-                get_revenue_summary,
-                get_customer_summary,
-                get_staff_summary,
-                get_lead_summary,
-                get_review_summary,
-                get_upsell_summary,
-                generate_ai_insights,
-                forecast_revenue,
-                retrieve_business_context,
-                query_raw_analytics_database,
-                trigger_returning_cohort_reminders,
-                search_salon_knowledge,
-                search_bi_memory,
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ],
         )
 

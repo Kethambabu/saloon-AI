@@ -86,13 +86,15 @@ def list_available_services() -> str:
         db.close()
 
 
-def list_available_staff(branch_id: str = None) -> str:
+def list_available_staff(branch_id: str = None, date: str = None, time: str = None) -> str:
     """
     Returns a list of all active staff members (stylists, etc.).
     Optionally filter by branch.
     
     Args:
         branch_id: Optional UUID of branch to filter staff
+        date: Optional date string
+        time: Optional time string
     
     Returns:
         JSON-formatted list of staff with id, name, role, branch_id

@@ -23,13 +23,7 @@ except ImportError:
 from agents import Agent
 from core.config import get_settings
 from core.llm_config import get_llm_config
-from tools.review_tools import (
-    get_reviews_tool,
-    analyze_sentiment_tool,
-    generate_response_tool,
-    escalate_review_tool,
-    get_review_analytics_tool,
-)
+# review_tools imports removed to use workflows and mcp
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -38,22 +32,28 @@ from rag.retriever import (
     search_salon_knowledge,
     search_reputation_memory,
 )
+from tools.mcp_tool import mcp_execute
 
 
 REPUTATION_SYSTEM_PROMPT = """
-You are SalonAI Reputation Agent (Olivia, Reputation & Review Manager).
+You are Olivia, the SalonAI Reputation & Review Manager.
 
-Responsibilities and Capabilities:
-- Monitor customer reviews using view_customer_reviews
-- Analyze review sentiment and analytics using view_review_analytics
-- Find critical reviews requiring escalation using find_critical_reviews
-- Generate and draft professional responses using draft_review_response
-- Track reputation metrics scorecard using view_reputation_scorecard
-- Escalate customer reviews to management using escalate_customer_review
-- Search salon policies and FAQ knowledge base using `search_salon_knowledge`
-- Search reputation manager memory using `search_reputation_memory`
+Responsibilities:
+- Monitor and respond to customer reviews
+- Analyze review sentiment and analytics
+- Find and escalate critical reviews
 
-Always use these tools.
+PRIMARY DATA TOOL (use for all review lookups):
+- mcp_read(resource, operation, filters, agent_name, user_context, limit)
+  Use MCP for reading reviews and reputation data. Always pass agent_name='Olivia'.
+  Examples:
+    mcp_read(resource='reviews', operation='select', filters={}, agent_name='Olivia')
+    mcp_read(resource='reviews', operation='aggregate', metric='count', group_by='sentiment', agent_name='Olivia')
+
+TRANSACTIONAL WORKFLOWS:
+- execute_transaction(action='draft_review_response'|'escalate_review', parameters={...})
+
+Always use tools. Prefer mcp_read for all review reads.
 """
 
 # ---- Wrapper functions defined before class so they can be bound as tools ----
@@ -64,32 +64,54 @@ def view_customer_reviews(
     rating: Optional[int] = None,
 ) -> str:
     """Retrieve customer reviews matching filter parameters."""
-    return get_reviews_tool(customer_id=customer_id, staff_id=staff_id, sentiment=sentiment, rating=rating)
+    filters = {}
+    if customer_id:
+        filters["customer_id"] = customer_id
+    if staff_id:
+        filters["staff_id"] = staff_id
+    if sentiment:
+        filters["sentiment"] = sentiment.upper()
+    if rating:
+        filters["rating"] = rating
+    return str(mcp_execute(resource="reviews", operation="select", filters=filters, agent_name="Olivia"))
 
 
 def view_review_analytics() -> str:
     """Generate comprehensive reputation analytics."""
-    return get_review_analytics_tool()
+    return str(mcp_execute(
+        resource="reviews",
+        operation="aggregate",
+        metric="avg",
+        agent_name="Olivia"
+    ))
 
 
 def find_critical_reviews() -> str:
     """Retrieve all critical sentiment reviews requiring manager review."""
-    return get_reviews_tool(sentiment="CRITICAL")
+    return str(mcp_execute(resource="reviews", operation="select", filters={"sentiment": "CRITICAL"}, agent_name="Olivia"))
 
 
 def draft_review_response(review_id: str, custom_response: Optional[str] = None) -> str:
-    """Draft or register a salon response to a specific customer review."""
-    return generate_response_tool(review_id=review_id, custom_response=custom_response)
+    """Draft or register a salon response to a specific customer review using the review workflow."""
+    from workflows.review_workflow import respond_to_review_workflow
+    return str(respond_to_review_workflow(review_id=review_id, custom_response=custom_response))
 
 
 def view_reputation_scorecard() -> str:
     """Generate the overall reputation metrics scorecard."""
-    return get_review_analytics_tool()
+    return str(mcp_execute(
+        resource="reviews",
+        operation="aggregate",
+        metric="count",
+        group_by="sentiment",
+        agent_name="Olivia"
+    ))
 
 
 def escalate_customer_review(review_id: str) -> str:
-    """Escalate a customer review to management for urgent attention."""
-    return escalate_review_tool(review_id=review_id)
+    """Escalate a customer review to management using the review escalation workflow."""
+    from workflows.review_workflow import escalate_review_workflow
+    return str(escalate_review_workflow(review_id=review_id))
 
 
 class ReputationAgent(Agent):
@@ -126,20 +148,19 @@ class ReputationAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full review tool suite
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
+
+        # 3. Build AutoGen AssistantAgent with consolidated tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=REPUTATION_SYSTEM_PROMPT,
             tools=[
-                view_customer_reviews,
-                view_review_analytics,
-                find_critical_reviews,
-                draft_review_response,
-                view_reputation_scorecard,
-                escalate_customer_review,
-                search_salon_knowledge,
-                search_reputation_memory,
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ],
         )
 

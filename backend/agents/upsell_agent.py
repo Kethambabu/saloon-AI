@@ -23,12 +23,7 @@ except ImportError:
 from agents import Agent
 from core.config import get_settings
 from core.llm_config import get_llm_config
-from tools.recommendation_tools import (
-    get_customer_recommendations_tool,
-    accept_recommendation_tool,
-    reject_recommendation_tool,
-    get_upsell_analytics_tool,
-)
+# recommendation_tools imports removed to use workflows and mcp
 from tools.receptionist_rag_tools import (
     get_active_offers,
     search_receptionist_knowledge,
@@ -37,6 +32,7 @@ from rag.retriever import (
     search_customer_memory,
     search_upsell_memory,
 )
+from tools.mcp_tool import mcp_execute
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -46,18 +42,43 @@ UPSELL_SYSTEM_PROMPT = """You are Mia, the helpful AI Upsell & Cross-Sell Specia
 
 Your job is to increase revenue per booking, suggest add-on services, analyze customer purchase history, recommend premium upgrades, and track recommendation performance.
 
-Available tools:
-1. get_customer_recommendations_tool(customer_id: str) - Fetch personalized service recommendations for a customer.
-2. accept_recommendation_tool(customer_id: str, service_id: str, appointment_id: Optional[str]) - Accept an upsell recommendation, adding it as a confirmed booking add-on.
-3. reject_recommendation_tool(customer_id: str, service_id: str, appointment_id: Optional[str]) - Dismiss/reject an upsell recommendation.
-4. get_upsell_analytics_tool() - Generate comprehensive upsell analytics scorecard.
-5. get_active_offers() - Retrieve active promotional offers.
-6. search_receptionist_knowledge(query: str) - Search salon knowledge base for services, policies, and offers.
-7. search_customer_memory(query: str, customer_id: Optional[str]) - Search customer-specific styling and preferences memory.
-8. search_upsell_memory(query: str) - Search upsell strategy, templates, and campaign guidelines memory.
+PRIMARY DATA TOOL (use for all customer/service/appointment lookups):
+- mcp_read(resource, operation, filters, agent_name, user_context, limit)
+  Use MCP for reading customer history, services, and appointments. Always pass agent_name='Mia'.
+  Examples:
+    mcp_read(resource='recommendations', filters={'customer_id': '<id>'})
+    mcp_read(resource='upsell_analytics')
 
-Always use available RAG and memory tools before responding. Never guess or hallucinate recommendations or offers.
+TRANSACTIONAL WORKFLOWS:
+- execute_transaction(action='accept_upsell_recommendation'|'reject_upsell_recommendation', parameters={...})
+
+SEMANTIC MEMORY & POLICY RAG:
+- search_knowledge_base(domain='policies'|'customer_styling'|'upsell_memory', query=...)
+
+Always use available RAG and memory tools before responding. Prefer mcp_read for all database reads. Never guess or hallucinate recommendations or offers.
 """
+
+# ---- Wrapper functions defined before class so they can be bound as tools ----
+def get_customer_recommendations(customer_id: str) -> str:
+    """Fetch personalized service recommendations for a customer."""
+    from workflows.upsell_workflow import get_customer_recommendations_workflow
+    return str(get_customer_recommendations_workflow(customer_id))
+
+def accept_recommendation(customer_id: str, service_id: str, appointment_id: Optional[str] = None) -> str:
+    """Accept an upsell recommendation."""
+    from workflows.upsell_workflow import accept_recommendation_workflow
+    return str(accept_recommendation_workflow(customer_id, service_id, appointment_id))
+
+def reject_recommendation(customer_id: str, service_id: str, appointment_id: Optional[str] = None) -> str:
+    """Reject/dismiss an upsell recommendation."""
+    from workflows.upsell_workflow import reject_recommendation_workflow
+    return str(reject_recommendation_workflow(customer_id, service_id, appointment_id))
+
+def get_upsell_analytics() -> str:
+    """Retrieve upsell analytics scorecard."""
+    from workflows.upsell_workflow import get_upsell_analytics_workflow
+    return str(get_upsell_analytics_workflow())
+
 
 
 class UpsellAgent(Agent):
@@ -92,20 +113,19 @@ class UpsellAgent(Agent):
             model_info=config["model_info"],
         )
 
-        # 3. Build AutoGen AssistantAgent with full upsell tool suite
+        from tools.mcp_tool import mcp_read
+        from tools.rag_unified import search_knowledge_base
+        from tools.transaction_unified import execute_transaction
+
+        # 3. Build AutoGen AssistantAgent with consolidated tool suite
         self.assistant = AssistantAgent(
             name=name,
             model_client=self.model_client,
             system_message=UPSELL_SYSTEM_PROMPT,
             tools=[
-                get_customer_recommendations_tool,
-                accept_recommendation_tool,
-                reject_recommendation_tool,
-                get_upsell_analytics_tool,
-                get_active_offers,
-                search_receptionist_knowledge,
-                search_customer_memory,
-                search_upsell_memory,
+                mcp_read,
+                search_knowledge_base,
+                execute_transaction,
             ],
         )
 

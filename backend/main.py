@@ -120,6 +120,36 @@ async def lifespan(application: FastAPI):
     else:
         logger.error("❌ Supabase database connection failed during startup health check!")
     
+    # Initialize Domain Services and Register Event Bus Subscribers
+    logger.info("🔍 Initializing enterprise domain services and registering event subscribers...")
+    try:
+        from domain.appointment_service import get_appointment_service
+        from domain.analytics_service import get_analytics_service, register_event_subscribers as register_analytics_subscribers
+        from domain.notification_service import get_notification_service, register_event_subscribers as register_notification_subscribers
+        from domain.availability_service import get_availability_service
+        from domain.customer_service import get_customer_service
+        from domain.lead_service import get_lead_service
+        from domain.review_service import get_review_service
+        from domain.staff_service import get_staff_service
+
+        get_appointment_service()
+        get_analytics_service()
+        get_notification_service()
+        get_availability_service()
+        get_customer_service()
+        get_lead_service()
+        get_review_service()
+        get_staff_service()
+
+        # Register Event Bus Subscribers
+        logger.info("🔄 Registering event bus subscribers...")
+        register_analytics_subscribers()
+        register_notification_subscribers()
+
+        logger.info("✅ Enterprise domain services and event subscribers initialized successfully.")
+    except Exception as exc:
+        logger.error(f"❌ Failed to initialize domain services: {exc}", exc_info=True)
+
     # Start the automated Lead Follow-up Scheduler
     try:
          from apscheduler.schedulers.background import BackgroundScheduler
@@ -131,12 +161,12 @@ async def lifespan(application: FastAPI):
          scheduler.add_job(
              process_leads,
              'interval',
-             minutes=1
+             minutes=60
          )
          scheduler.add_job(
              process_returning_cohort_reminders,
              'interval',
-             minutes=1
+             minutes=60
          )
          # Daily memory run at 11:59 PM
          scheduler.add_job(

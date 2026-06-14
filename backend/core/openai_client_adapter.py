@@ -192,25 +192,34 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             msg_dict["tool_calls"] = msg.tool_calls
                         result.append(msg_dict)
         
-        # Post-process messages to ensure every 'tool' message has a valid 'name' field for Gemini compatibility
+        # Post-process messages to ensure every 'tool'/'function' message has a valid 'name' field for Gemini compatibility
         tool_id_to_name = {}
         # First pass: collect tool_call_id -> function name mapping from assistant messages
         for msg_dict in result:
-            if msg_dict.get("role") == "assistant" and "tool_calls" in msg_dict:
-                for tc in msg_dict["tool_calls"]:
+            if msg_dict.get("role") == "assistant":
+                tcs = msg_dict.get("tool_calls") or []
+                for tc in tcs:
                     if isinstance(tc, dict):
                         tc_id = tc.get("id")
                         func_name = tc.get("function", {}).get("name")
                         if tc_id and func_name:
                             tool_id_to_name[tc_id] = func_name
-                    elif hasattr(tc, "id") and hasattr(tc, "function"):
-                        tool_id_to_name[tc.id] = tc.function.name
+                    else:
+                        tc_id = getattr(tc, "id", None)
+                        func_name = None
+                        if hasattr(tc, "function"):
+                            func_name = getattr(tc.function, "name", None)
+                        elif hasattr(tc, "name"):
+                            func_name = getattr(tc, "name", None)
+                        if tc_id and func_name:
+                            tool_id_to_name[tc_id] = func_name
 
-        # Second pass: ensure 'name' is populated for 'tool' messages
+        # Second pass: ensure 'name' is populated for 'tool' and 'function' messages
         for msg_dict in result:
-            if msg_dict.get("role") == "tool":
-                call_id = msg_dict.get("tool_call_id")
-                if "name" not in msg_dict or not msg_dict["name"]:
+            role = msg_dict.get("role")
+            if role in ("tool", "function"):
+                call_id = msg_dict.get("tool_call_id") or msg_dict.get("id")
+                if not msg_dict.get("name"):
                     # Try to look up function name, default to 'tool_call' if not found
                     msg_dict["name"] = tool_id_to_name.get(call_id) or "tool_call"
                     
@@ -366,24 +375,78 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             else:
                 conversational_messages.append(msg)
 
+        if not conversational_messages:
+            return system_messages
+
         system_tokens = self.count_tokens(system_messages)
         available_tokens = max(0, max_tokens - system_tokens)
 
-        pruned_conv = []
+        # Build group assignments to keep tool calls/responses together
+        # Map tool_call_id -> assistant message index
+        tool_to_assistant = {}
+        for idx, msg in enumerate(conversational_messages):
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg.get("tool_calls") or []:
+                    tc_id = None
+                    if isinstance(tc, dict):
+                        tc_id = tc.get("id")
+                    else:
+                        tc_id = getattr(tc, "id", None)
+                    if tc_id:
+                        tool_to_assistant[tc_id] = idx
+
+        # Group assignments (index in conversational_messages -> set of indices in group)
+        idx_to_group = {idx: {idx} for idx in range(len(conversational_messages))}
+
+        def union(i, j):
+            group_i = idx_to_group[i]
+            group_j = idx_to_group[j]
+            if group_i is not group_j:
+                merged = group_i.union(group_j)
+                for idx in merged:
+                    idx_to_group[idx] = merged
+
+        # Union assistant message with its tool responses
+        for idx, msg in enumerate(conversational_messages):
+            if msg.get("role") in ("tool", "function"):
+                call_id = msg.get("tool_call_id") or msg.get("id")
+                if call_id in tool_to_assistant:
+                    union(idx, tool_to_assistant[call_id])
+
+        # Extract unique groups
+        unique_groups = []
+        seen_ids = set()
+        for idx in range(len(conversational_messages)):
+            group_set = idx_to_group[idx]
+            group_id = id(group_set)
+            if group_id not in seen_ids:
+                seen_ids.add(group_id)
+                group_msgs = [conversational_messages[i] for i in sorted(list(group_set))]
+                unique_groups.append((min(group_set), group_msgs))
+
+        # Sort groups chronologically
+        unique_groups.sort(key=lambda x: x[0])
+        sorted_groups = [g[1] for g in unique_groups]
+
+        pruned_groups = []
         accumulated_tokens = 0
 
-        # Greedily include messages from the newest to oldest
-        for msg in reversed(conversational_messages):
-            msg_tokens = self.count_tokens([msg])
-            if accumulated_tokens + msg_tokens > available_tokens:
-                # Always ensure at least the very last message is included
-                if not pruned_conv:
-                    pruned_conv.append(msg)
+        # Greedily include groups from newest to oldest
+        for group in reversed(sorted_groups):
+            group_tokens = self.count_tokens(group)
+            if accumulated_tokens + group_tokens > available_tokens:
+                # Always ensure at least the very last group is included
+                if not pruned_groups:
+                    pruned_groups.append(group)
                 break
-            pruned_conv.append(msg)
-            accumulated_tokens += msg_tokens
+            pruned_groups.append(group)
+            accumulated_tokens += group_tokens
 
-        pruned_conv.reverse()
+        pruned_groups.reverse()
+        pruned_conv = []
+        for group in pruned_groups:
+            pruned_conv.extend(group)
+
         pruned_messages = system_messages + pruned_conv
         new_estimated = self.count_tokens(pruned_messages)
 
@@ -459,51 +522,86 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=90.0 if provider_name == "huggingface" else 30.0,
+                timeout=10.0 if provider_name == "huggingface" else 30.0,
                 max_retries=0,
             )
 
-            try:
-                logger.info(f"🎯 [{provider_name}] Trying model '{model_name}'...")
-                openai_messages  = self._convert_messages(messages)
-                openai_messages  = self._prune_messages(openai_messages, max_prompt_tokens)
-                converted_tools  = self._convert_tools(tools)
-                filtered_kwargs  = self._filter_kwargs(kwargs)
+            succeeded = False
+            retries = 3
+            backoff = 2.0
+            for attempt in range(retries + 1):
+                try:
+                    logger.info(f"🎯 [{provider_name}] Trying model '{model_name}' (attempt {attempt+1}/{retries+1})...")
+                    openai_messages  = self._convert_messages(messages)
+                    openai_messages  = self._prune_messages(openai_messages, max_prompt_tokens)
+                    converted_tools  = self._convert_tools(tools)
+                    filtered_kwargs  = self._filter_kwargs(kwargs)
 
-                if converted_tools:
-                    logger.info(f"Sending {len(converted_tools)} tools to {provider_name}:")
-                    for tool in converted_tools:
-                        func        = tool.get("function", {})
-                        params      = func.get("parameters", {})
-                        param_names = list(params.get("properties", {}).keys()) if params.get("properties") else []
-                        param_str   = f"[{', '.join(param_names)}]" if param_names else "[]"
-                        logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (params: {param_str})")
+                    if converted_tools:
+                        logger.info(f"Sending {len(converted_tools)} tools to {provider_name}:")
+                        for tool in converted_tools:
+                            func        = tool.get("function", {})
+                            params      = func.get("parameters", {})
+                            param_names = list(params.get("properties", {}).keys()) if params.get("properties") else []
+                            param_str   = f"[{', '.join(param_names)}]" if param_names else "[]"
+                            logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (params: {param_str})")
 
-                response = self._client.chat.completions.create(
-                    model=model_name,
-                    messages=openai_messages,
-                    tools=converted_tools,
-                    **filtered_kwargs,
-                )
-                logger.info(f"✅ [{provider_name}] '{model_name}' succeeded.")
+                    response = self._client.chat.completions.create(
+                        model=model_name,
+                        messages=openai_messages,
+                        tools=converted_tools,
+                        **filtered_kwargs,
+                    )
+                    logger.info(f"✅ [{provider_name}] '{model_name}' succeeded.")
+                    succeeded = True
+                    break
 
-            except Exception as e:
-                last_error = e
-                err_str = str(e)
-                status_code = getattr(e, "status_code", None)
-                # Classify retryable errors — any of these trigger fallback to next provider
-                is_auth     = "401" in err_str or "invalid api key" in err_str.lower() or "authentication" in err_str.lower() or status_code == 401
-                is_quota    = "429" in err_str or "402" in err_str or "quota" in err_str.lower() or "rate limit" in err_str.lower() or "resource_exhausted" in err_str.lower() or "credits" in err_str.lower() or status_code in [402, 429]
-                is_unavail  = "connect" in err_str.lower() or "connection refused" in err_str.lower() or "timed out" in err_str.lower() or "timeout" in err_str.lower() or status_code in [500, 502, 503, 504]
-                # 400: model capability errors (e.g. Hugging Face model 'does not support tools')
-                is_no_tools = "does not support tools" in err_str.lower() or "tool_use_failed" in err_str.lower() or "failed_generation" in err_str.lower() or status_code == 400
-                is_too_large = "413" in err_str or "too large" in err_str.lower() or "request too large" in err_str.lower() or status_code == 413
-                if is_auth or is_quota or is_unavail or is_no_tools or is_too_large:
-                    logger.warning(f"⚠️ [{provider_name}] '{model_name}' failed ({err_str[:120]}), trying next provider...")
-                    continue
-                # Unexpected error — propagate immediately
-                logger.error(f"❌ [{provider_name}] Unexpected error: {e}")
-                raise
+                except Exception as e:
+                    last_error = e
+                    err_str = str(e)
+                    status_code = getattr(e, "status_code", None)
+                    is_quota    = "429" in err_str or "402" in err_str or "quota" in err_str.lower() or "rate limit" in err_str.lower() or "resource_exhausted" in err_str.lower() or "credits" in err_str.lower() or status_code in [402, 429]
+
+                    if is_quota and attempt < retries:
+                        import re
+                        retry_seconds = None
+                        # Pattern 1: Match 'try again in 1.45s' or 'Please retry in 20.44s' or 'retry after 5s'
+                        match = re.search(r"(?:retry in|try again in|try again after|retry after|retry_after|after|in)\s*[:\s]?\s*([0-9\.]+)\s*s", err_str, re.IGNORECASE)
+                        if match:
+                            retry_seconds = float(match.group(1))
+                        else:
+                            # Pattern 2: Match JSON-like: 'retryDelay': '20s'
+                            match_json = re.search(r"retryDelay[\'\"]?\s*:\s*[\'\"]?([0-9\.]+)s", err_str, re.IGNORECASE)
+                            if match_json:
+                                retry_seconds = float(match_json.group(1))
+
+                        if retry_seconds is not None:
+                            sleep_time = retry_seconds + 0.5
+                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited. Server requested wait. Sleeping for {sleep_time:.2f}s...")
+                        else:
+                            sleep_time = backoff * (2 ** attempt)
+                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited (429). Sleeping for {sleep_time:.2f}s...")
+
+                        import time
+                        time.sleep(sleep_time)
+                        continue
+
+                    # For non-quota errors or if we exhausted all retries
+                    is_auth     = "401" in err_str or "invalid api key" in err_str.lower() or "authentication" in err_str.lower() or status_code == 401
+                    is_unavail  = "connect" in err_str.lower() or "connection refused" in err_str.lower() or "timed out" in err_str.lower() or "timeout" in err_str.lower() or status_code in [500, 502, 503, 504]
+                    is_no_tools = "does not support tools" in err_str.lower() or "tool_use_failed" in err_str.lower() or "failed_generation" in err_str.lower() or status_code == 400
+                    is_too_large = "413" in err_str or "too large" in err_str.lower() or "request too large" in err_str.lower() or status_code == 413
+                    
+                    if is_auth or is_quota or is_unavail or is_no_tools or is_too_large:
+                        logger.warning(f"⚠️ [{provider_name}] '{model_name}' failed ({err_str[:120]}), trying next provider...")
+                        break
+                    
+                    # Unexpected error — propagate immediately
+                    logger.error(f"❌ [{provider_name}] Unexpected error: {e}")
+                    raise
+
+            if not succeeded:
+                continue
 
             # ---- Successful response: parse and return ----
             if response.usage:
@@ -576,13 +674,13 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         import uuid
                         from autogen_core._types import FunctionCall
 
-                        pattern = r"<([a-zA-Z0-9_]+)(?:\s+[^>]*)?>(.+?)</\1>|<([a-zA-Z0-9_]+)\s*/>"
+                        pattern = r"<([a-zA-Z0-9_]+)(?:\s+[^>]*)?>(.+?)</\1>|<([a-zA-Z0-9_]+)\s*/>|<function=([a-zA-Z0-9_]+)>(.+?)</function>|<function\s+name=[\"\']?([a-zA-Z0-9_]+)[\"\']?\s*>(.+?)</function>"
                         matches = list(re.finditer(pattern, content, re.DOTALL))
 
                         function_calls = []
                         for match in matches:
-                            tag_name = match.group(1) or match.group(3)
-                            args_str = match.group(2) or "{}"
+                            tag_name = match.group(1) or match.group(3) or match.group(4) or match.group(6)
+                            args_str = match.group(2) or match.group(5) or match.group(7) or "{}"
 
                             if tag_name in tool_names:
                                 args_str = args_str.strip() or "{}"
@@ -670,7 +768,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=90.0 if provider_name == "huggingface" else 30.0,
+                timeout=10.0 if provider_name == "huggingface" else 30.0,
                 max_retries=0,
             )
 

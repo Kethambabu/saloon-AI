@@ -535,18 +535,18 @@ class StaffChatResponse(BaseModel):
     agent_name: str = Field(..., description="Name of the agent replying")
 
 
-# Global singleton cache for StaffAssistantAgent to optimize load times
-_staff_assistant_agent: Optional[Any] = None
+# Global singleton cache for OrchestratorV3 to optimize load times
+_staff_orchestrator: Optional[Any] = None
 
 
-def get_staff_assistant_agent():
-    """Helper to lazily load and cache the StaffAssistantAgent singleton."""
-    global _staff_assistant_agent
-    if _staff_assistant_agent is None:
-        logger.info("Initializing lazy StaffAssistantAgent singleton...")
-        from agents.staff_assistant_agent import StaffAssistantAgent
-        _staff_assistant_agent = StaffAssistantAgent()
-    return _staff_assistant_agent
+def get_staff_orchestrator():
+    """Helper to lazily load and cache the OrchestratorV3 singleton for staff chat."""
+    global _staff_orchestrator
+    if _staff_orchestrator is None:
+        logger.info("Initializing lazy OrchestratorV3 singleton for staff...")
+        from agents.orchestrator_v3 import get_phase2_orchestrator
+        _staff_orchestrator = get_phase2_orchestrator(tenant_id="default")
+    return _staff_orchestrator
 
 
 @router.post(
@@ -622,14 +622,21 @@ async def chat_with_staff_agent(
     finally:
         db_sess.close()
 
-    # Lazy load staff agent
-    agent = get_staff_assistant_agent()
+    # Lazy load staff agent (OrchestratorV3)
+    agent = get_staff_orchestrator()
 
     try:
         from core.query_context import set_query_context
         set_query_context(full_query)
-        # Process query through AutoGen StaffAssistantAgent
-        agent_response = await agent.process({"query": full_query})
+        # Process query through OrchestratorV3 with staff intent override
+        agent_response = await agent.process({
+            "query": payload.message,
+            "full_query": full_query,
+            "session_id": payload.session_id,
+            "intent_override": "staff",
+            "user_role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+            "staff_id": str(staff.id),
+        })
 
         if not agent_response.get("success"):
             error_msg = agent_response.get("error", "Unknown staff agent error.")

@@ -17,12 +17,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from db import Base, Branch, Service, Staff, Customer, Appointment, AppointmentStatus
 from tools.bi_tools import (
     validate_sql_safety,
-    get_revenue_analytics,
-    get_staff_performance_analytics,
-    get_retention_analytics,
-    get_service_popularity_analytics,
     execute_bi_sql_query,
 )
+from services.analytics_service import AnalyticsService
 from agents.bi_agent import BIAgent
 from autogen_agentchat.agents import AssistantAgent
 
@@ -127,46 +124,39 @@ def test_sql_safety_checker():
 # 2. Database Analytics Tool Logic Tests
 # ---------------------------------------------------------------------------
 def test_revenue_analytics(bi_db_session):
-    """Verifies that get_revenue_analytics tallies total completed revenues correctly."""
-    res = get_revenue_analytics()
-    assert res["success"] is True
+    """Verifies that AnalyticsService.get_revenue_summary tallies total completed revenues correctly."""
+    res = AnalyticsService.get_revenue_summary(bi_db_session)
     # Alice had completed haircut ($80) and completed facial ($120) = $200
-    assert res["metrics"]["total_revenue"] == 200.0
-    assert res["metrics"]["total_bookings"] == 2
-    assert res["metrics"]["average_ticket"] == 100.0
+    assert res["cards"]["yearly_revenue"] == 200.0
     assert "charts" in res
     assert "revenue_over_time" in res["charts"]
 
 
 def test_staff_performance_analytics(bi_db_session):
     """Verifies completed bookings, utilization, and ratings are benchmarking staff members correctly."""
-    res = get_staff_performance_analytics()
-    assert res["success"] is True
-    assert len(res["staff_metrics"]) == 1
-    assert res["staff_metrics"][0]["name"] == "John Stylist"
-    assert res["staff_metrics"][0]["completed_bookings"] == 2
-    assert res["staff_metrics"][0]["revenue_generated"] == 200.0
+    res = AnalyticsService.get_staff_summary(bi_db_session)
+    assert len(res["roster"]) == 1
+    assert res["roster"][0]["name"] == "John Stylist"
+    assert res["roster"][0]["appointments"] == 2
+    assert res["roster"][0]["revenue"] == 200.0
 
 
 def test_retention_analytics(bi_db_session):
     """Verifies customer retention cohorts distinguish single visitors vs repeat bookers."""
-    res = get_retention_analytics()
-    assert res["success"] is True
-    # Transacting customers: Alice (2 completed), Bob (0 completed, since Bob is pending)
-    # So 1 transacting customer (Alice) who visited 2 times (repeat visitors = 1, LTV = $200)
-    assert res["retention_metrics"]["total_transacting_customers"] == 1
-    assert res["retention_metrics"]["repeat_visitors"] == 1
-    assert res["retention_metrics"]["retention_rate_pct"] == 100.0
-    assert res["top_customers_by_ltv"][0]["customer_name"] == "Alice Smith"
-    assert res["top_customers_by_ltv"][0]["ltv"] == 200.0
+    res = AnalyticsService.get_customer_summary(bi_db_session)
+    # Alice has 2 completed bookings (returning), Bob has 0 completed.
+    # Total customers = 2 (Alice and Bob)
+    assert res["total_customers"] == 2
+    assert res["returning_customers"] == 1
+    assert res["vip_customers"] == 0
+    assert res["inactive_customers"] == 0
 
 
 def test_service_popularity_analytics(bi_db_session):
     """Verifies service volume aggregates popular items properly."""
-    res = get_service_popularity_analytics()
-    assert res["success"] is True
+    res = AnalyticsService.get_revenue_summary(bi_db_session)
     # Haircut (1 completed), Facial (1 completed)
-    assert len(res["services"]) == 2
+    assert len(res["charts"]["by_service"]) == 2
 
 
 def test_raw_sql_execution(bi_db_session):
@@ -201,25 +191,14 @@ def test_bi_agent_initialization():
     assert "appointments" in sys_msg
     assert "SELECT" in sys_msg
 
-    # Check 14 BI tools are bound
+    # Check Phase 2 consolidated tools are bound
     bound_tools = agent.assistant._tools
-    assert len(bound_tools) == 14
+    assert len(bound_tools) == 3
     
     names = [t.name for t in bound_tools]
-    assert "get_dashboard_summary" in names
-    assert "get_revenue_summary" in names
-    assert "get_customer_summary" in names
-    assert "get_staff_summary" in names
-    assert "get_lead_summary" in names
-    assert "get_review_summary" in names
-    assert "get_upsell_summary" in names
-    assert "generate_ai_insights" in names
-    assert "forecast_revenue" in names
-    assert "retrieve_business_context" in names
-    assert "query_raw_analytics_database" in names
-    assert "trigger_returning_cohort_reminders" in names
-    assert "search_salon_knowledge" in names
-    assert "search_bi_memory" in names
+    assert "mcp_read" in names
+    assert "search_knowledge_base" in names
+    assert "execute_transaction" in names
 
 
 @pytest.mark.asyncio

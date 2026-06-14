@@ -11,6 +11,8 @@ from utils.entity_resolver import (
     list_staff,
     search_customers,
 )
+from utils.typed_responses import TypedAgentResponse
+from utils.renderer import render_response
 
 __all__ = [
     "resolve_branch",
@@ -22,4 +24,7 @@ __all__ = [
     "list_services",
     "list_staff",
     "search_customers",
+    # New in v2
+    "TypedAgentResponse",
+    "render_response",
 ]

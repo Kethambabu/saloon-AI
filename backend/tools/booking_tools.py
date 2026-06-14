@@ -51,6 +51,33 @@ _PLACEHOLDER_VALUES = {
 }
 
 
+def get_system_now() -> datetime:
+    """Get system current datetime, respecting SYSTEM TIME CONTEXT if present in query context."""
+    try:
+        from core.query_context import get_query_context
+        context = get_query_context()
+        if not context:
+            # Fallback to receptionist agent context if contextvar got lost
+            from agents.receptionist_agent import ReceptionistAgent
+            context = getattr(ReceptionistAgent, "CURRENT_QUERY_CONTEXT", "")
+    except ImportError:
+        context = ""
+        
+    if "[SYSTEM TIME CONTEXT:" in context:
+        try:
+            parts = context.split("Current system time is ")
+            if len(parts) > 1:
+                tokens = parts[1].split()
+                if len(tokens) > 1:
+                    dt_str = f"{tokens[0]} {tokens[1].split('(')[0].split(')')[0]}"
+                    # Treat faked context time as UTC
+                    return datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception as e:
+            logger.debug(f"Failed to parse faked system time in get_system_now: {e}")
+            pass
+    return datetime.now(timezone.utc)
+
+
 def _is_placeholder_value(value: Any) -> bool:
     """
     Detect if an identifier is a placeholder/hallucinated value from LLM.
@@ -183,7 +210,7 @@ def get_available_slots(
     if _is_placeholder_value(branch_id):
         error_msg = (
             f"Invalid branch identifier '{branch_id}'. "
-            "Please discover available branches first using get_available_branches() and provide a valid branch UUID or name."
+            "Please provide a valid branch UUID or name."
         )
         logger.warning(f"Placeholder branch_id detected: {branch_id}")
         return {"success": False, "error": error_msg}
@@ -293,7 +320,7 @@ def get_available_slots(
             ).all()
             
             slots_available = []
-            now_utc = datetime.now(timezone.utc)
+            now_utc = get_system_now()
             current_time = datetime.combine(target_date, time(BUSINESS_START_HOUR, 0), tzinfo=timezone.utc)
             end_boundary = datetime.combine(target_date, time(BUSINESS_END_HOUR, 0), tzinfo=timezone.utc)
             
@@ -349,7 +376,7 @@ def get_available_slots(
 
         # Generate daily potential slot start-times
         slots_available = []
-        now_utc = datetime.now(timezone.utc)
+        now_utc = get_system_now()
 
         current_time = datetime.combine(target_date, time(BUSINESS_START_HOUR, 0), tzinfo=timezone.utc)
         end_boundary = datetime.combine(target_date, time(BUSINESS_END_HOUR, 0), tzinfo=timezone.utc)
@@ -366,6 +393,7 @@ def get_available_slots(
             # A slot is available if at least one staff member is completely free
             any_staff_free = False
             free_staff_ids = []
+            free_staff_names = []
 
             for member in staff_list:
                 has_overlap = False
@@ -378,12 +406,14 @@ def get_available_slots(
                 if not has_overlap:
                     any_staff_free = True
                     free_staff_ids.append(str(member.id))
+                    free_staff_names.append(member.full_name)
 
             if any_staff_free:
                 slots_available.append({
                     "start_time": slot_start.isoformat(),
                     "end_time": slot_end.isoformat(),
-                    "available_staff_ids": free_staff_ids
+                    "available_staff_ids": free_staff_ids,
+                    "available_staff_names": free_staff_names
                 })
 
             current_time += timedelta(minutes=SLOT_INTERVAL_MINUTES)
@@ -435,7 +465,7 @@ def create_appointment(
     if _is_placeholder_value(branch_id):
         error_msg = (
             f"Invalid branch identifier '{branch_id}'. "
-            "Please discover available branches first using get_available_branches() and provide a valid branch UUID or name."
+            "Please provide a valid branch UUID or name."
         )
         logger.warning(f"Placeholder branch_id detected: {branch_id}")
         return {"success": False, "error": error_msg}
@@ -480,20 +510,21 @@ def create_appointment(
         # Ensure booking is in the future — give a 6-hour grace window to account for
         # timezone differences between the user's local time and the UTC server clock.
         # e.g., "10 AM tomorrow IST" = "4:30 AM UTC" which would incorrectly fail without grace.
-        if st_start < (datetime.now(timezone.utc) - timedelta(hours=6)):
+        if st_start < (get_system_now() - timedelta(hours=6)):
             return {"success": False, "error": "Appointments must be in the future."}
 
         # Get entities (all should exist after resolver)
         customer = session.query(Customer).filter(Customer.id == c_id).first()
+        branch = session.query(Branch).filter(Branch.id == b_id).first()
         service = session.query(Service).filter(Service.id == s_id).first()
         
         st_end = st_start + timedelta(minutes=int(service.duration_minutes))
 
         # Validate Business Hours — appointment must be within 9:00–20:00 of the REQUESTED local time
         # (We treat the input time as local/wall-clock; the Z suffix just marks no explicit offset)
-        req_hour = st_start.hour  # This is the hour from the user's requested time string
-        req_end_hour = st_end.hour
-        if req_hour < BUSINESS_START_HOUR or (st_end.hour > BUSINESS_END_HOUR or (st_end.hour == BUSINESS_END_HOUR and st_end.minute > 0)):
+        if not _is_within_business_hours(st_start, st_end):
+            req_hour = st_start.hour
+            req_end_hour = st_end.hour
             return {
                 "success": False, 
                 "error": f"Appointment must fit inside business hours (9:00 AM to 8:00 PM). Requested: {req_hour}:00–{req_end_hour}:{st_end.minute:02d}."
@@ -505,7 +536,7 @@ def create_appointment(
         active_bookings_count = session.query(Appointment).filter(
             Appointment.customer_id == c_id,
             Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]),
-            Appointment.start_time > (datetime.now(timezone.utc) - timedelta(hours=6)),
+            Appointment.start_time > (get_system_now() - timedelta(hours=6)),
             or_(
                 Appointment.notes.is_(None),
                 ~Appointment.notes.like("Linked Add-on from Appointment%")
@@ -624,20 +655,14 @@ def create_appointment(
         appointment_id = None
         assigned_staff_name = None
         
-        if db:
-            session.add(new_appointment)
-            session.flush()
-            appointment_id = str(new_appointment.id)
-            assigned_staff = session.query(Staff).filter(Staff.id == chosen_staff_id).first()
-            assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
-        else:
-            # Use transaction context manager and capture all data INSIDE the transaction
-            with db_transaction() as tx:
-                tx.add(new_appointment)
-                tx.flush()  # Flush to get the ID
-                appointment_id = str(new_appointment.id)
-                assigned_staff = tx.query(Staff).filter(Staff.id == chosen_staff_id).first()
-                assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
+        session.add(new_appointment)
+        session.flush()
+        appointment_id = str(new_appointment.id)
+        assigned_staff = session.query(Staff).filter(Staff.id == chosen_staff_id).first()
+        assigned_staff_name = assigned_staff.full_name if assigned_staff else "Unknown"
+        
+        if not db:
+            session.commit()
 
         # Dispatch notification to user dynamically
         try:
@@ -700,16 +725,21 @@ def create_appointment(
         except Exception as rec_err:
             logger.error(f"Error converting recommendation on appointment creation: {rec_err}")
 
+        branch_name = branch.name if branch else "Our Salon"
+        service_price = service.price if service else None
+
         logger.info(f"Appointment created: {appointment_id}")
         return {
             "success": True,
             "appointment_id": appointment_id,
             "customer_name": customer.full_name,
             "service_name": service.name,
-            "assigned_staff": assigned_staff_name,
+            "branch_name": branch_name,
+            "stylist_name": assigned_staff_name,
             "start_time": st_start.isoformat(),
             "end_time": st_end.isoformat(),
             "status": "CONFIRMED",
+            "price": str(service_price) if service_price is not None else None,
             "message": "Appointment confirmed successfully."
         }
 
@@ -774,7 +804,7 @@ def cancel_appointment(appointment_id: Any, customer_id: Optional[Any] = None, d
 
         # Validate Cancellation Window (Rule 10)
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        now = get_system_now()
         appt_start = appointment.start_time
         if appt_start.tzinfo is None:
             appt_start = appt_start.replace(tzinfo=timezone.utc)
@@ -911,7 +941,7 @@ def reschedule_appointment(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    if new_start < datetime.now(timezone.utc):
+    if new_start < get_system_now():
         return {"success": False, "error": "Appointments must be in the future."}
 
     try:
@@ -1036,88 +1066,6 @@ def reschedule_appointment(
         if not db:
             session.close()
 
-
-def get_customer_history(customer_id: Any, db: Optional[Session] = None) -> Dict[str, Any]:
-    """
-    Retrieves all booking history for a specific customer.
-    Uses entity resolver to resolve customer identifier.
-    
-    Args:
-        customer_id: UUID or customer name/email
-        db: Optional database session
-    
-    Returns:
-        Dict with customer details and appointment history
-    """
-    logger.info(f"Fetching customer history: {customer_id}")
-    
-    session = db or SessionLocal()
-    
-    try:
-        c_id = resolve_customer(customer_id, session, raise_on_missing=True)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    try:
-        # Check Customer exists
-        customer = session.query(Customer).filter(Customer.id == c_id).first()
-        if not customer:
-            return {"success": False, "error": f"Customer not found."}
-
-        # Query all appointments, ordered from newest to oldest, limited to 5 to avoid token limit issues
-        appointments = session.query(Appointment).filter(
-            Appointment.customer_id == c_id
-        ).order_by(Appointment.start_time.desc()).limit(5).all()
-
-        history_list = []
-        for appt in appointments:
-            branch = appt.branch
-            service = appt.service
-            staff = appt.staff
-            review = appt.review
-
-            history_list.append({
-                "id": str(appt.id),
-                "appointment_id": str(appt.id),
-                "branch_name": branch.name if branch else None,
-                "branch_city": branch.city if branch else None,
-                "service_name": service.name if service else None,
-                "service_price": float(service.price) if service else None,
-                "service_duration": service.duration_minutes if service else None,
-                "service": {
-                    "name": service.name if service else None,
-                    "price": float(service.price) if service else None,
-                    "duration_minutes": service.duration_minutes if service else None,
-                },
-                "staff_name": staff.full_name if staff else None,
-                "staff": {
-                    "name": staff.full_name if staff else None,
-                },
-                "start_time": appt.start_time.isoformat(),
-                "end_time": appt.end_time.isoformat(),
-                "status": appt.status.value,
-                "notes": appt.notes,
-                "rating": review.rating if review else None,
-                "review_comment": review.comment if review else None,
-            })
-
-        logger.info(f"Retrieved {len(history_list)} appointments for customer {c_id}")
-        return {
-            "success": True,
-            "customer_id": str(c_id),
-            "customer_name": customer.full_name,
-            "email": customer.email,
-            "phone": customer.phone,
-            "appointment_count": len(history_list),
-            "history": history_list,
-            "bookings": history_list
-        }
-    except Exception as e:
-        logger.error(f"Error fetching customer history: {str(e)}", exc_info=True)
-        return {"success": False, "error": f"Database error: {str(e)}"}
-    finally:
-        if not db:
-            session.close()
 
 
 def add_to_waitlist(
