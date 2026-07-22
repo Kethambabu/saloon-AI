@@ -4,6 +4,7 @@ Consolidates booking creation, cancellation, rescheduling, and customer searches
 """
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
@@ -435,22 +436,6 @@ class AppointmentService:
             appt = None
             appt_uuid = None
 
-            # Helper to find latest active/upcoming appointment for a customer ID
-            def find_latest_active_appointment(cust_id_val):
-                try:
-                    cust_uuid = _parse_uuid(cust_id_val, "customer_id")
-                    return (
-                        session.query(Appointment)
-                        .filter(
-                            Appointment.customer_id == cust_uuid,
-                            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
-                        )
-                        .order_by(Appointment.start_time.desc())
-                        .first()
-                    )
-                except Exception:
-                    return None
-
             is_placeholder = _is_placeholder_value(appointment_id)
             if not is_placeholder:
                 try:
@@ -459,26 +444,45 @@ class AppointmentService:
                 except Exception:
                     pass
 
-            # Fallback 1: If appointment_id is actually a customer ID
-            if not appt and appt_uuid:
-                appt = find_latest_active_appointment(appt_uuid)
-                if appt:
-                    appt_uuid = appt.id
-                    logger.info(f"[AppointmentService] Resolved customer UUID={appointment_id} to latest active appointment={appt.id}")
-
-            # Fallback 2: If appointment_id is placeholder/invalid/not found, use the customer_id parameter
-            if not appt and customer_id:
-                appt = find_latest_active_appointment(customer_id)
-                if appt:
-                    appt_uuid = appt.id
-                    logger.info(f"[AppointmentService] Resolved customer_id={customer_id} parameter to latest active appointment={appt.id}")
+            # Fallback: appointment_id didn't resolve to a real appointment — it
+            # may actually be a customer ID the caller (LLM) supplied by mistake
+            # (Fallback 1, appt_uuid parsed but matched nothing), or it may have
+            # been missing/placeholder/invalid, in which case we fall back to the
+            # customer_id parameter instead (Fallback 2). In both cases we must
+            # NOT silently guess which appointment was meant when the customer has
+            # more than one active booking — auto-resolve only when there is
+            # exactly one candidate, otherwise fail safely and ask for
+            # disambiguation instead of risking cancelling the wrong appointment.
+            if not appt:
+                fallback_source = appt_uuid or customer_id
+                if fallback_source:
+                    candidates = _find_active_appointments_for_customer(fallback_source, session)
+                    if len(candidates) == 1:
+                        appt = candidates[0]
+                        appt_uuid = appt.id
+                        logger.info(
+                            "[AppointmentService] Resolved '%s' to sole active appointment=%s",
+                            appointment_id, appt.id,
+                        )
+                    elif len(candidates) > 1:
+                        options = "; ".join(
+                            f"{a.start_time.strftime('%Y-%m-%d %H:%M')} UTC (id={a.id})" for a in candidates
+                        )
+                        return {
+                            "success": False,
+                            "error": (
+                                "You have more than one upcoming appointment, so I can't tell which one "
+                                f"you mean from '{appointment_id}'. Your upcoming appointments are: {options}. "
+                                "Please specify which one (e.g. by date/time)."
+                            ),
+                        }
 
             if not appt:
                 return {"success": False, "error": f"Appointment {appointment_id} not found."}
-                
+
             if customer_id and str(appt.customer_id) != str(customer_id):
                 return {"success": False, "error": "Unauthorized to cancel this appointment."}
-                
+
             old_status = appt.status.value
             appt.status = AppointmentStatus.CANCELLED
             
@@ -596,22 +600,6 @@ class AppointmentService:
             appt = None
             appt_uuid = None
 
-            # Helper to find latest active/upcoming appointment for a customer ID
-            def find_latest_active_appointment(cust_id_val):
-                try:
-                    cust_uuid = _parse_uuid(cust_id_val, "customer_id")
-                    return (
-                        session.query(Appointment)
-                        .filter(
-                            Appointment.customer_id == cust_uuid,
-                            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
-                        )
-                        .order_by(Appointment.start_time.desc())
-                        .first()
-                    )
-                except Exception:
-                    return None
-
             is_placeholder = _is_placeholder_value(appointment_id)
             if not is_placeholder:
                 try:
@@ -620,19 +608,38 @@ class AppointmentService:
                 except Exception:
                     pass
 
-            # Fallback 1: If appointment_id is actually a customer ID
-            if not appt and appt_uuid:
-                appt = find_latest_active_appointment(appt_uuid)
-                if appt:
-                    appt_uuid = appt.id
-                    logger.info(f"[AppointmentService] Resolved customer UUID={appointment_id} to latest active appointment={appt.id}")
-
-            # Fallback 2: If appointment_id is placeholder/invalid/not found, use the customer_id parameter
-            if not appt and customer_id:
-                appt = find_latest_active_appointment(customer_id)
-                if appt:
-                    appt_uuid = appt.id
-                    logger.info(f"[AppointmentService] Resolved customer_id={customer_id} parameter to latest active appointment={appt.id}")
+            # Fallback: appointment_id didn't resolve to a real appointment — it
+            # may actually be a customer ID the caller (LLM) supplied by mistake
+            # (Fallback 1, appt_uuid parsed but matched nothing), or it may have
+            # been missing/placeholder/invalid, in which case we fall back to the
+            # customer_id parameter instead (Fallback 2). Only auto-resolve when
+            # there is exactly one active-appointment candidate for that customer
+            # — see _find_active_appointments_for_customer's docstring for why
+            # silently picking one of several (previously: the single
+            # furthest-in-the-future one) is unsafe.
+            if not appt:
+                fallback_source = appt_uuid or customer_id
+                if fallback_source:
+                    candidates = _find_active_appointments_for_customer(fallback_source, session)
+                    if len(candidates) == 1:
+                        appt = candidates[0]
+                        appt_uuid = appt.id
+                        logger.info(
+                            "[AppointmentService] Resolved '%s' to sole active appointment=%s",
+                            appointment_id, appt.id,
+                        )
+                    elif len(candidates) > 1:
+                        options = "; ".join(
+                            f"{a.start_time.strftime('%Y-%m-%d %H:%M')} UTC (id={a.id})" for a in candidates
+                        )
+                        return {
+                            "success": False,
+                            "error": (
+                                "You have more than one upcoming appointment, so I can't tell which one "
+                                f"you mean from '{appointment_id}'. Your upcoming appointments are: {options}. "
+                                "Please specify which one (e.g. by date/time)."
+                            ),
+                        }
 
             if not appt:
                 if is_placeholder:
@@ -963,12 +970,34 @@ _PLACEHOLDER_VALUES = {
     "your_branch", "your_service", "your_staff", "your_customer",
     "select_branch", "select_service", "select_staff",
     "none_specified", "not_specified", "unspecified", "any", "none", "null", "undefined",
+    # Short tokens an LLM sometimes emits verbatim as a whole "I don't have a
+    # real ID" placeholder. Matched only as an EXACT full value here (not as a
+    # substring — see _PLACEHOLDER_SUBSTRINGS note below for why that matters).
+    "xxxx", "1111", "0000", "aaaa", "abcd", "1234",
 }
 
 _PLACEHOLDER_SUBSTRINGS = [
     "first_", "second_", "default_", "select_", "example_", "your_",
-    "xxxx", "1111", "0000", "aaaa", "abcd", "1234",
 ]
+# NOTE: "xxxx", "1111", "0000", "aaaa", "abcd", "1234" used to live in this
+# substring list too, matched via "substring in value_str" — i.e. flagged as
+# fake ANY identifier merely *containing* one of those 4-char runs anywhere.
+# A real, randomly-generated 32-hex-digit UUID has a non-trivial chance of
+# containing one of those runs purely by coincidence, so that check silently
+# misidentified real appointment/customer/staff/branch/service UUIDs as
+# hallucinated placeholders, causing bookings/cancellations/reschedules to
+# fail intermittently for no reason a customer or support agent could
+# explain. They now live in _PLACEHOLDER_VALUES (exact full-value match
+# only), and the patterns below catch the UUID-shaped fakes an LLM actually
+# invents (all-zeros, all-ones, all-a's, the textbook
+# "12345678-1234-1234-1234-123456789012") by matching the WHOLE identifier.
+_SEQUENTIAL_PLACEHOLDER_RE = re.compile(
+    r"^(?:00000000-0000-0000-0000-000000000000|"
+    r"11111111-1111-1111-1111-111111111111|"
+    r"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa|"
+    r"12345678-1234-1234-1234-123456789012|"
+    r"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)$"
+)
 
 def _is_placeholder_value(value: Any) -> bool:
     """Detect if an identifier is a placeholder/hallucinated value from an LLM."""
@@ -979,7 +1008,45 @@ def _is_placeholder_value(value: Any) -> bool:
         return True
     if any(sub in value_str for sub in _PLACEHOLDER_SUBSTRINGS):
         return True
+    if _SEQUENTIAL_PLACEHOLDER_RE.match(value_str):
+        return True
+    # Degenerate all-repeated-character UUID (e.g. "cccccccc-cccc-...") that
+    # isn't one of the specific patterns above — checked against the full
+    # de-hyphenated value so a real UUID that merely *contains* a short run
+    # of a repeated character is never caught by this.
+    hex_only = value_str.replace("-", "")
+    if len(hex_only) == 32 and len(set(hex_only)) == 1:
+        return True
     return False
+
+
+def _find_active_appointments_for_customer(cust_id_val: Any, session: Session) -> List["Appointment"]:
+    """Return this customer's active (CONFIRMED/PENDING) appointments, soonest first.
+
+    Used by cancel()/reschedule() as a fallback when the caller (an LLM agent)
+    couldn't supply a real appointment_id and a customer identifier was given
+    instead — either because appointment_id itself turned out to be a customer
+    UUID, or because appointment_id was missing/invalid and the customer_id
+    parameter was used. Ordered ascending by start_time so that when there's
+    exactly one candidate, "the" appointment resolved is the next upcoming
+    one — previously this used start_time DESCENDING ("latest"), which
+    actually picked whichever active appointment was furthest in the future,
+    silently cancelling/rescheduling the wrong booking for any customer with
+    more than one upcoming appointment.
+    """
+    try:
+        cust_uuid = _parse_uuid(cust_id_val, "customer_id")
+    except Exception:
+        return []
+    return (
+        session.query(Appointment)
+        .filter(
+            Appointment.customer_id == cust_uuid,
+            Appointment.status.in_([AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]),
+        )
+        .order_by(Appointment.start_time.asc())
+        .all()
+    )
 
 
 # Waitlist functionality

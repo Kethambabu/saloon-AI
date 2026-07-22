@@ -1,5 +1,6 @@
 """OpenAI ChatCompletionClient adapter for AutoGen compatibility."""
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -8,11 +9,15 @@ from openai import AsyncOpenAI
 from core.config import get_settings
 
 from autogen_core.models import (
+    AssistantMessage,
     ChatCompletionClient,
     CreateResult,
+    FunctionExecutionResultMessage,
     ModelCapabilities,
     ModelInfo,
     RequestUsage,
+    SystemMessage,
+    UserMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,19 +195,32 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             result.append(dict(item))
                 except (ImportError, Exception) as e:
                     logger.warning(f"Failed to use official to_oai_type: {e}. Falling back.")
-                    # Normalise role name from AutoGen message
-                    role = getattr(msg, "role", getattr(msg, "source", "user"))
-                    role_str = "user"
-                    role_lower = str(role).lower()
-                    if "assistant" in role_lower:
+                    # Determine role from the AutoGen message's actual TYPE, not from
+                    # `.source`/`.role` string-matching — `.source` on an AssistantMessage
+                    # is the *agent's name* (e.g. "Clara_Receptionist"), not a role label,
+                    # so the old substring check ("assistant" in role_lower) always missed
+                    # it and silently mis-classified every assistant tool-call turn as a
+                    # "user" message. That corrupted the conversation structure on every
+                    # multi-round tool call: the assistant's FunctionCall never became a
+                    # proper {"role": "assistant", "tool_calls": [...]}, so the following
+                    # tool-result message had no matching call to attach a name to —
+                    # which is what produces Gemini's "function_response.name: Name cannot
+                    # be empty" 400 error (and, since Groq/HF tolerate the malformed
+                    # history more quietly, likely also what left Clara unable to see her
+                    # own prior tool results properly within a turn).
+                    if isinstance(msg, AssistantMessage):
                         role_str = "assistant"
-                    elif "system" in role_lower:
+                    elif isinstance(msg, SystemMessage):
                         role_str = "system"
-                    elif "tool" in role_lower or "function" in role_lower:
+                    elif isinstance(msg, FunctionExecutionResultMessage):
                         role_str = "tool"
-                    
+                    elif isinstance(msg, UserMessage):
+                        role_str = "user"
+                    else:
+                        role_str = "user"
+
                     content = getattr(msg, "content", None)
-                    
+
                     # Case 1: Assistant message requesting tool calls
                     if role_str == "assistant" and isinstance(content, list):
                         tool_calls = []
@@ -216,23 +234,28 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                                         "arguments": item.arguments
                                     }
                                 })
-                        
+
                         msg_dict = {
                             "role": "assistant",
                             "content": None,
                             "tool_calls": tool_calls
                         }
                         result.append(msg_dict)
-                        
+
                     # Case 2: Tool execution result message
-                    elif isinstance(content, list) and len(content) > 0 and hasattr(content[0], "call_id"):
+                    elif role_str == "tool" and isinstance(content, list) and len(content) > 0:
                         for item in content:
+                            # FunctionExecutionResult.name is a required field on the type
+                            # itself — read it directly instead of trying to reconstruct it
+                            # later from a call_id lookup that depended on Case 1 above
+                            # having worked (which, before this fix, it never did).
                             result.append({
                                 "role": "tool",
                                 "tool_call_id": getattr(item, "call_id", ""),
+                                "name": getattr(item, "name", None) or "tool_call",
                                 "content": getattr(item, "content", "")
                             })
-                            
+
                     # Case 3: Standard User / System / Assistant text message
                     else:
                         msg_dict = {
@@ -593,7 +616,8 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
         last_error: Optional[Exception] = None
 
-        for provider_cfg in provider_chain:
+        for chain_idx, provider_cfg in enumerate(provider_chain):
+            is_last_provider = chain_idx == len(provider_chain) - 1
             provider_name = provider_cfg["provider"]
             # if provider_name == "huggingface" and tools:
             #     logger.info(f"⏭️ Skipping Hugging Face provider for model '{provider_cfg['model']}' because tool calling is requested and Hugging Face serverless API does not support function calling.")
@@ -690,7 +714,6 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             continue
 
                         import re
-                        import time
                         retry_seconds = None
                         # Pattern 1: Match 'try again in 1.45s' or 'Please retry in 20.44s' or 'retry after 5s'
                         match = re.search(r"(?:retry in|try again in|try again after|retry after|retry_after|after|in)\s*[:\s]?\s*([0-9\.]+)\s*s", err_str, re.IGNORECASE)
@@ -704,18 +727,28 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
                         if retry_seconds is not None:
                             sleep_time = retry_seconds + 0.5
-                            if sleep_time > 15.0:
-                                logger.warning(f"⚠️ [{provider_name}] '{model_name}' requested wait too long ({sleep_time:.2f}s). Falling back immediately to next provider.")
-                                break
-                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited. Sleeping for {sleep_time:.2f}s before retry...")
                         else:
                             sleep_time = backoff * (2 ** attempt)
-                            if sleep_time > 15.0:
-                                logger.warning(f"⚠️ [{provider_name}] '{model_name}' backoff sleep too long ({sleep_time:.2f}s). Falling back immediately to next provider.")
-                                break
-                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited (429). Sleeping for {sleep_time:.2f}s...")
 
-                        time.sleep(sleep_time)
+                        # Waiting out a short rate-limit only helps if there's a real retry
+                        # left to make with it. When this is the LAST provider in the chain,
+                        # breaking out "to fall back" has nowhere to fall back to — it just
+                        # fails the whole request outright, even for waits as short as
+                        # 20-30s that easily fit inside the 180s agent timeout budget. So
+                        # only skip-ahead-immediately when there's an actual next provider;
+                        # on the last provider, wait it out instead (capped at 60s).
+                        if sleep_time > 15.0 and not is_last_provider:
+                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' requested wait too long ({sleep_time:.2f}s). Falling back immediately to next provider.")
+                            break
+                        if sleep_time > 60.0:
+                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' requested wait too long ({sleep_time:.2f}s) even as last provider — giving up.")
+                            break
+                        logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited. Sleeping for {sleep_time:.2f}s before retry...")
+
+                        # Non-blocking: a plain time.sleep() here would freeze the entire
+                        # asyncio event loop — and with it every other concurrent user's
+                        # request on this server — for the full sleep duration.
+                        await asyncio.sleep(sleep_time)
                         continue
 
                     # For non-quota errors, hard quota errors, or if we exhausted all retries

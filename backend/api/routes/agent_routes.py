@@ -4,6 +4,7 @@ Defines the /agent/chat endpoint which connects directly to the ReceptionistAgen
 """
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
@@ -25,6 +26,34 @@ AGENT_TIMEOUT_SECONDS = 90.0
 # Thread-safe global singleton for the Orchestrator/Agent to optimize load times
 _agent_orchestrator: Any = None
 _receptionist_agent: Any = None
+
+
+def _user_safe_agent_error(error_msg: Any) -> str:
+    """Convert internal model/provider failures into customer-safe messages."""
+    raw = str(error_msg or "").strip()
+    lower = raw.lower()
+
+    provider_failure_patterns = (
+        r"\ball llm providers\b",
+        r"\bquota\b",
+        r"\bquota exceeded\b",
+        r"\brate limit\b",
+        r"\bresource_exhausted\b",
+        r"\b429\b",
+        r"\b402\b",
+        r"\bcredits?\b",
+        r"\bgemini\b",
+        r"\bgroq\b",
+        r"\bhugging face\b",
+        r"\bno llm providers are configured\b",
+    )
+    if any(re.search(pattern, lower) for pattern in provider_failure_patterns):
+        return (
+            "We're currently experiencing temporary high demand on our AI assistant. "
+            "Please try again shortly."
+        )
+
+    return "I encountered an issue processing your request. Please try again."
 
 
 def get_receptionist_agent() -> Any:
@@ -178,7 +207,8 @@ async def chat_with_agent(
         )
 
     # 3. Store chat log with customer isolation
-    from infrastructure.db import get_db, ChatLog, SessionLocal
+    from infrastructure.db.database import SessionLocal
+    from infrastructure.db.models import ChatLog, Lead, LeadStatus
     
     # Store user message first
     db_sess = SessionLocal()
@@ -195,7 +225,6 @@ async def chat_with_agent(
         db_sess.add(chat_log)
         
         # Reset existing lead to NEW because they are active in the chat again!
-        from infrastructure.db import Lead, LeadStatus
         from datetime import datetime
         existing_lead = db_sess.query(Lead).filter(
             (Lead.notes.like(f"%Session ID: {payload.session_id}%")) |
@@ -241,7 +270,7 @@ async def chat_with_agent(
             return ChatResponse(
                 success=False,
                 session_id=payload.session_id,
-                response=f"I encountered an issue processing your request: {error_msg}. Please try again.",
+                response=_user_safe_agent_error(error_msg),
                 agent_name=agent_response.get("agent_name", "Clara")
             )
 
@@ -303,4 +332,3 @@ async def chat_with_agent(
             response="An unexpected error occurred. Our team has been notified. Please try again later.",
             agent_name="Clara"
         )
-

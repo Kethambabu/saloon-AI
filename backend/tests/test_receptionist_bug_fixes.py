@@ -1,11 +1,16 @@
 """
-Regression tests for three receptionist booking bugs reported by the user:
+Regression tests for receptionist booking bugs reported by the user:
 
 1. Booking a past date must be rejected (must be in the future).
 2. Booking an already-passed time slot *today* must be rejected AND the response
    must proactively suggest the next available slots today.
 3. Booking with a stylist who is on leave that day must be rejected AND the
    response must suggest an alternative available stylist by name.
+4. A stale pending_booking candidate (e.g. from an earlier "list open slots"
+   turn) must not silently hijack a later, unrelated request for a different
+   service ("sticky booking" leak).
+5. An unparseable / calendar-invalid date (e.g. "Feb 30th") must be rejected
+   outright instead of silently degrading to today's date.
 
 These exercise the actual live production path used by the Clara_Receptionist
 AutoGen agent: ai.tools.capabilities.appointment_workflow_v2 -> _dispatch ->
@@ -27,6 +32,7 @@ from sqlalchemy.orm import sessionmaker
 
 from infrastructure.db import Base, Branch, Staff, Customer, Service, StaffLeave
 from application.services.appointment_service import create_appointment
+from ai.orchestrator import AgentIntent
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -152,3 +158,158 @@ def test_book_staff_on_leave_suggests_alternative_stylist(db_session):
     assert "on leave" in res["error"].lower()
     assert "book another stylist" in res["error"].lower()
     assert bob.full_name in res["error"]
+
+
+def test_appointment_param_normalization_handles_stylist_and_month_name_date():
+    """Ensure weak-model param shapes normalize instead of silently degrading to 'today'."""
+    from ai.tools.capabilities import _normalize_appointment_params
+
+    normalized = _normalize_appointment_params({
+        "stylist": "Marcus Johnson",
+        "serviceName": "Haircut",
+        "date": {"month": "July", "day": 24},
+    })
+
+    assert normalized["staff_name"] == "Marcus Johnson"
+    assert normalized["service_name"] == "Haircut"
+    assert normalized["date"] == f"{datetime.now(timezone.utc).year:04d}-07-24"
+
+
+def test_appointment_workflow_rejects_unreadable_structured_date():
+    """Unreadable date objects must fail fast rather than defaulting to today's slots."""
+    from ai.tools.capabilities import _dispatch
+
+    result = _dispatch(
+        workflow_name="appointment_workflow",
+        action="check_availability",
+        params={"date": {"day": "abc", "month": "mystery"}},
+        role="CUSTOMER",
+    )
+
+    assert "couldn't read the appointment date" in result.lower()
+
+
+def test_check_availability_requires_explicit_date():
+    """Availability checks must not silently default to today's date."""
+    from core.handlers import CheckAvailabilityHandler, HandlerContext
+
+    ctx = HandlerContext(
+        params={
+            "service_name": "Haircut",
+            "staff_name": "Marcus Johnson",
+        },
+        user_role="CUSTOMER",
+    )
+    res = CheckAvailabilityHandler().execute(ctx)
+    assert res["success"] is False
+    assert "provide the appointment date" in res["error"].lower()
+
+
+def test_looks_like_new_request_detects_different_service():
+    """A message naming a different service than the pending candidate must
+    read as a fresh ask, not a reply to the pending confirmation."""
+    from ai.orchestrator import _looks_like_new_request
+
+    pending = {"service": "Haircut", "staff_name": "Priya", "date": "2026-07-29"}
+    assert _looks_like_new_request("Can I get a manicure tomorrow at 2 PM?", pending) is True
+    assert _looks_like_new_request("I'd like a haircut with likhith next Friday", pending) is True
+    # A bare confirmation/selection reply must NOT be misread as a new request.
+    assert _looks_like_new_request("11am works for me", pending) is False
+    assert _looks_like_new_request("yes", pending) is False
+
+
+@pytest.mark.asyncio
+async def test_stale_pending_booking_dropped_for_unrelated_new_request():
+    """Bug 4 (sticky pending_booking leak): once a booking candidate is
+    stashed on the session (e.g. after listing open slots for a Priya
+    haircut), an unrelated follow-up request for a different service must
+    start its own fresh flow instead of being silently folded into
+    completing the old, unrelated candidate — which previously caused a
+    "manicure tomorrow at 2pm" request to book a leftover Priya haircut
+    instead."""
+    from ai.orchestrator import MultiAgentOrchestrator
+    from application.services.conversation_state_service import SessionState
+
+    orchestrator = MultiAgentOrchestrator(name="Orchestrator")
+    session = SessionState(session_id="test-stale-pending", user_id="cust-1", user_role="CUSTOMER")
+    session.pending_booking = {"service": "Haircut", "staff_name": "Priya", "date": "2026-07-29"}
+
+    with patch.object(orchestrator.state_service, "_save_session"):
+        intent = orchestrator._resolve_intent_with_state(
+            "Can I get a manicure tomorrow at 2 PM?", session, "CUSTOMER"
+        )
+
+    assert session.pending_booking == {}
+    assert intent == AgentIntent.BOOKING  # still a booking-shaped ask, just not the stale one
+
+
+@pytest.mark.asyncio
+async def test_pending_booking_kept_for_genuine_confirmation_reply():
+    """A plain confirmation/selection reply must keep riding the sticky
+    pending_booking context instead of being treated as a new request."""
+    from ai.orchestrator import MultiAgentOrchestrator
+    from application.services.conversation_state_service import SessionState
+
+    orchestrator = MultiAgentOrchestrator(name="Orchestrator")
+    session = SessionState(session_id="test-sticky-pending", user_id="cust-1", user_role="CUSTOMER")
+    session.pending_booking = {"service": "Haircut", "staff_name": "Priya", "date": "2026-07-29"}
+
+    intent = orchestrator._resolve_intent_with_state("11am works for me", session, "CUSTOMER")
+
+    assert session.pending_booking == {"service": "Haircut", "staff_name": "Priya", "date": "2026-07-29"}
+    assert intent == AgentIntent.BOOKING
+
+
+def test_resolve_relative_date_rejects_invalid_calendar_date():
+    """Bug 5: 'Feb 30th' (a non-existent calendar date) must raise instead of
+    silently degrading to today's date."""
+    from application.services.entity_resolver_service import resolve_relative_date
+
+    with pytest.raises(ValueError):
+        resolve_relative_date("Feb 30th")
+
+
+def test_validate_appointment_datetime_rejects_unparseable_date():
+    """Bug 5: an appointment request for an unparseable/invalid date must be
+    rejected with a clear message, not silently marked valid."""
+    from application.services.datetime_validation import validate_appointment_datetime
+
+    result = validate_appointment_datetime("Feb 30th")
+    assert result["valid"] is False
+    assert "understand" in result["reason"].lower()
+
+
+def test_book_with_time_only_and_date_keeps_requested_date():
+    """When date is provided separately, a time-only start_time must not become 'today'."""
+    from core.handlers import BookAppointmentHandler, HandlerContext
+
+    captured: dict[str, str] = {}
+
+    class _MockAppointmentService:
+        def book(self, customer_id, branch_id, service_id, start_time, staff_id=None, notes=None, tenant_id="default", db=None):
+            captured["start_time"] = start_time
+            return {"success": True, "appointment_id": "appt-1", "start_time": start_time}
+
+    with patch("application.services.appointment_service.get_appointment_service", return_value=_MockAppointmentService()), \
+         patch("application.services.entity_resolver_service.resolve_entity_context", return_value={
+             "customer_id": "cust-1",
+             "branch_id": "branch-1",
+             "service_id": "service-1",
+             "staff_id": "staff-1",
+         }):
+        ctx = HandlerContext(
+            params={
+                "customer_name": "Jane",
+                "branch_name": "Main Salon",
+                "service_name": "Haircut",
+                "staff_name": "Marcus Johnson",
+                "date": "July 24",
+                "start_time": "09:00",
+            },
+            user_role="CUSTOMER",
+        )
+        res = BookAppointmentHandler().execute(ctx)
+
+    assert res["success"] is True
+    assert captured["start_time"].endswith("T09:00:00Z")
+    assert "-07-24T09:00:00Z" in captured["start_time"]

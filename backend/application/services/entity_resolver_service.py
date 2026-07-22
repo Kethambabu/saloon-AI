@@ -971,7 +971,12 @@ def resolve_relative_date(date_input: Any, base_date: Optional[datetime] = None)
         except ValueError:
             pass
 
-    return base_date.strftime("%Y-%m-%d")
+    # Nothing above could parse this into a real calendar date — silently
+    # falling back to today here previously let garbage/invalid input (e.g.
+    # "Feb 30th") masquerade as a legitimate request for today instead of
+    # being rejected, so callers must handle this explicitly rather than
+    # unknowingly booking/checking the wrong date.
+    raise ValueError(f"'{date_input}' is not a recognizable calendar date.")
 
 
 def resolve_relative_time(time_input: Any, base_time: Optional[datetime] = None) -> str:

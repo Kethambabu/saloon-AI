@@ -47,7 +47,8 @@ def validate_sql_safety(sql: str) -> tuple[bool, Optional[str]]:
     ]
     for pattern in forbidden_patterns:
         if re.search(pattern, sql_clean):
-            return False, f"Strict safety violation: Query contains forbidden SQL keyword/pattern: {pattern.replace(r'\b', '')}"
+            clean_pattern = pattern.replace(r"\b", "")
+            return False, f"Strict safety violation: Query contains forbidden SQL keyword/pattern: {clean_pattern}"
 
     # 3. Restrict whitelisted tables only to protect system tables
     allowed_tables = ["BRANCHES", "STAFF", "CUSTOMERS", "SERVICES", "APPOINTMENTS", "LEADS", "REVIEWS"]

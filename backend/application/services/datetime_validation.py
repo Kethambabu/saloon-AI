@@ -70,7 +70,19 @@ def validate_appointment_datetime(
                 norm_date_str = resolve_relative_date(date_str, base_date=current_server_datetime)
                 req_date = datetime.strptime(norm_date_str, "%Y-%m-%d").date()
             except Exception as exc:
+                # A date that can't be parsed at all (garbled text, or a
+                # calendar-invalid date like "Feb 30th") must be rejected
+                # outright — previously this fell through to "valid" below,
+                # which let unrecognizable dates silently skip validation
+                # entirely instead of being caught here.
                 logger.warning("[DatetimeValidation] Date parse error for '%s': %s", date_str, exc)
+                return {
+                    "valid": False,
+                    "reason": (
+                        f"I couldn't understand '{date_str}' as a valid date. "
+                        "Please provide a specific date, e.g. '2026-07-24' or 'next Friday'."
+                    ),
+                }
 
     if req_date is None:
         return {"valid": True, "reason": ""}

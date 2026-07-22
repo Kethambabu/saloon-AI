@@ -91,6 +91,39 @@ def test_agent_chat_endpoint_success(mock_get_agent, app_client):
     assert "how can I help you" in data["response"]
 
 
+@patch("api.routes.agent_routes.get_receptionist_agent")
+def test_agent_chat_endpoint_sanitizes_provider_errors(mock_get_agent, app_client):
+    """Provider/quota internals must never leak to end users."""
+    mock_agent = MagicMock()
+
+    async def mock_process(input_data):
+        return {
+            "success": False,
+            "agent_name": "Clara",
+            "error": (
+                "Agent processing failed: All LLM providers failed. "
+                "Last error: Error code: 429 quota exceeded for gemini."
+            ),
+        }
+
+    mock_agent.process = mock_process
+    mock_get_agent.return_value = mock_agent
+
+    payload = {
+        "message": "Book Marcus for haircut on 2026-07-24 at 11:00 AM",
+        "session id": "test-session-429",
+        "chat history": [],
+    }
+    response = app_client.post("/api/v1/agent/chat", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert "temporary high demand" in data["response"].lower()
+    assert "429" not in data["response"]
+    assert "quota" not in data["response"].lower()
+    assert "gemini" not in data["response"].lower()
+
+
 def test_agent_chat_endpoint_validation_error(app_client):
     """Verifies that malformed payloads (e.g. missing message or session id) are rejected with 422."""
     # Payload missing "session id"
@@ -101,4 +134,3 @@ def test_agent_chat_endpoint_validation_error(app_client):
     
     response = app_client.post("/api/v1/agent/chat", json=payload)
     assert response.status_code == 422  # Unprocessable Entity
-

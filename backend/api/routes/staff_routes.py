@@ -5,6 +5,7 @@ Ensures data isolation and role-based access control.
 """
 
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -555,6 +556,32 @@ class StaffChatResponse(BaseModel):
 _staff_orchestrator: Optional[Any] = None
 
 
+def _user_safe_staff_error(error_msg: Any) -> str:
+    """Convert internal provider/LLM failures into user-safe staff messages."""
+    raw = str(error_msg or "").strip()
+    lower = raw.lower()
+    provider_failure_patterns = (
+        r"\ball llm providers\b",
+        r"\bquota\b",
+        r"\bquota exceeded\b",
+        r"\brate limit\b",
+        r"\bresource_exhausted\b",
+        r"\b429\b",
+        r"\b402\b",
+        r"\bcredits?\b",
+        r"\bgemini\b",
+        r"\bgroq\b",
+        r"\bhugging face\b",
+        r"\bno llm providers are configured\b",
+    )
+    if any(re.search(pattern, lower) for pattern in provider_failure_patterns):
+        return (
+            "We're currently experiencing temporary high demand on the AI assistant. "
+            "Please try again shortly."
+        )
+    return "I encountered an issue processing your request. Please try again."
+
+
 def get_staff_orchestrator():
     """Helper to lazily load and cache the OrchestratorV3 singleton for staff chat."""
     global _staff_orchestrator
@@ -659,7 +686,7 @@ async def chat_with_staff_agent(
             return StaffChatResponse(
                 success=False,
                 session_id=payload.session_id,
-                response=f"I encountered an issue processing your request: {error_msg}. Please try again.",
+                response=_user_safe_staff_error(error_msg),
                 agent_name="Atlas"
             )
 
@@ -696,5 +723,4 @@ async def chat_with_staff_agent(
             response="An unexpected error occurred in the AI assistant. Please try again.",
             agent_name="Atlas"
         )
-
 

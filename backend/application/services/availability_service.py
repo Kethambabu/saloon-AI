@@ -73,17 +73,6 @@ class AvailabilityService:
         except Exception as e:
             logger.warning(f"Error checking database leaves: {str(e)}")
         
-        # Predefined leaves mapping
-        leaves = {
-            "Alexandra Chen": ["2026-06-10"],
-            "Marcus Johnson": ["2026-07-24", "2026-06-12"],
-            "Marcus Staff": ["2026-07-24", "2026-06-12"],
-        }
-        
-        full_name = staff.full_name
-        if full_name in leaves and date_str in leaves[full_name]:
-            return True, full_name
-            
         return False, None
 
     @staticmethod

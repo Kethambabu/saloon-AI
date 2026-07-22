@@ -11,6 +11,7 @@ import os
 import sys
 import uuid
 import logging
+import datetime
 from decimal import Decimal
 
 # Add backend directory to path
@@ -157,9 +158,15 @@ def seed_database():
         # 4. CREATE USERS & LOGINS
         # ====================================================================
         logger.info("Creating user accounts...")
-        # Common password is "password"
+        # Common password is "password123" — matches docx/README.md's documented
+        # test credentials and every test file's hardcoded login payload
+        # (tests/test_auth.py, test_staff_dashboard.py, test_customer_dashboard.py,
+        # test_admin_chatbot.py, etc.). This used to say "password" here, which
+        # silently broke login for anyone following the README and made ~40
+        # pytest tests fail outright with 401s — not because of an app bug, but
+        # because the seed data drifted from what the docs and tests expect.
         from core.security import hash_password
-        hashed_password = hash_password("password")
+        hashed_password = hash_password("password123")
         
         # 1. Admin/Owner (keep same owner@salonai.com login)
         admin_user = User(
@@ -181,7 +188,7 @@ def seed_database():
             phone="+1-212-555-9000"
         )
         db.add(admin_profile)
-        logger.info("   ✓ Created Admin/Owner login: owner@salonai.com / password")
+        logger.info("   ✓ Created Admin/Owner login: owner@salonai.com / password123")
 
         # 2. Staff Logins (Priya, Alexandra, Marcus, Isabella)
         staff_user_map = {}
@@ -196,7 +203,7 @@ def seed_database():
             )
             db.add(user)
             staff_user_map[st.email] = user
-            logger.info(f"   ✓ Created Staff login: {st.email} / password")
+            logger.info(f"   ✓ Created Staff login: {st.email} / password123")
 
         # Seed Staff Leave for Marcus Johnson on 2026-07-24
         marcus_st = next((s for s in staff_list if s.first_name == "Marcus"), None)
@@ -232,15 +239,14 @@ def seed_database():
             customer_id=customer.id
         )
         db.add(customer_user)
-        logger.info("   ✓ Created Customer login: customer@example.com / password")
+        logger.info("   ✓ Created Customer login: customer@example.com / password123")
 
         # ====================================================================
         # 5. CREATE KNOWLEDGE DOCUMENTS & SPECIAL OFFERS (Dynamic Receptionist KB)
         # ====================================================================
         logger.info("Creating dynamic knowledge documents...")
         from infrastructure.db.models import KnowledgeDocument, SpecialOffer
-        import datetime
-        
+
         # Clear existing knowledge/offers
         db.query(KnowledgeDocument).delete()
         db.query(SpecialOffer).delete()

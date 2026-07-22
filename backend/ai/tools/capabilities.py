@@ -19,9 +19,175 @@ from __future__ import annotations
 
 import logging
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+# Weaker/faster fallback models (e.g. llama-3.1-8b-instant, used when the
+# primary model is rate-limited) don't reliably follow the param shape
+# described only in prose in the system prompt — they've been observed
+# sending camelCase/pluralized keys (branchId, staffId, staffName, services)
+# instead of the canonical branch_id/staff_id/staff_name/service, and a date
+# as a nested {"day":D,"month":M,"year":Y} object instead of a string.
+# resolve_entity_context() only reads the canonical keys, so any of the above
+# used to be silently ignored (no error, no filter applied) rather than
+# rejected — e.g. "book Marcus on July 24" would silently resolve to today
+# with no stylist filter, and Clara would report it as a normal success.
+_APPOINTMENT_PARAM_ALIASES = {
+    "branchId": "branch_id",
+    "branchName": "branch_name",
+    "staffId": "staff_id",
+    "staffName": "staff_name",
+    "stylist": "staff_name",
+    "stylistName": "staff_name",
+    "customerId": "customer_id",
+    "customerName": "customer_name",
+    "serviceId": "service_id",
+    "serviceName": "service_name",
+    "appointmentDate": "date",
+    "bookingDate": "date",
+    "startTime": "start_time",
+    "appointmentTime": "time",
+    "slotTime": "time",
+    "newStartTime": "new_start_time",
+    "newDate": "new_date",
+    "newTime": "new_time",
+    "newStaffId": "new_staff_id",
+    "appointmentId": "appointment_id",
+}
+
+
+def _normalize_date_value(value: Any) -> Any:
+    """Convert structured date objects into a strict YYYY-MM-DD string when possible."""
+    month_names = {
+        "jan": 1, "january": 1,
+        "feb": 2, "february": 2,
+        "mar": 3, "march": 3,
+        "apr": 4, "april": 4,
+        "may": 5,
+        "jun": 6, "june": 6,
+        "jul": 7, "july": 7,
+        "aug": 8, "august": 8,
+        "sep": 9, "sept": 9, "september": 9,
+        "oct": 10, "october": 10,
+        "nov": 11, "november": 11,
+        "dec": 12, "december": 12,
+    }
+
+    def _parse_month_component(raw_month: Any) -> Optional[int]:
+        if raw_month is None:
+            return None
+        if isinstance(raw_month, (int, float)):
+            month_num = int(raw_month)
+            return month_num if 1 <= month_num <= 12 else None
+        month_str = str(raw_month).strip().lower()
+        if month_str.isdigit():
+            month_num = int(month_str)
+            return month_num if 1 <= month_num <= 12 else None
+        return month_names.get(month_str)
+
+    if isinstance(value, dict):
+        keys = {k.lower(): v for k, v in value.items()}
+        day = keys.get("day")
+        month = keys.get("month")
+        year = keys.get("year")
+        month_num = _parse_month_component(month)
+
+        if day is not None and month_num is not None:
+            try:
+                day_num = int(day)
+                year_num = int(year) if year is not None else datetime.now(timezone.utc).year
+                normalized_date = datetime(year=year_num, month=month_num, day=day_num)
+                return normalized_date.strftime("%Y-%m-%d")
+            except (TypeError, ValueError, OverflowError):
+                return value
+    return value
+
+
+def _normalize_appointment_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Alias common non-canonical param shapes onto the keys resolve_entity_context expects."""
+    if not isinstance(params, dict):
+        return params
+    for alias, canonical in _APPOINTMENT_PARAM_ALIASES.items():
+        if alias in params and not params.get(canonical):
+            params[canonical] = params.pop(alias)
+    # "services": ["haircut"] (plural array) -> "service": "haircut"
+    if "services" in params and not params.get("service") and not params.get("service_id"):
+        services_val = params.pop("services")
+        if isinstance(services_val, list) and services_val:
+            params["service"] = services_val[0]
+        elif isinstance(services_val, str):
+            params["service"] = services_val
+    for date_key in ("date", "new_date"):
+        if date_key in params:
+            params[date_key] = _normalize_date_value(params[date_key])
+    return params
+
+
+def _sync_pending_booking_state(
+    action: str,
+    params: Dict[str, Any],
+    result: Any,
+    session_id: Optional[str],
+) -> None:
+    """
+    Persist a booking candidate across conversation turns.
+
+    Without this, the ONLY memory of "we just checked availability and the
+    customer is about to confirm" is the raw text the LLM chose to write back
+    to the customer — and a smaller/weaker model can (and does) lose track of
+    it after a handful of tool round-trips, e.g. asking "can I confirm this?"
+    and then, when the customer says "yes", calling `history` instead of
+    `book` because it no longer remembers which service/staff/time was even
+    being discussed. Storing the last successful check_availability's params
+    here lets the orchestrator complete the booking deterministically on a
+    plain "yes" instead of depending on the LLM to re-derive everything from
+    conversation text alone.
+    """
+    logger.info(
+        "[CapabilityToolsV2] _sync_pending_booking_state called: action=%s session_id=%s success=%s",
+        action, session_id, isinstance(result, dict) and result.get("success"),
+    )
+    if not session_id or not isinstance(result, dict):
+        return
+    try:
+        from application.services.conversation_state_service import get_state_service
+        state_service = get_state_service()
+        session = state_service.get_session(session_id)
+        if session is None:
+            return
+
+        if action == "check_availability" and result.get("success"):
+            candidate = {k: v for k, v in params.items() if not str(k).startswith("_")}
+            # check_availability tolerates a missing branch (it defaults to the
+            # salon's sole/first active branch internally), but BookAppointmentHandler
+            # requires branch_id/branch_name to be explicitly present. Resolve and
+            # freeze in the same default now, so the later deterministic `book`
+            # replay (see MultiAgentOrchestrator._execute_pending_booking) doesn't
+            # fail on a branch the availability check was happy to assume.
+            if not candidate.get("branch_id") and not candidate.get("branch") and not candidate.get("branch_name"):
+                try:
+                    from infrastructure.db.database import SessionLocal
+                    from application.services.entity_resolver_service import resolve_branch
+                    db = SessionLocal()
+                    try:
+                        default_branch_id = resolve_branch(None, db, raise_on_missing=False)
+                        if default_branch_id:
+                            candidate["branch_id"] = str(default_branch_id)
+                    finally:
+                        db.close()
+                except Exception as branch_exc:
+                    logger.warning("[CapabilityToolsV2] Default branch resolution for pending_booking failed: %s", branch_exc)
+            candidate["_awaiting_confirmation"] = True
+            session.pending_booking = candidate
+            state_service._save_session(session)
+        elif action in ("book", "cancel", "reschedule") and result.get("success"):
+            if session.pending_booking:
+                session.clear_pending_booking()
+                state_service._save_session(session)
+    except Exception as exc:
+        logger.warning("[CapabilityToolsV2] Failed to sync pending_booking state: %s", exc)
 
 
 def _make_ctx(
@@ -50,6 +216,7 @@ def _dispatch(
     role: Optional[str],
     tenant_id: Optional[str] = "default",
     user_id: Optional[str] = "anonymous",
+    session_id: Optional[str] = "default",
 ) -> str:
     """
     Core dispatch: WorkflowRegistry → Handler → result string.
@@ -88,6 +255,7 @@ def _dispatch(
             params = {}
     # Normalize action aliases for appointment workflow
     if workflow_name == "appointment_workflow":
+        params = _normalize_appointment_params(params)
         action_mapping = {
             "confirm_booking": "book",
             "confirm": "book",
@@ -108,8 +276,14 @@ def _dispatch(
             action = action_mapping[action]
 
         if action in ("check_availability", "book", "reschedule"):
-            from application.services.datetime_validation import validate_appointment_datetime
             req_d = params.get("start_time") or params.get("new_start_time") or params.get("date") or params.get("new_date")
+            if req_d is not None and not isinstance(req_d, str):
+                return (
+                    "I couldn't read the appointment date. "
+                    "Please provide it as YYYY-MM-DD (example: 2026-07-24) or a clear phrase like 'July 24'."
+                )
+
+            from application.services.datetime_validation import validate_appointment_datetime
             req_t = params.get("time") or params.get("new_time")
             val = validate_appointment_datetime(req_d, req_t)
             if not val["valid"]:
@@ -262,6 +436,10 @@ def _dispatch(
         from core.workflow_registry import get_workflow_registry
         registry = get_workflow_registry()
         result = registry.dispatch(workflow_name, action, ctx)
+
+        if workflow_name == "appointment_workflow":
+            _sync_pending_booking_state(action, params, result, session_id)
+
         # Compress result for token efficiency
         try:
             from infrastructure.cache.token_optimizer import get_compressor
@@ -352,6 +530,7 @@ def appointment_workflow_v2(
     role: Optional[str] = "ADMIN",
     tenant_id: Optional[str] = "default",
     user_id: Optional[str] = "anonymous",
+    session_id: Optional[str] = "default",
 ) -> str:
     """
     Clara's unified appointment capability tool (Phase 2).
@@ -372,12 +551,14 @@ def appointment_workflow_v2(
         role:      Caller's role (CUSTOMER | STAFF | MANAGER | OWNER | ADMIN).
         tenant_id: Tenant (salon chain) identifier.
         user_id:   Authenticated user UUID.
+        session_id: Conversation session ID — used to persist a pending-booking
+                    candidate across turns (see _remember_pending_booking below).
     """
     logger.info(
         "[CapabilityV2] appointment_workflow_v2 action=%s role=%s tenant=%s",
         action, role, tenant_id
     )
-    return _dispatch("appointment_workflow", action, params or {}, role, tenant_id, user_id)
+    return _dispatch("appointment_workflow", action, params or {}, role, tenant_id, user_id, session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -613,4 +794,3 @@ def dispatch_capability(
         logger.warning("[CapabilityV2] CapabilityRegistry lookup failed: %s", exc)
 
     return str({"success": False, "error": f"Capability '{capability_name}' not found."})
-

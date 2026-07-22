@@ -8,6 +8,7 @@ to handlers by action name using a dict lookup instead of if/else chains.
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
@@ -163,10 +164,57 @@ class BaseHandler(ABC):
 from typing import Any, Dict, Optional
 
 
+_MONTH_WORD_PATTERN = re.compile(
+    r"\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b",
+    re.IGNORECASE,
+)
+_TIME_ONLY_PATTERN = re.compile(r"^\s*\d{1,2}(?::\d{2})?(?::\d{2})?\s*(am|pm)?\s*$", re.IGNORECASE)
+_ISO_DATE_PATTERN = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b")
+_DMY_PATTERN = re.compile(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b")
+
+
+def _is_time_only(value: Any) -> bool:
+    if value is None:
+        return False
+    return bool(_TIME_ONLY_PATTERN.match(str(value).strip()))
+
+
+def _contains_explicit_date(value: Any) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    if "T" in text and _ISO_DATE_PATTERN.search(text):
+        return True
+    if _ISO_DATE_PATTERN.search(text) or _DMY_PATTERN.search(text):
+        return True
+    if _MONTH_WORD_PATTERN.search(text):
+        return True
+    lowered = text.lower()
+    if lowered in {"today", "tomorrow", "day after tomorrow", "yesterday"}:
+        return True
+    if lowered.startswith("next "):
+        return True
+    return False
+
+
 class CheckAvailabilityHandler(BaseHandler):
     """Check available booking slots for a given date/staff/service."""
     name = "CheckAvailabilityHandler"
     permission_action = "appointment_check"
+
+    def validate(self, ctx: HandlerContext) -> Optional[str]:
+        has_date = _contains_explicit_date(ctx.get("date"))
+        has_dated_start_time = _contains_explicit_date(ctx.get("start_time"))
+        if not has_date and not has_dated_start_time:
+            return (
+                "Please provide the appointment date to check availability "
+                "(for example: 2026-07-24 or July 24)."
+            )
+        if _is_time_only(ctx.get("start_time")) and not has_date:
+            return "A time-only value requires a date. Please include the date as well."
+        return None
 
     def handle(self, ctx: HandlerContext) -> Dict[str, Any]:
         from application.services.datetime_validation import validate_appointment_datetime
@@ -202,12 +250,51 @@ class BookAppointmentHandler(BaseHandler):
     def validate(self, ctx: HandlerContext) -> Optional[str]:
         if not ctx.get("service_id") and not ctx.get("service") and not ctx.get("service_name"):
             return "service_id or service_name is required to book an appointment."
+        if not ctx.get("branch_id") and not ctx.get("branch") and not ctx.get("branch_name"):
+            return "branch_id or branch_name is required to book an appointment."
+
+        raw_start_time = ctx.get("start_time")
+        raw_date = ctx.get("date")
+        raw_time = ctx.get("time")
+
+        if _is_time_only(raw_start_time) and not _contains_explicit_date(raw_date):
+            return "A booking time requires a date. Please include the appointment date."
+
+        if not raw_start_time:
+            if not raw_date:
+                return "Appointment date is required to book."
+            if not raw_time:
+                return "Appointment time is required to book."
+
+        if raw_start_time and not _contains_explicit_date(raw_start_time) and not _contains_explicit_date(raw_date):
+            return "Please provide a valid appointment date (for example: 2026-07-24 or July 24)."
         return None
 
     def handle(self, ctx: HandlerContext) -> Dict[str, Any]:
+        from application.services.entity_resolver_service import resolve_relative_date, resolve_relative_time
+
+        raw_start_time = ctx.get("start_time")
+        raw_date = ctx.get("date")
+        raw_time = ctx.get("time")
+
+        normalized_start_time = raw_start_time
+        if _is_time_only(raw_start_time):
+            if not raw_date:
+                return {"success": False, "error": "A booking time requires a date. Please include the appointment date."}
+            resolved_date = resolve_relative_date(raw_date)
+            resolved_time = resolve_relative_time(raw_time or raw_start_time)
+            normalized_start_time = f"{resolved_date}T{resolved_time}:00Z"
+        elif not raw_start_time and raw_date and raw_time:
+            resolved_date = resolve_relative_date(raw_date)
+            resolved_time = resolve_relative_time(raw_time)
+            normalized_start_time = f"{resolved_date}T{resolved_time}:00Z"
+
+        if not normalized_start_time and raw_date and not raw_time:
+            return {"success": False, "error": "Appointment time is required to book."}
+
         from application.services.datetime_validation import validate_appointment_datetime
-        req_d = ctx.get("start_time") or ctx.get("date")
-        req_t = ctx.get("time")
+        req_d = normalized_start_time or raw_date
+        req_t = raw_time
         val = validate_appointment_datetime(req_d, req_t)
         if not val["valid"]:
             result = {"success": False, "error": val["reason"]}
@@ -233,7 +320,7 @@ class BookAppointmentHandler(BaseHandler):
             return result
 
         from application.services.appointment_service import get_appointment_service
-        from application.services.entity_resolver_service import resolve_entity_context, resolve_relative_date, resolve_relative_time
+        from application.services.entity_resolver_service import resolve_entity_context
         resolved = resolve_entity_context(ctx.params)
 
         if resolved.get("_resolution_errors") and not resolved.get("customer_id"):
@@ -241,14 +328,23 @@ class BookAppointmentHandler(BaseHandler):
             # do not silently book against no customer (or, previously, a random one).
             return {"success": False, "error": "; ".join(resolved["_resolution_errors"])}
 
-        start_time = resolved.get("start_time") or ctx.get("start_time")
+        start_time = normalized_start_time or resolved.get("start_time")
         if not start_time:
-            date_val = resolved.get("date") or ctx.get("date")
-            time_val = resolved.get("time") or ctx.get("time")
+            date_val = resolved.get("date") or raw_date
+            time_val = resolved.get("time") or raw_time
             if date_val and time_val:
                 resolved_date = resolve_relative_date(date_val)
                 resolved_time = resolve_relative_time(time_val)
                 start_time = f"{resolved_date}T{resolved_time}:00Z"
+
+        if not start_time:
+            return {
+                "success": False,
+                "error": (
+                    "I need both appointment date and time before I can book. "
+                    "Please share date (YYYY-MM-DD or July 24) and time (e.g. 11:00 AM)."
+                ),
+            }
 
         service = get_appointment_service()
         return service.book(

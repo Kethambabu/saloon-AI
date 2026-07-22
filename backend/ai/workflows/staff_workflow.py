@@ -38,8 +38,8 @@ class StaffWorkflow:
     ) -> Dict[str, Any]:
         """Retrieve the staff member's appointment schedule for a specific date."""
         logger.info("[StaffWorkflow] get_schedule: staff=%s date=%s", staff_id, date)
-        resolved_date = resolve_relative_date(date) if date else None
         try:
+            resolved_date = resolve_relative_date(date) if date else None
             from application.services.staff_service import get_schedule
             return {"success": True, "result": get_schedule(staff_id=staff_id, date_str=resolved_date)}
         except Exception as exc:
@@ -133,8 +133,8 @@ class StaffWorkflow:
         logger.info(
             "[StaffWorkflow] create_leave_request: staff=%s date=%s", staff_id, leave_date
         )
-        resolved_date = resolve_relative_date(leave_date) if leave_date else None
         try:
+            resolved_date = resolve_relative_date(leave_date) if leave_date else None
             from application.services.staff_service import create_leave_request
             return {"success": True, "result": create_leave_request(
                 staff_id=staff_id,

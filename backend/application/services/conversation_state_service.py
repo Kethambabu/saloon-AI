@@ -354,6 +354,13 @@ class ConversationStateService:
     ) -> SessionState:
         """Create a fresh session, optionally with a caller-specified ID."""
         sid = session_id or str(uuid.uuid4())
+        # current_user.id (SQLAlchemy Uuid(as_uuid=True)) arrives here as a
+        # uuid.UUID object, not a str — normalize now so this session's
+        # user_id is always the same plain-string type that _load_session
+        # reads back from the DB. Storing it un-normalized would make this
+        # freshly-created, in-memory SessionState mismatch its own owner on
+        # the very next get_or_create() ownership check in this same process.
+        user_id = str(user_id) if user_id is not None else "anonymous"
         state = SessionState(
             session_id=sid,
             user_id=user_id,
@@ -385,7 +392,21 @@ class ConversationStateService:
         whoever guessed or replayed the id. Internal/system callers
         ("anonymous"/"system", used by scheduled jobs and tests with no real
         end user) are exempt from this check.
+
+        user_id is normalized to str() here — callers pass current_user.id,
+        a SQLAlchemy Uuid(as_uuid=True) column that comes back as a
+        uuid.UUID object, never a plain string. Session ownership is always
+        stored/loaded as a plain string (see _save_session/_load_session), so
+        comparing the raw UUID object against it below would never match —
+        which used to silently classify every returning authenticated user as
+        a "different owner" on every single turn after the first, discarding
+        that user's entire session (history, pending_booking, everything) and
+        replacing it with a fresh empty one. That is why multi-turn booking
+        confirmations ("yes" after "would you like me to confirm?") could
+        never work in production: this method handed back an amnesiac session
+        on every turn, no matter how conversation state was populated upstream.
         """
+        user_id = str(user_id) if user_id is not None else "anonymous"
         session = self.get_session(session_id)
         if not session:
             return self.create_session(

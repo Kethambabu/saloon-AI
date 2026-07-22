@@ -110,6 +110,7 @@ class AppointmentRescheduledEvent(SalonEvent):
 
     event_type: str = field(default="appointment.rescheduled")
     appointment_id: Optional[str] = field(default=None)
+    customer_id: Optional[str] = field(default=None)
     old_starts_at: Optional[datetime] = field(default=None)
     new_starts_at: Optional[datetime] = field(default=None)
     rescheduled_by: Optional[str] = field(default=None)

@@ -15,6 +15,11 @@ Two docs at the repo root/backend go deep on architecture if you need more than 
 ```
 uvicorn main:app --reload --host 127.0.0.1 --port 8000   # run dev server (or run_backend.bat from repo root)
 alembic upgrade head                                         # apply DB migrations (run from repo root; alembic.ini points at backend/infrastructure/db/migrations)
+pytest                                                       # run full test suite
+pytest tests/test_booking_tools.py                           # run one file
+pytest tests/test_booking_tools.py::test_book_appointment -v # run one test
+flake8 .                                                     # lint (max-line-length 100, see .flake8)
+black . && isort .                                           # format (line-length 100, see pyproject.toml)
 ```
 Tests force `ENVIRONMENT=testing` and `DATABASE_URL=sqlite:///./test.db` in `tests/conftest.py`, and shim legacy module paths (`agents.*`, `tools.*`, `services.*`, `rag.*`) onto the current `ai.*`/`application.*`/`infrastructure.*` locations for backward compatibility — don't be surprised to see those old names imported in test files.
 

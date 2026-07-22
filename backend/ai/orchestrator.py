@@ -9,6 +9,7 @@ into this file, making it completely self-contained.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import contextvars
 import re
@@ -33,6 +34,286 @@ current_user_role = contextvars.ContextVar("current_user_role", default="ADMIN")
 current_user_id = contextvars.ContextVar("current_user_id", default="anonymous")
 current_tenant_id_var = contextvars.ContextVar("current_tenant_id_var", default="default")
 current_customer_id_var = contextvars.ContextVar("current_customer_id_var", default=None)
+current_session_id_var = contextvars.ContextVar("current_session_id_var", default="default")
+
+_AFFIRMATIVE_CONFIRM_TOKENS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "proceed", "go ahead", "sounds good", "book it", "please book", "that works", "correct", "fine", "is fine", "is ok", "is okay", "good", "great", "perfect", "alright", "lets do it", "let's do it", "works for me", "thats good", "that's good", "yes please"}
+_NEGATIVE_CONFIRM_TOKENS = {"no", "nope", "nah", "cancel that", "don't", "do not", "never mind", "stop", "not that"}
+
+# Hedging/uncertainty words ("not sure", "maybe", "I don't know") must NOT
+# fall through to the affirmative word-match below just because they also
+# contain an affirmative-sounding word (e.g. "sure" inside "not sure") —
+# treat any of these as ambiguous and defer to the LLM rather than risk
+# auto-booking something the customer was actually unsure about.
+_HEDGE_RE = re.compile(
+    r"\b(not|never|n['’]t|dont|doesnt|wont|cant|unsure|maybe|perhaps|dunno|not\s+really)\b",
+    re.IGNORECASE,
+)
+
+# A time-of-day mention (e.g. "11 AM is ok", "how about 3pm", "11:30 am works")
+# is a very common and perfectly natural way for a customer to confirm which
+# slot they want — requiring an exact "yes" here means real replies like
+# "11 AM is ok" fall through to the full LLM path instead of being handled
+# deterministically, which (especially with a rate-limited fallback provider)
+# can take long enough to trip the 90s agent timeout. Detect it explicitly.
+#
+# IMPORTANT: a time mention must NEVER be sufficient *on its own* to confirm.
+# "Can I get a manicure tomorrow at 2 PM?" also contains a time — treating
+# that as "yes, book the pending haircut" silently booked the wrong service
+# on the wrong date in production testing. Time extraction is only ever used
+# to fill in / correct which slot is meant, alongside an explicit affirmative
+# signal (see _interpret_pending_reply) — never as the sole trigger.
+_TIME_MENTION_RE = re.compile(
+    r"\b(1[0-2]|0?[1-9])(?::([0-5][0-9]))?\s*([ap])\.?\s?m\.?\b", re.IGNORECASE
+)
+
+# If the reply names a service/action that doesn't match what's pending, or
+# uses a fresh booking-intent verb, it's a NEW request riding on the same
+# turn as an unrelated pending confirmation — not a reply to "shall I
+# confirm?". Must be checked before treating anything as affirm/decline.
+_KNOWN_SERVICE_KEYWORDS = {
+    "haircut", "hair cut", "manicure", "pedicure", "facial", "massage",
+    "makeup", "hair spa", "beard trim", "coloring", "colour", "color",
+    "highlights", "blowout", "styling", "waxing", "threading", "spa",
+}
+_NEW_REQUEST_RE = re.compile(
+    r"\b(can i (get|book|have)|i'?d like|i want|i need|book (me|a|an)|schedule (a|an|me))\b",
+    re.IGNORECASE,
+)
+
+# "Is Priya free at 3pm?" / "Is Alexandra available tomorrow?" / "Are you
+# open on Sunday?" — a very common, natural way a customer asks a fresh
+# availability question. This must be treated as a NEW request, not a reply
+# to an existing pending confirmation: without this check, a message like
+# this fell through to the LLM-based confirmation classifier
+# (_llm_interpret_pending_reply), which — in real testing — sometimes
+# misclassified it as "confirm" (extracting "3pm" as the mentioned time),
+# causing Clara to attempt booking the STALE, unrelated pending candidate
+# instead of answering the actual availability question. That specific
+# occurrence was only stopped by an unrelated "max 3 active bookings" limit
+# — with different numbers it would have silently booked the wrong thing.
+_AVAILABILITY_QUESTION_RE = re.compile(
+    r"\b(is|are)\s+\w+(?:\s+\w+)?\s+(free|available|open)\b", re.IGNORECASE
+)
+
+
+def _looks_like_new_request(query: str, pending: Dict[str, Any]) -> bool:
+    """True if `query` reads like a fresh ask rather than a reply to the
+    pending confirmation prompt — e.g. naming a different service, or using
+    booking-intent phrasing ("can I get...", "I'd like...")."""
+    q_lower = query.lower()
+
+    # If the query contains explicit confirmation tokens, it's NOT a brand new request
+    for aff in _AFFIRMATIVE_CONFIRM_TOKENS:
+        if re.search(r"\b" + re.escape(aff) + r"\b", q_lower):
+            return False
+
+    if _NEW_REQUEST_RE.search(q_lower):
+        return True
+    if _AVAILABILITY_QUESTION_RE.search(q_lower):
+        return True
+    pending_service = str(pending.get("service") or pending.get("service_name") or "").lower()
+    for kw in _KNOWN_SERVICE_KEYWORDS:
+        if kw in q_lower and kw not in pending_service:
+            return True
+    return False
+
+
+def _extract_time_expression(text: str) -> Optional[str]:
+    """Pull a "HH:MM" 24h time out of free text like "11 AM" / "3:30pm", or None."""
+    match = _TIME_MENTION_RE.search(text)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    meridiem = match.group(3).lower()
+    if meridiem == "p" and hour != 12:
+        hour += 12
+    elif meridiem == "a" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _format_booking_confirmation(params: Dict[str, Any]) -> str:
+    """Build a deterministic, ground-truth "You're all set!" confirmation
+    sentence from the exact params a successful `book` tool call used —
+    never from an LLM's own freeform narration of the result.
+
+    This matters because a model can misstate booking details even when the
+    underlying tool call succeeded correctly: in real testing, a model
+    confirmed booking "2026-02-30" in its own generated sentence — a date
+    that cannot exist on any calendar, and one that every date-validation
+    path in this codebase (resolve_relative_date, validate_appointment_datetime,
+    AppointmentService.book's own parsing) actively rejects. That means the
+    actual stored appointment could not have used that date; the model
+    invented it while narrating the result, and the customer had no way to
+    know their real booking (if any) was for a different date. Building the
+    confirmation from the literal params instead of trusting the model's
+    prose removes this entire class of risk regardless of how well any given
+    model narrates. Shared by the two-step check-then-confirm-later flow
+    (_execute_pending_booking) and the single-turn check-and-book-in-one-go
+    flow (_run_group_chat's post-hoc ground-truth override).
+    """
+    service_name = params.get("service_name") or params.get("service")
+    if not service_name and params.get("service_id"):
+        try:
+            import uuid as _uuid
+            from infrastructure.db.database import SessionLocal as _SessionLocal
+            from infrastructure.db.models import Service as _Service
+            _db = _SessionLocal()
+            try:
+                _svc = _db.query(_Service).filter(
+                    _Service.id == _uuid.UUID(str(params["service_id"]))
+                ).first()
+                if _svc:
+                    service_name = _svc.name
+            finally:
+                _db.close()
+        except Exception:
+            pass
+
+    staff_name = params.get("staff_name")
+    if not staff_name and params.get("staff_id"):
+        try:
+            import uuid as _uuid
+            from infrastructure.db.database import SessionLocal as _SessionLocal
+            from infrastructure.db.models import Staff as _Staff
+            _db = _SessionLocal()
+            try:
+                _st = _db.query(_Staff).filter(
+                    _Staff.id == _uuid.UUID(str(params["staff_id"]))
+                ).first()
+                if _st:
+                    staff_name = _st.full_name
+            finally:
+                _db.close()
+        except Exception:
+            pass
+
+    date_str = params.get("date", "") or ""
+    time_str = params.get("time", "") or ""
+    if not date_str and params.get("start_time"):
+        start_time_val = str(params["start_time"])
+        date_str = start_time_val[:10]
+        if not time_str and len(start_time_val) >= 16:
+            time_str = start_time_val[11:16]
+
+    # This fallback must NOT itself contain the word "your" — combined with
+    # the fixed "Your " prefix below it would otherwise produce "Your your
+    # appointment has been booked."
+    details = str(service_name) if service_name else "appointment"
+    if staff_name:
+        details += f" with {staff_name}"
+    if date_str:
+        details += f" on {date_str}"
+    if time_str:
+        details += f" at {time_str}"
+    return f"You're all set! Your {details} has been booked. Is there anything else I can help you with?"
+
+
+def _missing_pending_booking_fields(pending: Dict[str, Any]) -> List[str]:
+    """Return human-readable names of fields BookAppointmentHandler requires
+    that are absent from a pending-booking candidate, so the caller can ask a
+    single direct clarifying question BEFORE attempting a doomed `book()`
+    dispatch.
+
+    A pending candidate is captured from whatever params a prior
+    check_availability call happened to use, which validates a much smaller
+    set of fields than an actual booking does. In real testing, a customer
+    confirming with a bare "yes" hit a `book()` call that failed with
+    "Appointment time is required to book." — one of several possible
+    Handler validation messages ("Appointment date is required...", "A
+    booking time requires a date...", "I need both appointment date and time
+    before I can book...", etc.) that were previously NOT special-cased the
+    way the service/branch messages already were. Pre-checking here, instead
+    of string-matching every possible Handler error message after the fact,
+    covers all of them at once and lets us ask about exactly what's missing.
+    """
+    missing: List[str] = []
+    if not (pending.get("service_id") or pending.get("service") or pending.get("service_name")):
+        missing.append("service")
+    has_start_time = bool(pending.get("start_time") or pending.get("new_start_time"))
+    if not has_start_time:
+        if not pending.get("date"):
+            missing.append("date")
+        if not pending.get("time"):
+            missing.append("time")
+    return missing
+
+
+def _extract_last_successful_book_params(messages: List[Any]) -> Optional[Dict[str, Any]]:
+    """Scan a completed Clara agent.run()'s message history for the LAST
+    successful `book` tool call made during this turn, returning the exact
+    params it used (or None if no successful book call happened).
+
+    Used to override a turn's final narrated response with a ground-truth
+    confirmation — see _format_booking_confirmation for why that matters.
+    """
+    try:
+        pending_calls: Dict[str, Tuple[Optional[str], Dict[str, Any]]] = {}
+        last_success_params: Optional[Dict[str, Any]] = None
+        for msg in messages:
+            msg_type = type(msg).__name__
+            if msg_type == "ToolCallRequestEvent":
+                for call in (getattr(msg, "content", None) or []):
+                    try:
+                        if getattr(call, "name", None) != "appointment_workflow_v2":
+                            continue
+                        args = json.loads(getattr(call, "arguments", "{}") or "{}")
+                        call_id = getattr(call, "id", None)
+                        if call_id is not None:
+                            pending_calls[call_id] = (args.get("action"), args.get("params") or {})
+                    except Exception:
+                        continue
+            elif msg_type == "ToolCallExecutionEvent":
+                for res in (getattr(msg, "content", None) or []):
+                    try:
+                        call_id = getattr(res, "call_id", None)
+                        if call_id not in pending_calls:
+                            continue
+                        action, params = pending_calls[call_id]
+                        if action != "book":
+                            continue
+                        result_data = json.loads(getattr(res, "content", "") or "{}")
+                        if isinstance(result_data, dict) and result_data.get("success"):
+                            last_success_params = params
+                    except Exception:
+                        continue
+        return last_success_params
+    except Exception:
+        return None
+
+
+def _interpret_pending_reply(query: str) -> Tuple[str, Optional[str]]:
+    """Classify a reply to "would you like me to confirm?" as affirm/decline/unclear.
+
+    Returns (verdict, extracted_time). extracted_time is set when the reply
+    names a specific time (e.g. "11 AM is ok") — this both confirms AND
+    (re)selects the slot, which matters when the pending candidate didn't
+    already have an exact time (e.g. the customer was shown a list of open
+    slots and is now picking one).
+    """
+    q_norm = re.sub(r"[^\w\s']", " ", query.lower()).strip()
+    q_norm = re.sub(r"\s+", " ", q_norm)
+
+    for neg in _NEGATIVE_CONFIRM_TOKENS:
+        if re.search(r"\b" + re.escape(neg) + r"\b", q_norm):
+            return "decline", None
+
+    if _HEDGE_RE.search(q_norm):
+        return "unclear", None
+
+    extracted_time = _extract_time_expression(query)
+
+    # Time extraction only ever enriches an affirm that's already been
+    # established some other way — it must never be the sole signal (see
+    # note on _TIME_MENTION_RE above).
+    if q_norm in _AFFIRMATIVE_CONFIRM_TOKENS:
+        return "affirm", extracted_time
+    for aff in _AFFIRMATIVE_CONFIRM_TOKENS:
+        if re.search(r"\b" + re.escape(aff) + r"\b", q_norm):
+            return "affirm", extracted_time
+
+    return "unclear", None
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +520,14 @@ STRICT CONVERSATION & BUSINESS RULES:
 2. ZERO TECHNICAL LEAKAGE: Never mention tool names, function calls, workflows, planners, prompts, MCP, SQL, database queries, internal validation errors, exceptions, or stack traces to the customer.
 3. NEVER MODIFY CUSTOMER INPUT: Never automatically change the requested date, time, stylist, service, or branch. Pass the exact requested parameters.
 4. STRICT PAST DATE PROTECTION:
-   - If the customer requests a date or time that is earlier than the current SYSTEM TIME CONTEXT:
+   - This rule applies ONLY when the customer's LATEST message itself states an explicit date and/or time
+     (e.g. "tomorrow at 2pm", "yesterday", "2026-01-01", "2:30am"). If the latest message names a service,
+     stylist, or branch but does NOT mention any date or time at all, this is a normal missing-information
+     case, not a past-date case — do not mention past dates; instead call check_availability once you have
+     a date, or simply ask the customer what date/time they'd like. Never infer "past" from something
+     mentioned earlier in the conversation history — judge only the customer's most recent message.
+   - If (and only if) the customer's latest message explicitly requests a date or time that is earlier than
+     the current SYSTEM TIME CONTEXT:
      - DO NOT change the date to a future date or auto-correct it.
      - DO NOT call the `book` action.
      - Respond clearly: "Appointments cannot be booked for past dates. Please choose today or a future date."
@@ -247,14 +535,15 @@ STRICT CONVERSATION & BUSINESS RULES:
 5. MANDATORY TWO-STEP BOOKING & CONFIRMATION FLOW:
    - STEP 1 (Check Availability & Summary): On initial booking requests, ALWAYS call `appointment_workflow_v2(action="check_availability", params={...})` first. If available, display a clear Booking Summary (Service, Stylist, Branch, Date, Time, Duration, Price) and ask: "Would you like me to confirm this booking?"
    - STEP 2 (Execute Booking): ONLY call `appointment_workflow_v2(action="book", params={...})` AFTER the customer explicitly confirms (e.g., "yes", "confirm", "proceed", "sounds good").
-6. MANDATORY TWO-STEP CANCELLATION FLOW:
-   - STEP 1 (Ask Confirmation): Before cancelling an appointment, ask: "Are you sure you want to cancel this appointment?"
-   - STEP 2 (Execute Cancellation): Call `appointment_workflow_v2(action="cancel", params={...})` ONLY after explicit user confirmation.
-7. MANDATORY TWO-STEP RESCHEDULING FLOW:
-   - STEP 1 (Check Availability & Show Comparison): Display Old Appointment ↓ New Appointment summary and ask: "Would you like me to confirm this change?"
-   - STEP 2 (Execute Reschedule): Call `appointment_workflow_v2(action="reschedule", params={...})` ONLY after explicit user confirmation.
-8. AVAILABILITY QUERIES:
+6. MANDATORY CANCELLATION FLOW:
+   - STEP 1 (Lookup & Confirm): Before cancelling an appointment, if you do not have the specific `appointment_id`, ALWAYS call `appointment_workflow_v2(action="history", params={})` first to retrieve the customer's upcoming appointments. Present the list clearly and ask: "Are you sure you want to cancel your [Service] appointment on [Date] at [Time]?"
+   - STEP 2 (Execute Cancellation): Call `appointment_workflow_v2(action="cancel", params={"appointment_id": "<real_appointment_id>"})` ONLY after explicit user confirmation using the REAL `appointment_id` returned from history. NEVER invent or hallucinate an appointment_id.
+7. MANDATORY RESCHEDULING FLOW:
+   - STEP 1 (Lookup & Availability Check): If `appointment_id` is unknown, ALWAYS call `appointment_workflow_v2(action="history", params={})` first to locate the appointment. Then check availability for the requested new date/time using `action="check_availability"`. Display an "Old Appointment → New Appointment" comparison summary and ask: "Would you like me to confirm this change?"
+   - STEP 2 (Execute Reschedule): Call `appointment_workflow_v2(action="reschedule", params={"appointment_id": "<real_appointment_id>", "new_date": "...", "new_time": "..."})` ONLY after explicit user confirmation using the REAL `appointment_id`.
+8. AVAILABILITY & SLOT PRESENTATION:
    - Return ONLY verified available slots from backend tools. Never guess or hallucinate slots.
+   - Present available slots in a clean, numbered or bulleted list showing the time, service, and stylist for easy customer selection.
 9. GENERAL CUSTOMER QUERIES:
    - Answer salon hours, branch locations, contact details, parking, amenities, pricing, duration, recommendations, policies, offers, and account history using RAG search and catalog actions.
 10. ALTERNATIVES ARE NOT BOOKINGS: If a slot is unavailable or stylist is on leave, suggest available alternatives returned by backend tools, but NEVER auto-book an alternative. Wait for the customer to explicitly pick one.
@@ -471,7 +760,7 @@ class MultiAgentOrchestrator(Agent):
         )
         
         # Define clean wrappers that hide role, tenant_id, and user_id from the LLM schema
-        def appointment_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def appointment_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
@@ -483,35 +772,48 @@ class MultiAgentOrchestrator(Agent):
                     params = json.loads(params)
                 except Exception:
                     params = {"query": params}
-            if isinstance(params, dict) and cust_id and not params.get("customer_id"):
+            if isinstance(params, dict) and cust_id:
+                # Authenticated identity always wins over whatever the LLM put in params.
+                # cust_id is only non-empty for a logged-in CUSTOMER session (sourced from
+                # the JWT via current_customer_id_var, never from user-supplied text), so
+                # this can never block a STAFF/ADMIN agent booking on a customer's behalf —
+                # for those roles cust_id is empty and the LLM-supplied value passes through.
+                # Without this override, a customer_id key the LLM copies from conversation
+                # text (e.g. a name it mistakes for an ID, or another customer mentioned
+                # earlier) would silently replace the caller's real identity, causing the
+                # ownership check in AppointmentService.cancel/reschedule to compare against
+                # the wrong value and reject (or misdirect) the customer's own request.
                 params["customer_id"] = cust_id
-            return orig_appointment_workflow_v2(action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id)
+            return orig_appointment_workflow_v2(
+                action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id,
+                session_id=current_session_id_var.get(),
+            )
 
-        def crm_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def crm_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
             return orig_crm_workflow_v2(action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id)
 
-        def recommendation_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def recommendation_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
             return orig_recommendation_workflow_v2(action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id)
 
-        def reputation_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def reputation_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
             return orig_reputation_workflow_v2(action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id)
 
-        def staff_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def staff_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
             return orig_staff_workflow_v2(action=action, params=params, role=role, tenant_id=tenant_id, user_id=user_id)
 
-        def analytics_workflow_v2(action: str, params: Optional[Dict[str, Any]] = None) -> str:
+        def analytics_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
             role = current_user_role.get()
             tenant_id = current_tenant_id_var.get()
             user_id = current_user_id.get()
@@ -540,6 +842,21 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=clara_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         # 2. Mia — Lead Follow-up
@@ -554,6 +871,21 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=mia_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         # 3. Max — Upsell
@@ -568,6 +900,21 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=max_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         # 4. Olivia — Reputation
@@ -582,6 +929,21 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=olivia_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         # 5. Atlas Staff
@@ -596,6 +958,21 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=atlas_staff_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         # 6. Atlas BI
@@ -610,9 +987,114 @@ class MultiAgentOrchestrator(Agent):
             ),
             tools=atlas_bi_tools,
             max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
         )
 
         return agents
+
+    def _build_scoped_clara(
+        self, role: str, tenant_id: str, user_id: str, customer_id: Optional[str], session_id: str
+    ) -> AssistantAgent:
+        """Build a fresh, single-turn Clara instance with request-scoped tools.
+
+        AutoGen invokes tool functions via `loop.run_in_executor()` (confirmed
+        by inspecting autogen_core.tools._function_tool.FunctionTool.run),
+        which does NOT propagate asyncio contextvars into the worker thread —
+        a contextvar set immediately before `agent.run()` reads back as its
+        *default* value inside the tool call, every time. That silently broke
+        two things that used to look like they worked (because nothing
+        visibly crashed): the "authenticated customer_id always wins" override
+        in the old shared appointment_workflow_v2 wrapper never actually fired
+        (cust_id read back None), and — the one that surfaced this — a
+        successful check_availability's pending-booking candidate was always
+        being saved under session_id="default" instead of the real session,
+        so a later "yes" could never find it.
+        Plain closure variables, unlike contextvars, are ordinary object
+        references and are visible from any thread, so a tool built fresh
+        per request with these values captured directly in its closure works
+        regardless of which thread executes it. self.agents[BOOKING] stays a
+        shared singleton (reused across concurrent requests) specifically so
+        we never mutate ITS tools in place — that would race between two
+        customers chatting at once. This method returns an independent,
+        request-scoped instance instead.
+        """
+        from ai.tools.capabilities import appointment_workflow_v2 as orig_appointment_workflow_v2
+        from infrastructure.rag.rag_unified import search_knowledge_base
+
+        # current_user.id/current_user.customer_id are SQLAlchemy
+        # Uuid(as_uuid=True) columns — uuid.UUID objects, not strings.
+        # Normalize everything here so nothing downstream (JSON
+        # serialization of pending_booking, string comparisons, etc.) trips
+        # over a raw UUID object again.
+        role = str(role) if role else "ADMIN"
+        tenant_id = str(tenant_id) if tenant_id else "default"
+        user_id = str(user_id) if user_id else "anonymous"
+        session_id = str(session_id) if session_id else "default"
+
+        # current_user.customer_id (like current_user.id) is a SQLAlchemy
+        # Uuid(as_uuid=True) column — a uuid.UUID object, not a str. Injecting
+        # that raw object into params used to blow up JSON serialization the
+        # moment a successful check_availability tried to snapshot it into
+        # pending_booking ("Object of type UUID is not JSON serializable"),
+        # silently losing the candidate for this whole feature.
+        customer_id_str = str(customer_id) if customer_id else None
+
+        def appointment_workflow_v2(action: str, params: Optional[Union[Dict[str, Any], str]] = None) -> str:
+            if params is None:
+                params = {}
+            elif isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except Exception:
+                    params = {"query": params}
+            if isinstance(params, dict) and customer_id_str:
+                params["customer_id"] = customer_id_str
+            return orig_appointment_workflow_v2(
+                action=action, params=params, role=role, tenant_id=tenant_id,
+                user_id=user_id, session_id=session_id,
+            )
+        appointment_workflow_v2.__name__ = "appointment_workflow_v2"
+
+        return AssistantAgent(
+            name="Clara_Receptionist",
+            model_client=self.model_client,
+            system_message=_PHASE2_SYSTEM_PROMPTS["Clara_Receptionist"],
+            description=(
+                "Handles all customer bookings, appointments, scheduling, cancellations, "
+                "rescheduling, availability checks, salon FAQ, hours, services, and policies."
+            ),
+            tools=[appointment_workflow_v2, search_knowledge_base],
+            max_tool_iterations=5,
+            # reflect_on_tool_use=True forces one more model call (with
+            # tool_choice="none") to produce a proper natural-language
+            # TextMessage whenever a turn's LAST model action was a tool
+            # call — e.g. the tool-iteration loop hit max_tool_iterations
+            # while the model was still calling tools. Without this, that
+            # edge case falls back to AutoGen's default
+            # reflect_on_tool_use=False summarizer, whose default
+            # tool_call_summary_format ("{result}") is literally the raw
+            # tool JSON — a direct violation of every agent's "never leak
+            # technical/tool output to the customer" rule. The common
+            # single-tool-call case already gets a clean TextMessage either
+            # way (the model naturally replies in text on the very next
+            # iteration), so this only changes behavior in the exact case
+            # that used to leak.
+            reflect_on_tool_use=True,
+        )
 
     async def _classify_intent(self, query: str) -> AgentIntent:
         """Run LLM intent classifier as fallback."""
@@ -724,6 +1206,20 @@ class MultiAgentOrchestrator(Agent):
                         response_text = formatted
                 except Exception as fmt_exc:
                     logger.error(f"[Orchestrator] Formatter failed: {fmt_exc}")
+
+            # Ground-truth override: if this turn included a successful `book`
+            # tool call — e.g. a single-turn "check availability and book it
+            # if free" request that chained check_availability -> book — the
+            # customer-facing confirmation must reflect exactly what was
+            # actually booked, never the model's own free narration of it.
+            # See _format_booking_confirmation's docstring for the real
+            # failure this closes (a model confirming an impossible date).
+            try:
+                booked_params = _extract_last_successful_book_params(result.messages)
+                if booked_params:
+                    response_text = _format_booking_confirmation(booked_params)
+            except Exception as override_exc:
+                logger.warning("[Orchestrator] Booking confirmation override skipped: %s", override_exc)
 
             logger.info(f"[Orchestrator] Agent '{agent.name}' completed. Length: {len(response_text)}")
             return response_text
@@ -839,6 +1335,64 @@ class MultiAgentOrchestrator(Agent):
         )
         session.add_turn("user", query)
 
+        # 2b. Deterministic booking confirmation short-circuit.
+        # A plain "yes"/"no" reply to "would you like me to confirm?" must not
+        # depend on the LLM correctly re-deriving which service/staff/time was
+        # under discussion from raw conversation text alone — smaller/weaker
+        # fallback models lose track of this after a few tool round-trips and
+        # end up calling something unrelated (e.g. listing appointment
+        # history) instead of actually booking. When there's a stored pending
+        # booking candidate, handle the confirm/decline here, deterministically,
+        # before the LLM ever sees the turn.
+        if (
+            session.pending_booking
+            and session.pending_booking.get("_awaiting_confirmation")
+            and not _looks_like_new_request(query, session.pending_booking)
+        ):
+            verdict, mentioned_time = _interpret_pending_reply(query)
+            if verdict == "unclear":
+                # The fixed keyword/regex list doesn't cover every way a real
+                # customer might phrase a confirmation — fall back to a single,
+                # tightly time-boxed LLM classification call (see
+                # _llm_interpret_pending_reply) instead of immediately handing
+                # off to the full multi-tool-call agent conversation.
+                verdict, mentioned_time = await self._llm_interpret_pending_reply(
+                    query, session.pending_booking
+                )
+            if verdict == "affirm":
+                response_text = self._execute_pending_booking(
+                    session, user_role, user_id, input_data.get("tenant_id", self.tenant_id) or "default",
+                    override_params={"time": mentioned_time} if mentioned_time else None,
+                )
+                session.add_turn("assistant", response_text, agent_name="Clara_Receptionist")
+                if hasattr(self.state_service, "_save_session"):
+                    self.state_service._save_session(session)
+                return {
+                    "success": True,
+                    "response": response_text,
+                    "agent_name": "Clara_Receptionist",
+                    "session_id": session_id,
+                    "intent": AgentIntent.BOOKING.value,
+                }
+            if verdict == "decline":
+                session.clear_pending_booking()
+                response_text = (
+                    "No problem, I won't book that. Let me know if you'd like to check "
+                    "a different time, stylist, or service."
+                )
+                session.add_turn("assistant", response_text, agent_name="Clara_Receptionist")
+                if hasattr(self.state_service, "_save_session"):
+                    self.state_service._save_session(session)
+                return {
+                    "success": True,
+                    "response": response_text,
+                    "agent_name": "Clara_Receptionist",
+                    "session_id": session_id,
+                    "intent": AgentIntent.BOOKING.value,
+                }
+            # Anything else (a follow-up question, a change of time, etc.) falls
+            # through to the normal LLM-driven flow below unaffected.
+
         # 3. Entity resolution
         resolved_context = resolve_entity_context(
             {
@@ -851,7 +1405,7 @@ class MultiAgentOrchestrator(Agent):
             session.metadata["customer_id"] = resolved_context["customer_id"]
 
         # 4. Resolve intent
-        intent = self._resolve_intent_with_state(query, session_id, user_role)
+        intent = self._resolve_intent_with_state(query, session, user_role)
         logger.info("[Orchestrator] Resolved intent: %s", intent.value)
 
         # 5. Enrich query
@@ -874,6 +1428,19 @@ class MultiAgentOrchestrator(Agent):
 
             if use_team:
                 response_text, agent_name = await self._run_team(enriched_query, user_role)
+            elif intent == AgentIntent.BOOKING:
+                # Booking needs a request-scoped Clara — see _build_scoped_clara
+                # for why the shared singleton's tools can't carry per-request
+                # identity/session_id correctly.
+                agent = self._build_scoped_clara(
+                    role=user_role,
+                    tenant_id=input_data.get("tenant_id", self.tenant_id) or "default",
+                    user_id=user_id,
+                    customer_id=customer_id,
+                    session_id=session_id,
+                )
+                response_text = await self._run_group_chat(agent, enriched_query)
+                agent_name = agent.name
             else:
                 agent = self.agents.get(intent, self.agents[AgentIntent.BOOKING])
                 response_text = await self._run_group_chat(agent, enriched_query)
@@ -900,9 +1467,26 @@ class MultiAgentOrchestrator(Agent):
                 except Exception as ex:
                     logger.warning(f"[Orchestrator] Failed to parse json_vis block: {ex}")
 
+            # A tool call during this turn's agent run (e.g. a successful
+            # check_availability) may have updated pending_booking through a
+            # separately-fetched SessionState instance — see
+            # _sync_pending_booking_state in ai/tools/capabilities.py, which
+            # has no way to reach this exact in-memory `session` object across
+            # the AutoGen tool-call boundary. Refresh it from the DB now,
+            # right before we save, so this request's own (older, fetched
+            # before any tool ran) copy doesn't clobber that update back to
+            # stale data — which used to silently discard every pending
+            # booking candidate the moment the turn that created it ended.
+            try:
+                fresh = self.state_service.get_session(session_id)
+                if fresh is not None:
+                    session.pending_booking = fresh.pending_booking
+            except Exception:
+                pass
+
             session.add_turn("assistant", response_text, agent_name=agent_name)
             session.agent_name = agent_name
-            
+
             # Save updated session state
             if hasattr(self.state_service, "_save_session"):
                 self.state_service._save_session(session)
@@ -926,6 +1510,184 @@ class MultiAgentOrchestrator(Agent):
                 "intent": intent.value,
             }
 
+    async def _llm_interpret_pending_reply(
+        self, query: str, pending: Dict[str, Any]
+    ) -> Tuple[str, Optional[str]]:
+        """Dynamic fallback for confirmation replies the deterministic
+        keyword/regex matcher in `_interpret_pending_reply` doesn't recognize.
+
+        The deterministic matcher only knows the phrasings we anticipated
+        ("yes", "11 AM is ok", etc.) — real customers write all kinds of
+        things ("go for it, that slot's perfect", "actually can we push it
+        later that day"). Rather than let every unrecognized phrasing fall
+        through to the full multi-tool-call Clara conversation (slow, and
+        the exact path that produced the "processing your request timed
+        out" failure), ask the model a single, narrowly-scoped classification
+        question with a tight timeout. This keeps the fast path fast while
+        still genuinely understanding arbitrary human phrasing for the
+        confirm/decline decision — not just matching a fixed phrase list.
+        """
+        try:
+            from autogen_core.models import SystemMessage, UserMessage
+
+            summary_bits = []
+            for key in ("service", "service_name", "staff_name", "date", "time"):
+                if pending.get(key):
+                    summary_bits.append(f"{key}={pending[key]}")
+            candidate_summary = ", ".join(summary_bits) or "an appointment"
+
+            sys_msg = SystemMessage(content=(
+                "You are classifying ONE customer reply to a pending salon-booking "
+                "confirmation prompt. Respond with ONLY a compact JSON object, no prose: "
+                '{"verdict": "confirm" | "decline" | "unclear", "time": "HH:MM" | null}. '
+                '"time" is a 24-hour HH:MM ONLY if the customer explicitly named a '
+                "different/specific clock time in their reply, else null. "
+                'Use "unclear" if the reply asks a question, changes topic, or is too '
+                "ambiguous to safely act on automatically. CRITICAL: if the reply describes "
+                "a DIFFERENT or NEW appointment request (a different service, a different "
+                "date, a different person) rather than responding to the pending candidate "
+                'above, you MUST return "unclear" — never "confirm" — even if it happens to '
+                "mention a time. Only return \"confirm\" when the reply is actually agreeing "
+                "to, or selecting a slot for, THIS SAME pending candidate."
+            ))
+            user_msg = UserMessage(
+                content=(
+                    f"Pending booking candidate: {candidate_summary}.\n"
+                    f'Customer reply: "{query}"'
+                ),
+                source="user",
+            )
+            result = await asyncio.wait_for(
+                self.model_client.create(messages=[sys_msg, user_msg], max_tokens=60),
+                timeout=8.0,
+            )
+            raw = (result.content or "").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            if start == -1 or end == -1:
+                return "unclear", None
+            parsed = json.loads(raw[start:end + 1])
+            verdict = str(parsed.get("verdict", "unclear")).lower()
+            if verdict not in ("confirm", "decline", "unclear"):
+                verdict = "unclear"
+            time_val = parsed.get("time")
+            time_val = str(time_val).strip() if time_val else None
+            if time_val and not re.match(r"^\d{2}:\d{2}$", time_val):
+                time_val = None
+            return ("affirm" if verdict == "confirm" else "decline" if verdict == "decline" else "unclear"), time_val
+        except Exception as exc:
+            logger.warning("[Orchestrator] LLM confirmation fallback failed/timed out: %s", exc)
+            return "unclear", None
+
+    def _execute_pending_booking(
+        self,
+        session: "SessionState",
+        user_role: str,
+        user_id: str,
+        tenant_id: str,
+        override_params: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Deterministically complete a previously-confirmed booking candidate.
+
+        Bypasses the LLM entirely for the actual `book` call — this is the one
+        step in the conversation that must not depend on a model correctly
+        remembering which service/staff/time was under discussion several tool
+        calls ago. `override_params` lets the caller fill in/replace a field
+        (e.g. `time`) extracted directly from the confirmation reply itself,
+        such as "11 AM is ok" naming the slot the customer is confirming.
+        """
+        from ai.tools.capabilities import _dispatch
+
+        pending = dict(session.pending_booking)
+        pending.pop("_awaiting_confirmation", None)
+        if override_params:
+            for key, value in override_params.items():
+                if value:
+                    pending[key] = value
+
+        # Pre-empt a doomed book() dispatch: ask directly about whatever's
+        # missing instead of round-tripping to the Handler just to relay its
+        # validation error. See _missing_pending_booking_fields's docstring.
+        missing_fields = _missing_pending_booking_fields(pending)
+        if missing_fields:
+            session.clear_pending_booking()
+            missing_str = " and ".join(missing_fields)
+            return (
+                f"Sure — I just need the {missing_str} to lock that in. "
+                "Once you let me know, I'll check availability and confirm the details with you."
+            )
+
+        raw_result = _dispatch(
+            "appointment_workflow", "book", pending,
+            role=user_role, tenant_id=tenant_id, user_id=user_id, session_id=session.session_id,
+        )
+        try:
+            result = json.loads(raw_result)
+        except Exception:
+            result = {"success": False, "error": raw_result}
+
+        if not isinstance(result, dict):
+            result = {"success": False, "error": str(result)}
+
+        if result.get("success"):
+            # _dispatch already persisted the clear to the DB via
+            # _sync_pending_booking_state, but on a separately-fetched
+            # SessionState instance — this caller's own `session` object still
+            # holds the stale in-memory pending_booking. _process_base saves
+            # THIS object right after we return, which would silently
+            # overwrite the DB clear with the stale data unless we also clear
+            # it here, on the same instance.
+            session.clear_pending_booking()
+            return _format_booking_confirmation(pending)
+
+        error_msg = result.get("error") or "I couldn't complete the booking."
+
+        # A pending candidate is captured verbatim from whatever params the
+        # model passed to a successful check_availability call — and
+        # check_availability doesn't require a service (any duration works to
+        # check staff/slot availability), so it's entirely normal for a
+        # candidate to be missing service_id/service_name (e.g. the customer
+        # only asked "is Alexandra free at 3pm?" with no service named yet).
+        # Blindly relaying the Handler's raw validation string here used to be
+        # actively harmful in that case: it names the internal field
+        # ("service_id or service_name is required..."), directly violating
+        # "never leak tool/field names to the customer", and then always
+        # appended "Would you like to try a different time or stylist?" — the
+        # wrong follow-up, since the actual gap is which SERVICE they want,
+        # not the time or stylist (which were already fine). Today's
+        # `_looks_like_new_request` treats naming a service as a brand-new
+        # request rather than a slot-filling answer to this same candidate, so
+        # we can't safely keep the candidate alive and resume it — clear it
+        # and ask a direct, honest question instead of trapping the customer
+        # in an unrecoverable "yes" → same confusing error loop.
+        if "service_id or service_name is required" in error_msg:
+            session.clear_pending_booking()
+            return (
+                "Sure — which service would you like to book (e.g. haircut, manicure, facial)? "
+                "Once you let me know, I'll check availability and confirm the details with you."
+            )
+        if "branch_id or branch_name is required" in error_msg:
+            session.clear_pending_booking()
+            return (
+                "Sure — which of our branches would you like to book at? "
+                "Once you let me know, I'll check availability and confirm the details with you."
+            )
+
+        # Handler-level errors here are already customer-facing business text
+        # (e.g. "X is on leave", "time is required") — but guard against any
+        # unexpectedly technical string leaking through to the customer.
+        if len(error_msg) > 300 or "Traceback" in error_msg or "Error code" in error_msg:
+            error_msg = "I couldn't complete the booking."
+
+        # Critical: clear the stale candidate on EVERY failure path, not just
+        # the special-cased ones above. Leaving `pending_booking` alive here
+        # (with `_awaiting_confirmation` still set) was the root cause of a
+        # real bug: after a failed "yes", the customer's next, completely
+        # unrelated message ("Is Priya free at 3pm?") fell through to the
+        # LLM-based pending-reply classifier, which misread it as confirming
+        # the dead candidate and nearly triggered a wrong booking attempt.
+        session.clear_pending_booking()
+        return f"{error_msg} Would you like to try a different time or stylist?"
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Main entry point for Phase 2 Orchestration."""
         tenant_id = input_data.get("tenant_id", self.tenant_id) or "default"
@@ -933,10 +1695,12 @@ class MultiAgentOrchestrator(Agent):
         user_id = input_data.get("user_id", "anonymous") or "anonymous"
 
         customer_id = input_data.get("customer_id")
+        session_id_for_ctx = input_data.get("session_id", "default") or "default"
         token_role = current_user_role.set(user_role)
         token_user = current_user_id.set(user_id)
         token_tenant = current_tenant_id_var.set(tenant_id)
         token_customer = current_customer_id_var.set(customer_id)
+        token_session = current_session_id_var.set(session_id_for_ctx)
 
         try:
             if set_current_tenant:
@@ -1004,12 +1768,13 @@ class MultiAgentOrchestrator(Agent):
             current_user_id.reset(token_user)
             current_tenant_id_var.reset(token_tenant)
             current_customer_id_var.reset(token_customer)
+            current_session_id_var.reset(token_session)
             self._current_intent_override = None
 
     def _resolve_intent_with_state(
         self,
         query: str,
-        session_id: str,
+        session: "SessionState",
         user_role: str,
     ) -> AgentIntent:
         """Resolve agent intent utilizing keyword heuristics and conversation state."""
@@ -1035,12 +1800,30 @@ class MultiAgentOrchestrator(Agent):
                 return validate_role_intent(user_role, overridden_intent)
 
         q = query.lower().strip()
-        
-        # Sticky BOOKING if pending booking exists
-        session = self.state_service.get_session(session_id)
+
+        # Sticky BOOKING if pending booking exists — but only when this message
+        # still reads as a continuation of that candidate (a bare "yes"/"11am"
+        # reply). A message that names a different service or otherwise reads
+        # like a fresh ask (see _looks_like_new_request) must not be forced
+        # into the stale booking's flow — that previously let an unrelated
+        # follow-up request (e.g. "can I get a manicure tomorrow at 2pm?")
+        # silently complete a completely different, earlier pending booking
+        # instead of starting its own. Drop the stale candidate so intent
+        # classification and _build_enriched_query (which injects
+        # pending_booking verbatim as "collected so far" context) both see a
+        # clean slate for this turn.
         if session and session.pending_booking and len(session.pending_booking) > 0:
-            logger.info("[Orchestrator] Sticky BOOKING — session has pending_booking context")
-            return AgentIntent.BOOKING
+            if _looks_like_new_request(query, session.pending_booking):
+                logger.info(
+                    "[Orchestrator] Dropping stale pending_booking — '%s' reads as a new request",
+                    query[:100],
+                )
+                session.clear_pending_booking()
+                if hasattr(self.state_service, "_save_session"):
+                    self.state_service._save_session(session)
+            else:
+                logger.info("[Orchestrator] Sticky BOOKING — session has pending_booking context")
+                return AgentIntent.BOOKING
 
         staff_keywords = [
             "my schedule", "agenda today", "appointments scheduled today", "next customer", 

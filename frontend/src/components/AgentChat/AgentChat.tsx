@@ -542,17 +542,26 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
     }
   };
 
+  // --- Action: Retry Failed Message ---
+  const handleRetry = () => {
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUserMsg) {
+      setError(null);
+      handleSendMessage(lastUserMsg.content);
+    }
+  };
+
   // --- Predefined Suggestions Cards ---
   const suggestions = intentOverride === 'business_intelligence' ? [
-    { title: "Revenue Analysis", prompt: "How much revenue did we earn this month? Which branch or service earns the most?" },
-    { title: "Staff Performance", prompt: "Who are our top performing stylists? Who deserves a bonus or has the highest rating?" },
-    { title: "Forecast & Growth", prompt: "Forecast next month's expected revenue and appointments." },
-    { title: "Business Metrics RAG", prompt: "Why is revenue decreasing? Compare with last 3 months performance." }
+    { title: "📊 Revenue Analysis", prompt: "How much revenue did we earn this month? Which branch or service earns the most?" },
+    { title: "⭐ Staff Performance", prompt: "Who are our top performing stylists? Show stylist ratings and appointment counts." },
+    { title: "📈 Forecast & Growth", prompt: "Forecast next month's expected revenue and appointments." },
+    { title: "💡 Executive Insights", prompt: "Give me an executive context summary of salon performance." }
   ] : [
-    { title: "Haircut Availability", prompt: "What slots are available for a Signature Haircut tomorrow?" },
-    { title: "My History", prompt: "Can you check my booking history? My Customer ID is FefffEEb-AE98-4BB2-BFF7-E4DaA09B4Fa5." },
-    { title: "Book Hot Stone", prompt: "I'd like to book a Himalayan Hot Stone Massage tomorrow. Branch: Downtown Elite, Customer: Alice Smith (6b09fca3-c8a5-46a1-88dc-72c081668be9)." },
-    { title: "Cancel Booking", prompt: "Can you cancel my appointment? The booking ID is 0fbaddb8-1fbe-49d5-931f-f46b5de81293." }
+    { title: "📅 Check Availability", prompt: "What slots are available for a Signature Haircut tomorrow?" },
+    { title: "✂️ Book Appointment", prompt: "I'd like to book a Signature Haircut for tomorrow at 11 AM with Marcus." },
+    { title: "📋 My Appointments", prompt: "Can you show me my upcoming appointments history?" },
+    { title: "❌ Cancel Appointment", prompt: "I need to cancel my upcoming appointment." }
   ];
 
   return (
@@ -684,13 +693,21 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
             </div>
           )}
 
-          {/* Error Banner */}
+          {/* Error Banner with Retry */}
           {error && (
-            <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs rounded-xl flex items-center space-x-2 shadow-sm animate-pulse">
-              <svg className="w-5 h-5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <span className="text-left font-medium">{error}</span>
+            <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs rounded-xl flex items-center justify-between shadow-sm">
+              <div className="flex items-center space-x-2">
+                <svg className="w-5 h-5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span className="text-left font-medium">{error}</span>
+              </div>
+              <button
+                onClick={handleRetry}
+                className="px-3 py-1 bg-red-900/40 hover:bg-red-900/70 text-red-200 rounded-lg text-xs font-semibold border border-red-800 transition-all cursor-pointer flex-shrink-0 ml-3"
+              >
+                🔄 Retry
+              </button>
             </div>
           )}
 

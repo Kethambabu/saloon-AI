@@ -105,8 +105,14 @@ async def test_orchestrator_process_routing():
         assert response["intent"] == "booking"
         assert response["response"] == "Booking completed successfully."
 
-        # Verify correct agent object was passed to group chat runner
-        mock_chat.assert_called_once_with(orchestrator.agents[AgentIntent.BOOKING], "Book an appointment for tomorrow")
+        # BOOKING routes through a freshly-built, request-scoped Clara instance
+        # (see MultiAgentOrchestrator._build_scoped_clara) rather than the
+        # shared orchestrator.agents[AgentIntent.BOOKING] singleton, so this
+        # checks the agent's name/role instead of object identity.
+        mock_chat.assert_called_once()
+        called_agent, called_query = mock_chat.call_args[0]
+        assert called_agent.name == "Clara_Receptionist"
+        assert called_query == "Book an appointment for tomorrow"
 
 
 @pytest.mark.asyncio
@@ -148,7 +154,11 @@ async def test_orchestrator_intent_override_blocked_for_disallowed_role():
         assert response["agent_name"] == "Clara_Receptionist"
         assert response["intent"] == "booking"
 
-        mock_chat.assert_called_once_with(orchestrator.agents[AgentIntent.BOOKING], "Book an appointment")
+        # See test_orchestrator_process_routing above re: request-scoped Clara.
+        mock_chat.assert_called_once()
+        called_agent, called_query = mock_chat.call_args[0]
+        assert called_agent.name == "Clara_Receptionist"
+        assert called_query == "Book an appointment"
 
 
 @pytest.mark.asyncio
