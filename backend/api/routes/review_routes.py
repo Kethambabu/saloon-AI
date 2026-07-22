@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # Project imports
-from db import get_db
+from infrastructure.db import get_db
 from api.deps import get_current_user
-from services.review_service import ReviewService
+from application.services.review_service import ReviewService
 
 logger = logging.getLogger(__name__)
 
@@ -307,3 +307,4 @@ async def update_review_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+

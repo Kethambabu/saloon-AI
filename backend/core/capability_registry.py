@@ -9,7 +9,7 @@ Max, Olivia, Atlas-Staff, Atlas-BI) with their full action catalogs.
 
 Usage::
 
-    from backend.core.capability_registry import get_registry
+    from core.capability_registry import get_registry
 
     registry = get_registry()
     cap = registry.get("book_appointment")
@@ -38,7 +38,7 @@ class Capability:
         name:                Unique capability key (e.g. ``"book_appointment"``).
         description:         Human-readable summary of what this capability does.
         handler_class_path:  Dot-separated import path to the handler class
-                             (e.g. ``"backend.handlers.appointment_handlers.BookAppointmentHandler"``).
+                             (e.g. ``"core.handlers.BookAppointmentHandler"``).
         action_keys:         List of action strings that resolve to this capability.
         roles_allowed:       List of IAM role strings permitted to invoke this capability.
         workflow:            Name of the workflow this capability belongs to
@@ -243,7 +243,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="check_availability",
         description="Check staff/slot availability for a given time window.",
-        handler_class_path="backend.handlers.appointment_handlers.CheckAvailabilityHandler",
+        handler_class_path="core.handlers.CheckAvailabilityHandler",
         action_keys=["check_availability", "availability"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -251,7 +251,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="book_appointment",
         description="Book a new appointment for a customer.",
-        handler_class_path="backend.handlers.appointment_handlers.BookAppointmentHandler",
+        handler_class_path="core.handlers.BookAppointmentHandler",
         action_keys=["book_appointment", "book"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -259,7 +259,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="cancel_appointment",
         description="Cancel an existing appointment.",
-        handler_class_path="backend.handlers.appointment_handlers.CancelAppointmentHandler",
+        handler_class_path="core.handlers.CancelAppointmentHandler",
         action_keys=["cancel_appointment", "cancel"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -267,7 +267,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="reschedule_appointment",
         description="Move an existing appointment to a new time slot.",
-        handler_class_path="backend.handlers.appointment_handlers.RescheduleAppointmentHandler",
+        handler_class_path="core.handlers.RescheduleAppointmentHandler",
         action_keys=["reschedule_appointment", "reschedule"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -275,7 +275,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="list_appointments",
         description="List appointments for a customer or staff member.",
-        handler_class_path="backend.handlers.appointment_handlers.ListAppointmentsHandler",
+        handler_class_path="core.handlers.ListAppointmentsHandler",
         action_keys=["list_appointments", "history"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -283,7 +283,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="list_services",
         description="Retrieve the salon's service catalogue.",
-        handler_class_path="backend.handlers.appointment_handlers.ListServicesHandler",
+        handler_class_path="core.handlers.ListServicesHandler",
         action_keys=["list_services", "services"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -291,7 +291,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="list_staff",
         description="Retrieve available staff members.",
-        handler_class_path="backend.handlers.appointment_handlers.ListStaffHandler",
+        handler_class_path="core.handlers.ListStaffHandler",
         action_keys=["list_staff", "staff"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -299,7 +299,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="search_customers",
         description="Search for customers by name, phone, or email.",
-        handler_class_path="backend.handlers.appointment_handlers.SearchCustomersHandler",
+        handler_class_path="core.handlers.SearchCustomersHandler",
         action_keys=["search_customers", "find_customer"],
         roles_allowed=_CLARA_ROLES,
         workflow="appointment_workflow",
@@ -308,7 +308,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="search_leads",
         description="Search CRM leads by various criteria.",
-        handler_class_path="backend.handlers.crm_handlers.SearchLeadsHandler",
+        handler_class_path="core.handlers.SearchLeadsHandler",
         action_keys=["search_leads"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -316,7 +316,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="create_lead",
         description="Create a new lead record in the CRM.",
-        handler_class_path="backend.handlers.crm_handlers.CreateLeadHandler",
+        handler_class_path="core.handlers.CreateLeadHandler",
         action_keys=["create_lead"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -324,7 +324,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="advance_lead",
         description="Advance a lead to the next pipeline stage.",
-        handler_class_path="backend.handlers.crm_handlers.AdvanceLeadHandler",
+        handler_class_path="core.handlers.AdvanceLeadHandler",
         action_keys=["advance_lead"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -332,7 +332,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="send_followup",
         description="Send a follow-up message to a lead.",
-        handler_class_path="backend.handlers.crm_handlers.SendFollowupHandler",
+        handler_class_path="core.handlers.SendFollowupHandler",
         action_keys=["send_followup"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -340,7 +340,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="generate_message",
         description="AI-generate a personalised outreach message for a lead.",
-        handler_class_path="backend.handlers.crm_handlers.GenerateMessageHandler",
+        handler_class_path="core.handlers.GenerateMessageHandler",
         action_keys=["generate_message"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -348,7 +348,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="detect_abandoned",
         description="Detect customers who started booking but did not complete.",
-        handler_class_path="backend.handlers.crm_handlers.DetectAbandonedHandler",
+        handler_class_path="core.handlers.DetectAbandonedHandler",
         action_keys=["detect_abandoned", "abandoned_bookings"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -356,7 +356,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="conversion_analytics",
         description="Return lead-to-customer conversion metrics.",
-        handler_class_path="backend.handlers.crm_handlers.ConversionAnalyticsHandler",
+        handler_class_path="core.handlers.ConversionAnalyticsHandler",
         action_keys=["conversion_analytics"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -364,7 +364,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="pipeline_snapshot",
         description="Return a snapshot of the current CRM pipeline.",
-        handler_class_path="backend.handlers.crm_handlers.PipelineSnapshotHandler",
+        handler_class_path="core.handlers.PipelineSnapshotHandler",
         action_keys=["pipeline_snapshot"],
         roles_allowed=_MIA_ROLES,
         workflow="crm_workflow",
@@ -373,7 +373,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="get_recommendations",
         description="Retrieve AI-generated upsell/cross-sell recommendations.",
-        handler_class_path="backend.handlers.recommendation_handlers.GetRecommendationsHandler",
+        handler_class_path="core.handlers.GetRecommendationsHandler",
         action_keys=["get_recommendations"],
         roles_allowed=_MAX_ROLES,
         workflow="recommendation_workflow",
@@ -381,7 +381,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="accept_recommendation",
         description="Record that a recommendation was accepted.",
-        handler_class_path="backend.handlers.recommendation_handlers.AcceptRecommendationHandler",
+        handler_class_path="core.handlers.AcceptRecommendationHandler",
         action_keys=["accept_recommendation", "accept"],
         roles_allowed=_MAX_ROLES,
         workflow="recommendation_workflow",
@@ -389,7 +389,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="reject_recommendation",
         description="Record that a recommendation was rejected.",
-        handler_class_path="backend.handlers.recommendation_handlers.RejectRecommendationHandler",
+        handler_class_path="core.handlers.RejectRecommendationHandler",
         action_keys=["reject_recommendation", "reject"],
         roles_allowed=_MAX_ROLES,
         workflow="recommendation_workflow",
@@ -397,7 +397,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="recommendation_analytics",
         description="Analytics on recommendation acceptance/rejection rates.",
-        handler_class_path="backend.handlers.recommendation_handlers.RecommendationAnalyticsHandler",
+        handler_class_path="core.handlers.RecommendationAnalyticsHandler",
         action_keys=["recommendation_analytics"],
         roles_allowed=_MAX_ROLES,
         workflow="recommendation_workflow",
@@ -406,7 +406,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="get_reviews",
         description="Fetch reviews from all connected platforms.",
-        handler_class_path="backend.handlers.reputation_handlers.GetReviewsHandler",
+        handler_class_path="core.handlers.GetReviewsHandler",
         action_keys=["get_reviews"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -414,7 +414,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="review_analytics",
         description="Aggregate review score analytics over a time range.",
-        handler_class_path="backend.handlers.reputation_handlers.ReputationAnalyticsHandler",
+        handler_class_path="core.handlers.ReputationAnalyticsHandler",
         action_keys=["review_analytics", "analytics"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -422,7 +422,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="critical_reviews",
         description="Surface low-score reviews that require urgent attention.",
-        handler_class_path="backend.handlers.reputation_handlers.CriticalReviewsHandler",
+        handler_class_path="core.handlers.CriticalReviewsHandler",
         action_keys=["critical_reviews", "critical"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -430,7 +430,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="draft_response",
         description="AI-draft a response to a specific review.",
-        handler_class_path="backend.handlers.reputation_handlers.DraftResponseHandler",
+        handler_class_path="core.handlers.DraftResponseHandler",
         action_keys=["draft_response", "respond"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -438,7 +438,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="reputation_scorecard",
         description="Compute an overall reputation scorecard for the salon.",
-        handler_class_path="backend.handlers.reputation_handlers.ReputationScorecardHandler",
+        handler_class_path="core.handlers.ReputationScorecardHandler",
         action_keys=["reputation_scorecard", "scorecard"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -446,7 +446,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="escalate_review",
         description="Escalate a negative review to management.",
-        handler_class_path="backend.handlers.reputation_handlers.EscalateReviewHandler",
+        handler_class_path="core.handlers.EscalateReviewHandler",
         action_keys=["escalate_review", "escalate"],
         roles_allowed=_OLIVIA_ROLES,
         workflow="reputation_workflow",
@@ -455,7 +455,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="get_schedule",
         description="Retrieve a staff member's full schedule.",
-        handler_class_path="backend.handlers.staff_handlers.GetScheduleHandler",
+        handler_class_path="core.handlers.GetScheduleHandler",
         action_keys=["get_schedule"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -463,7 +463,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="today_schedule",
         description="Get today's appointments for a staff member.",
-        handler_class_path="backend.handlers.staff_handlers.TodayScheduleHandler",
+        handler_class_path="core.handlers.TodayScheduleHandler",
         action_keys=["today_schedule"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -471,7 +471,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="next_customer",
         description="Return details about the next upcoming customer.",
-        handler_class_path="backend.handlers.staff_handlers.NextCustomerHandler",
+        handler_class_path="core.handlers.NextCustomerHandler",
         action_keys=["next_customer"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -479,7 +479,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="customer_history",
         description="Retrieve visit and service history for a customer.",
-        handler_class_path="backend.handlers.staff_handlers.CustomerHistoryHandler",
+        handler_class_path="core.handlers.CustomerHistoryHandler",
         action_keys=["customer_history"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -487,7 +487,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="customer_preferences",
         description="Retrieve stored preferences for a customer.",
-        handler_class_path="backend.handlers.staff_handlers.CustomerPreferencesHandler",
+        handler_class_path="core.handlers.CustomerPreferencesHandler",
         action_keys=["customer_preferences"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -495,7 +495,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="staff_revenue",
         description="Revenue generated by a staff member over a period.",
-        handler_class_path="backend.handlers.staff_handlers.StaffRevenueHandler",
+        handler_class_path="core.handlers.StaffRevenueHandler",
         action_keys=["staff_revenue"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -503,7 +503,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="staff_performance",
         description="KPIs and performance metrics for a staff member.",
-        handler_class_path="backend.handlers.staff_handlers.StaffKPIHandler",
+        handler_class_path="core.handlers.StaffKPIHandler",
         action_keys=["staff_performance"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -511,7 +511,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="pending_appointments",
         description="List appointments awaiting staff confirmation.",
-        handler_class_path="backend.handlers.staff_handlers.PendingAppointmentsHandler",
+        handler_class_path="core.handlers.PendingAppointmentsHandler",
         action_keys=["pending_appointments"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -519,7 +519,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="create_leave",
         description="Create a leave or time-off request for a staff member.",
-        handler_class_path="backend.handlers.staff_handlers.CreateLeaveHandler",
+        handler_class_path="core.handlers.CreateLeaveHandler",
         action_keys=["create_leave"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
@@ -527,8 +527,16 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="send_reminders",
         description="Send appointment reminder messages to customers.",
-        handler_class_path="backend.handlers.staff_handlers.SendRemindersHandler",
+        handler_class_path="core.handlers.SendRemindersHandler",
         action_keys=["send_reminders"],
+        roles_allowed=_ATLAS_STAFF_ROLES,
+        workflow="staff_workflow",
+    ),
+    Capability(
+        name="staff_raw_sql",
+        description="Execute a secure read-only SELECT query on the staff database.",
+        handler_class_path="core.handlers.StaffRawSQLHandler",
+        action_keys=["raw_sql"],
         roles_allowed=_ATLAS_STAFF_ROLES,
         workflow="staff_workflow",
     ),
@@ -536,7 +544,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="dashboard",
         description="Return the main BI dashboard summary.",
-        handler_class_path="backend.handlers.analytics_handlers.DashboardHandler",
+        handler_class_path="core.handlers.DashboardHandler",
         action_keys=["dashboard"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -544,7 +552,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="revenue",
         description="Revenue analytics broken down by period, service, or staff.",
-        handler_class_path="backend.handlers.analytics_handlers.RevenueHandler",
+        handler_class_path="core.handlers.RevenueHandler",
         action_keys=["revenue"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -552,7 +560,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="customers",
         description="Customer metrics including retention and churn.",
-        handler_class_path="backend.handlers.analytics_handlers.CustomerMetricsHandler",
+        handler_class_path="core.handlers.CustomerMetricsHandler",
         action_keys=["customers"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -560,7 +568,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="staff_analytics",
         description="Staff performance analytics across the salon.",
-        handler_class_path="backend.handlers.analytics_handlers.StaffPerformanceHandler",
+        handler_class_path="core.handlers.BIStaffPerformanceHandler",
         action_keys=["staff_analytics", "staff"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -568,7 +576,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="leads_analytics",
         description="Lead funnel and conversion analytics.",
-        handler_class_path="backend.handlers.analytics_handlers.LeadAnalyticsHandler",
+        handler_class_path="core.handlers.LeadAnalyticsHandler",
         action_keys=["leads_analytics", "leads"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -576,7 +584,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="reviews_analytics",
         description="Aggregated review and sentiment analytics.",
-        handler_class_path="backend.handlers.analytics_handlers.ReviewAnalyticsHandler",
+        handler_class_path="core.handlers.BIReviewAnalyticsHandler",
         action_keys=["reviews_analytics", "reviews"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -584,7 +592,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="upsell_analytics",
         description="Analytics on upsell/cross-sell performance.",
-        handler_class_path="backend.handlers.analytics_handlers.UpsellAnalyticsHandler",
+        handler_class_path="core.handlers.BIUpsellAnalyticsHandler",
         action_keys=["upsell_analytics", "upsell"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -592,7 +600,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="ai_insights",
         description="AI-generated actionable business insights.",
-        handler_class_path="backend.handlers.analytics_handlers.AIInsightsHandler",
+        handler_class_path="core.handlers.AIInsightsHandler",
         action_keys=["ai_insights", "insights"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -600,7 +608,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="forecast",
         description="Revenue and appointment volume forecasting.",
-        handler_class_path="backend.handlers.analytics_handlers.ForecastHandler",
+        handler_class_path="core.handlers.ForecastHandler",
         action_keys=["forecast"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -608,7 +616,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="business_context",
         description="Retrieve high-level business context for a tenant.",
-        handler_class_path="backend.handlers.analytics_handlers.BusinessContextHandler",
+        handler_class_path="core.handlers.BusinessContextHandler",
         action_keys=["business_context"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -616,7 +624,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="raw_sql",
         description="Execute a safe, read-only raw SQL query (admin only).",
-        handler_class_path="backend.handlers.analytics_handlers.RawSQLHandler",
+        handler_class_path="core.handlers.RawSQLHandler",
         action_keys=["raw_sql"],
         roles_allowed=["admin", "owner"],
         workflow="analytics_workflow",
@@ -624,7 +632,7 @@ _DEFAULT_CAPABILITIES: List[Capability] = [
     Capability(
         name="cohort_reminders",
         description="Send targeted reminders to cohort segments.",
-        handler_class_path="backend.handlers.analytics_handlers.CohortRemindersHandler",
+        handler_class_path="core.handlers.CohortRemindersHandler",
         action_keys=["cohort_reminders"],
         roles_allowed=_ATLAS_BI_ROLES,
         workflow="analytics_workflow",
@@ -682,3 +690,4 @@ def get_registry() -> CapabilityRegistry:
                     len(_DEFAULT_CAPABILITIES),
                 )
     return _registry_instance
+

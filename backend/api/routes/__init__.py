@@ -33,7 +33,7 @@ from api.routes.storage_routes import router as storage_router
 router.include_router(storage_router)
 
 # Include lead sub-routes
-from routes.lead_routes import router as lead_router
+from api.routes.lead_routes import router as lead_router
 router.include_router(lead_router)
 
 # Include notification sub-routes
@@ -71,8 +71,13 @@ router.include_router(mcp_metrics_router)
 # Health check endpoint
 @router.get("/health")
 async def health():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    """Health check endpoint with database mode reporting"""
+    from infrastructure.db.database import is_using_fallback
+    return {
+        "status": "healthy",
+        "database_mode": "sqlite_fallback" if is_using_fallback() else "supabase",
+    }
+
 
 
 # Root API endpoint
@@ -87,3 +92,4 @@ async def api_root():
 
 # Export router for main app
 __all__ = ["router"]
+

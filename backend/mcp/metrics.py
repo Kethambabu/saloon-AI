@@ -155,3 +155,4 @@ def get_metrics_tracker() -> MCPMetricsTracker:
     if _tracker is None:
         _tracker = MCPMetricsTracker()
     return _tracker
+

@@ -17,3 +17,4 @@ def test_api_root(client):
     data = response.json()
     assert "message" in data
     assert "docs" in data
+

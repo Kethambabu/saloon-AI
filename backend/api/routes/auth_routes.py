@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from db import get_db, User, UserRole, Admin, Staff, Customer, Branch
+from infrastructure.db import get_db, User, UserRole, Admin, Staff, Customer, Branch
 from core.security import (
     hash_password,
     verify_password,
     create_access_token,
     create_refresh_token,
-    decode_token
+    decode_token,
+    get_login_attempt_limiter,
 )
 from api.deps import get_current_user, RoleChecker
 import jwt
@@ -28,8 +29,8 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # --- Pydantic Schemas ---
 
 class LoginRequest(BaseModel):
-    email: EmailStr = Field(..., example="owner@salonai.com")
-    password: str = Field(..., example="password123")
+    email: EmailStr = Field(..., json_schema_extra={"example": "owner@salonai.com"})
+    password: str = Field(..., json_schema_extra={"example": "password123"})
     selected_role: Optional[UserRole] = Field(default=None, description="Role when multiple options exist")
 
 
@@ -83,16 +84,25 @@ def login(
 ):
     """Authenticate and issue JWT tokens or prompt for role selection."""
     email_clean = payload.email.lower().strip()
-    
+
+    limiter = get_login_attempt_limiter()
+    locked_seconds = limiter.check_locked(email_clean)
+    if locked_seconds is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Try again in {locked_seconds}s.",
+        )
+
     # Find all users with this email (there can be multiple roles)
     users = db.query(User).filter(User.email == email_clean).all()
-    
+
     if not users:
+        limiter.record_failure(email_clean)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
-    
+
     # Verify password matches for at least one user record
     has_matching_credential = False
     valid_users = []
@@ -101,18 +111,21 @@ def login(
             has_matching_credential = True
             if user.is_active:
                 valid_users.append(user)
-    
+
     if has_matching_credential and not valid_users:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been suspended. Please contact the administrator."
         )
-    
+
     if not valid_users:
+        limiter.record_failure(email_clean)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
+
+    limiter.record_success(email_clean)
     
     # If multiple valid roles exist, prompt user to select one
     if len(valid_users) > 1:
@@ -263,17 +276,17 @@ def logout(
 # --- Additional Auth Pydantic Schemas ---
 
 class SignupRequest(BaseModel):
-    email: EmailStr = Field(..., example="newuser@example.com")
-    password: str = Field(..., min_length=6, example="password123")
-    role: UserRole = Field(default=UserRole.STAFF, example=UserRole.STAFF)
-    first_name: str = Field(..., min_length=1, example="Jane")
-    last_name: str = Field(..., min_length=1, example="Doe")
-    phone: Optional[str] = Field(default=None, example="+1-555-0199")
+    email: EmailStr = Field(..., json_schema_extra={"example": "newuser@example.com"})
+    password: str = Field(..., min_length=6, json_schema_extra={"example": "password123"})
+    role: UserRole = Field(default=UserRole.STAFF, json_schema_extra={"example": UserRole.STAFF})
+    first_name: str = Field(..., min_length=1, json_schema_extra={"example": "Jane"})
+    last_name: str = Field(..., min_length=1, json_schema_extra={"example": "Doe"})
+    phone: Optional[str] = Field(default=None, json_schema_extra={"example": "+1-555-0199"})
     branch_id: Optional[str] = Field(default=None, description="Applicable for Staff")
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr = Field(..., example="user@example.com")
+    email: EmailStr = Field(..., json_schema_extra={"example": "user@example.com"})
 
 
 class ResetPasswordRequest(BaseModel):
@@ -298,13 +311,16 @@ def signup(
     """Sign up and create role records."""
     email_clean = payload.email.lower().strip()
     
-    # 1. Block unauthorized admin signup
-    if payload.role == UserRole.ADMIN:
+    # 1. Block unauthorized privileged signup (ADMIN/OWNER/MANAGER must be
+    #    provisioned by an existing ADMIN — anyone could otherwise self-register
+    #    as OWNER/MANAGER and gain full business-data access).
+    _PRIVILEGED_ROLES = (UserRole.ADMIN, UserRole.OWNER, UserRole.MANAGER)
+    if payload.role in _PRIVILEGED_ROLES:
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required to create Admin accounts."
+                detail=f"Authentication required to create {payload.role.value} accounts."
             )
         token = auth_header.split(" ")[1]
         try:
@@ -312,12 +328,14 @@ def signup(
             if current_user.role != UserRole.ADMIN:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only Admin users can create Admin accounts."
+                    detail=f"Only Admin users can create {payload.role.value} accounts."
                 )
+        except HTTPException:
+            raise
         except Exception:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only Admin users can create Admin accounts."
+                detail=f"Only Admin users can create {payload.role.value} accounts."
             )
 
     # 2. Check if email already registered
@@ -598,3 +616,4 @@ def toggle_user_active(user_id: str, db: Session = Depends(get_db)):
         "is_active": user.is_active,
         "message": f"User status successfully updated to {'active' if user.is_active else 'suspended'}."
     }
+

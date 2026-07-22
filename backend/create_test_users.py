@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import uuid
 from sqlalchemy import text
-from db.database import SessionLocal, engine
-from db.models import User, Admin, Staff, Customer, Branch, Base
+from infrastructure.db.database import SessionLocal, engine
+from infrastructure.db.models import User, Admin, Staff, Customer, Branch, Base
 
 # Ensure tables exist
 Base.metadata.create_all(bind=engine)
@@ -116,3 +116,4 @@ except Exception as e:
     traceback.print_exc()
 finally:
     db.close()
+

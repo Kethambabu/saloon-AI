@@ -104,15 +104,15 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
     setError(null);
     if (role === 'Admin') {
       setEmail('owner@salonai.com');
-      setPassword('password123');
+      setPassword('password');
       setSelectedRole('User');
     } else if (role === 'Staff') {
       setEmail('marcus@salonai.com');
-      setPassword('password123');
+      setPassword('password');
       setSelectedRole('Staff');
     } else {
       setEmail('customer@example.com');
-      setPassword('password123');
+      setPassword('password');
       setSelectedRole('User');
     }
   };
@@ -255,35 +255,40 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
             </div>
           </form>
 
-          {/* Quick-fill testing panel */}
-          <div className="mt-8 border-t border-slate-800/80 pt-6 text-left">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
-              Developer Quick Fill
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickFill('Admin')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-900/30 text-blue-300 border border-blue-800/50 hover:bg-blue-900/50 transition-all duration-200 cursor-pointer"
-              >
-                👑 Admin Fill
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('Staff')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-900/30 text-emerald-300 border border-emerald-800/50 hover:bg-emerald-900/50 transition-all duration-200 cursor-pointer"
-              >
-                💇 Stylist Staff Fill
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickFill('User')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-900/30 text-purple-300 border border-purple-800/50 hover:bg-purple-900/50 transition-all duration-200 cursor-pointer"
-              >
-                👤 Customer User Fill
-              </button>
+          {/* Quick-fill testing panel — dev-only. This was previously
+              rendered unconditionally, meaning a production build shipped a
+              "Developer Quick Fill" panel exposing plausible admin/staff/
+              customer email addresses directly on the public login page. */}
+          {import.meta.env.DEV && (
+            <div className="mt-8 border-t border-slate-800/80 pt-6 text-left">
+              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+                Developer Quick Fill (dev build only)
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('Admin')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-900/30 text-blue-300 border border-blue-800/50 hover:bg-blue-900/50 transition-all duration-200 cursor-pointer"
+                >
+                  👑 Admin Fill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('Staff')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-900/30 text-emerald-300 border border-emerald-800/50 hover:bg-emerald-900/50 transition-all duration-200 cursor-pointer"
+                >
+                  💇 Stylist Staff Fill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('User')}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-900/30 text-purple-300 border border-purple-800/50 hover:bg-purple-900/50 transition-all duration-200 cursor-pointer"
+                >
+                  👤 Customer User Fill
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
         </div>
       </div>

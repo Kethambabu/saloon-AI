@@ -15,9 +15,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-white font-sans">
+      {/* Skip link: keyboard/screen-reader users can jump past the header
+          and any per-portal sidebar nav straight to the page content. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-blue-600 focus:text-white focus:font-bold focus:text-sm"
+      >
+        Skip to main content
+      </a>
+
       {/* Header */}
       <header className="bg-slate-900/80 border-b border-slate-850 sticky top-0 z-40 backdrop-blur-md bg-slate-900/90 text-white">
-        <nav className="max-w-7xl mx-auto px-4 py-3.5 flex items-center justify-between">
+        <nav className="max-w-7xl mx-auto px-4 py-3.5 flex items-center justify-between" aria-label="Primary">
           <div className="flex items-center space-x-3">
             <div className="p-2 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/10 text-white">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -40,7 +49,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               </span>
               <button
                 onClick={logout}
-                className="inline-flex items-center space-x-1 px-3.5 py-2 border border-slate-800 hover:border-red-900/50 rounded-xl text-xs font-bold text-slate-400 hover:text-red-400 bg-slate-900 hover:bg-red-955/20 transition-all duration-300 cursor-pointer shadow-sm"
+                aria-label="Log out"
+                className="inline-flex items-center space-x-1 px-3.5 py-2 border border-slate-800 hover:border-red-900/50 rounded-xl text-xs font-bold text-slate-400 hover:text-red-400 bg-slate-900 hover:bg-red-955/20 transition-all duration-300 cursor-pointer shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -53,7 +63,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
+      <main id="main-content" tabIndex={-1} className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
         {children}
       </main>
 

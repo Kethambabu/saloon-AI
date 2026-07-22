@@ -89,3 +89,4 @@ async def clear_mcp_cache_get(
     current_user=Depends(get_current_user),
 ) -> Dict[str, Any]:
     return await clear_mcp_cache(resource, current_user)
+

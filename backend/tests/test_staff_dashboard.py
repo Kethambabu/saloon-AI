@@ -7,7 +7,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from db import User, UserRole, Staff, Appointment, AppointmentStatus, SessionLocal
+from infrastructure.db import User, UserRole, Staff, Appointment, AppointmentStatus, SessionLocal
 
 def test_staff_login_success(client: TestClient):
     """Verify that a staff member can log in successfully with correct credentials."""
@@ -115,3 +115,4 @@ def test_staff_endpoints_role_guards(client: TestClient):
     # 3. Request staff dashboard without authentication - should be unauthorized
     dash_unauth = client.get("/api/v1/staff/dashboard")
     assert dash_unauth.status_code == status.HTTP_401_UNAUTHORIZED
+

@@ -1,9 +1,15 @@
-# Environment variables
+# ============================================================
+# Environment Variables (NEVER commit secrets)
+# ============================================================
 .env
 .env.local
 .env.*.local
+backend/.env
+frontend/.env
 
+# ============================================================
 # Python
+# ============================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -27,6 +33,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
@@ -35,76 +43,110 @@ htmlcov/
 .hypothesis/
 *.cover
 *.py,cover
+
+# Type checkers
 .mypy_cache/
 .dmypy.json
 dmypy.json
 .pyre/
 
-# Virtual environments
+# ============================================================
+# Virtual Environments
+# ============================================================
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
+backend/venv/
+backend/venv312/
+backend/myvenv/
+**/env
+**/env (*
 
-# Node
+# ============================================================
+# Node / Frontend
+# ============================================================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+.pnp
+.pnp.js
 *.local
-dist
-dist-ssr
 
-# IDEs
+# Build outputs
+dist/
+dist-ssr/
+out/
+build/
+node-dist/
+
+# Prisma generated
+/generated/prisma
+frontend/generated/
+
+# ============================================================
+# Databases & Migrations state
+# ============================================================
+*.sqlite
+*.sqlite3
+*.db
+salon_local.db
+test.db
+backend/test.db
+
+# ============================================================
+# Logs
+# ============================================================
+logs/
+*.log
+backend/logs/
+
+# ============================================================
+# IDEs & Editors
+# ============================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
-
-# IDE settings (but not extensions)
 .vscode/settings.json
 .vscode/extensions.json
 
-# OS
-Thumbs.db
+# ============================================================
+# OS files
+# ============================================================
 .DS_Store
 .AppleDouble
 .LSOverride
+Thumbs.db
 
-# Dependencies
-.pnp
-.pnp.js
-
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Build outputs
-out
-build
-
-# Database
-*.sqlite
-*.sqlite3
-*.db
-
-# Temporary files
+# ============================================================
+# Temporary / Cache
+# ============================================================
 *.tmp
 *.temp
-.cache
+.cache/
+.pytest_cache/
 
-/generated/prisma
-node-dist/
-**/env
-**/env (*
+# ============================================================
+# Project-specific
+# ============================================================
+# Archive folder (legacy code)
+archive/
 
+# RAG / AI data
+backend/data/last_rag_run.json
+backend/data/faiss_indices/
 
+# Scratch / dev notes
+backend/scratch/
+
+# Alembic (keep ini, ignore env.py outputs if any)
+# alembic/versions/*.py  # uncomment if you want to ignore migration files
+
+# docx uploads / exports
+docx/

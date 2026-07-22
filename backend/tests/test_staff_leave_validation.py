@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Branch, Staff, Customer, Service, StaffLeave
-from tools.booking_tools import create_appointment, reschedule_appointment
+from infrastructure.db import Base, Branch, Staff, Customer, Service, StaffLeave
+from application.services.appointment_service import create_appointment, reschedule_appointment
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -120,3 +120,4 @@ def test_reschedule_to_leave_date_fails(db_session):
     
     assert res_resched["success"] is False
     assert "is unavailable" in res_resched["error"]
+

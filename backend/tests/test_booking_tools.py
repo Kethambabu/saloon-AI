@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus
-from tools.booking_tools import (
+from infrastructure.db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus
+from application.services.appointment_service import (
     create_appointment,
     get_available_slots,
     cancel_appointment,
@@ -232,7 +232,7 @@ def test_get_customer_history(db_session):
     )
 
     # Get history via mcp_execute patched to test DB session
-    from tools.mcp_tool import mcp_execute
+    from ai.tools.mcp_tool import mcp_execute
     from unittest.mock import patch
     
     with patch("mcp.salon_mcp.SessionLocal", return_value=db_session):
@@ -247,3 +247,32 @@ def test_get_customer_history(db_session):
     assert history_res["count"] == 1
     assert history_res["data"][0]["service_id"] == str(service.id)
     assert history_res["data"][0]["staff_id"] == str(stylist.id)
+
+
+def test_create_appointment_inactive_customer(db_session):
+    """Verifies that creating an appointment fails when the customer account is inactive."""
+    branch = db_session.query(Branch).first()
+    service = db_session.query(Service).first()
+    stylist = db_session.query(Staff).first()
+    customer = db_session.query(Customer).first()
+
+    # Deactivate customer
+    customer.is_active = False
+    db_session.commit()
+
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    start_time = datetime.combine(tomorrow.date(), datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=10)
+
+    result = create_appointment(
+        customer_id=customer.id,
+        branch_id=branch.id,
+        service_id=service.id,
+        start_time=start_time.isoformat(),
+        staff_id=stylist.id,
+        db=db_session
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "Customer account is inactive."
+
+

@@ -7,10 +7,10 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
-from db import get_db, User, Notification
+from infrastructure.db import get_db, User, Notification
 from api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,7 @@ class NotificationResponse(BaseModel):
     is_read: bool
     created_at: str
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get(
@@ -122,3 +121,4 @@ def clear_all_notifications(
     
     db.commit()
     return {"success": True, "message": "All notifications cleared successfully"}
+

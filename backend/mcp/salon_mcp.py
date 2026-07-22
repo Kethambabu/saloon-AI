@@ -36,8 +36,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from db.database import SessionLocal
-from db import models as M
+from infrastructure.db.database import SessionLocal
+from infrastructure.db import models as M
 from mcp.schemas import MCPContext, MCPRequest, MCPResponse
 from mcp.permissions import check_permission
 from mcp.query_guard import validate_and_sanitise, GuardViolationError
@@ -273,7 +273,7 @@ class SalonMCP:
                 for item in data:
                     import uuid
                     if item.get("service_id"):
-                        from db.models import Service
+                        from infrastructure.db.models import Service
                         try:
                             svc_uuid = uuid.UUID(str(item["service_id"]))
                         except Exception:
@@ -282,7 +282,7 @@ class SalonMCP:
                         if svc:
                             item["service_name"] = svc.name
                     if item.get("staff_id"):
-                        from db.models import Staff
+                        from infrastructure.db.models import Staff
                         try:
                             staff_uuid = uuid.UUID(str(item["staff_id"]))
                         except Exception:
@@ -291,7 +291,7 @@ class SalonMCP:
                         if st:
                             item["staff_name"] = st.full_name
                     if item.get("branch_id"):
-                        from db.models import Branch
+                        from infrastructure.db.models import Branch
                         try:
                             branch_uuid = uuid.UUID(str(item["branch_id"]))
                         except Exception:
@@ -478,3 +478,4 @@ class SalonMCP:
         
         writer = SalonMCPWrite()
         return writer.execute_write(context, resource, operation, data, filters, agent_name)
+

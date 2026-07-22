@@ -65,7 +65,7 @@ def check_database_connection():
     logger.info("=" * 70)
     
     try:
-        from db.database import check_db_health, engine, SessionLocal
+        from infrastructure.db import check_db_health, engine, SessionLocal
         
         logger.info("Testing connection pool health...")
         is_healthy = check_db_health()
@@ -89,7 +89,7 @@ def check_tables_exist():
     
     try:
         from sqlalchemy import text, inspect
-        from db.database import SessionLocal
+        from infrastructure.db import SessionLocal
         
         db = SessionLocal()
         inspector = inspect(db.connection())
@@ -138,8 +138,7 @@ def check_models_sync():
     logger.info("=" * 70)
     
     try:
-        from db.models import Base
-        from db.database import engine
+        from infrastructure.db import Base, engine
         
         # Get metadata from models
         logger.info("Checking model definitions...")
@@ -163,8 +162,7 @@ def check_sample_query():
     logger.info("=" * 70)
     
     try:
-        from db.database import SessionLocal
-        from db.models import Branch
+        from infrastructure.db import SessionLocal, Branch
         
         db = SessionLocal()
         count = db.query(Branch).count()
@@ -178,7 +176,7 @@ def check_sample_query():
                 logger.info(f"   - {branch.name} ({branch.code})")
         else:
             logger.info("No branches found - database might need seeding")
-            logger.info("Run: python -m db.seed")
+            logger.info("Run: python -m infrastructure.db.seed")
         
         db.close()
         return True
@@ -195,7 +193,7 @@ def check_alembic_migrations():
     
     try:
         from sqlalchemy import text
-        from db.database import SessionLocal
+        from infrastructure.db import SessionLocal
         
         db = SessionLocal()
         

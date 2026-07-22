@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus, Notification, User, Waitlist
-from tools.booking_tools import (
+from infrastructure.db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus, Notification, User, Waitlist
+from application.services.appointment_service import (
     create_appointment,
     cancel_appointment,
     add_to_waitlist,
@@ -65,7 +65,7 @@ def fixture_db_session():
 
 def test_staff_leave_management(db_session):
     """Rule 7: Enforce staff leave bounds."""
-    from db.models import StaffLeave
+    from infrastructure.db.models import StaffLeave
     stylist = db_session.query(Staff).filter(Staff.first_name == "Alexandra").first()
     
     # Create a leave entry for Alexandra Chen for tomorrow
@@ -241,7 +241,7 @@ def test_waitlist_system(db_session):
 
 def test_returning_cohort_reminders(db_session):
     """Assert returning cohort customers automatically receive one daily reminder only."""
-    from services.analytics_service import AnalyticsService
+    from application.services.analytics_service import AnalyticsService
     
     branch = db_session.query(Branch).first()
     service = db_session.query(Service).first()
@@ -305,3 +305,4 @@ def test_returning_cohort_reminders(db_session):
         Notification.title == "Returning Cohort Daily Reminder"
     ).all()
     assert len(notifs_again) == 1
+

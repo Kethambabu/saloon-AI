@@ -119,3 +119,4 @@ def resolve_template(
             filters[k] = v
 
     return resource, operation, filters
+

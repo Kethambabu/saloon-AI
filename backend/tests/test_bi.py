@@ -14,13 +14,16 @@ from sqlalchemy.orm import sessionmaker
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db import Base, Branch, Service, Staff, Customer, Appointment, AppointmentStatus
-from tools.bi_tools import (
+from infrastructure.db import Base, Branch, Service, Staff, Customer, Appointment, AppointmentStatus
+from ai.tools.bi_tools import (
     validate_sql_safety,
     execute_bi_sql_query,
 )
-from services.analytics_service import AnalyticsService
-from agents.bi_agent import BIAgent
+from application.services.analytics_service import AnalyticsService
+from ai.agents.bi_agent import BIAgent
+from ai.tools.bi_tools import get_service_popularity_analytics
+from ai.tools.transaction_dispatcher import execute_transaction
+from core.handlers import RawSQLHandler, HandlerContext
 from autogen_agentchat.agents import AssistantAgent
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -173,6 +176,44 @@ def test_raw_sql_execution(bi_db_session):
     assert "SELECT" in res["error"]
 
 
+def test_service_popularity_analytics_helper(bi_db_session):
+    """Verifies the service popularity helper aggregates completed bookings per service."""
+    res = get_service_popularity_analytics()
+    assert res["success"] is True
+    by_name = {s["name"]: s for s in res["services"]}
+    assert by_name["Haircut"]["bookings"] == 1
+    assert by_name["Haircut"]["revenue"] == 80.0
+    assert by_name["Facial"]["bookings"] == 1
+    assert by_name["Facial"]["revenue"] == 120.0
+
+
+def test_raw_sql_handler_enforces_admin_owner_only(bi_db_session):
+    """RawSQLHandler must reject non-ADMIN/OWNER roles on direct handle() calls too,
+    as defense-in-depth alongside the registry-level permission_action check
+    (see tests/test_workflow_registry.py::test_dispatch_rejects_customer_from_raw_sql
+    for the real dispatch-path coverage)."""
+    handler = RawSQLHandler()
+
+    for blocked_role in ("MANAGER", "STAFF", "CUSTOMER"):
+        ctx = HandlerContext(params={"sql": "SELECT count(*) FROM staff"}, user_role=blocked_role)
+        res = handler.handle(ctx)
+        assert res["success"] is False
+        assert "ADMIN/OWNER" in res["error"]
+
+    for allowed_role in ("ADMIN", "OWNER"):
+        ctx = HandlerContext(params={"sql": "SELECT count(*) FROM staff"}, user_role=allowed_role)
+        res = handler.handle(ctx)
+        assert res["success"] is True
+        assert "'success': True" in res["result"]
+
+
+def test_trigger_returning_cohort_reminders_transaction_wired():
+    """execute_transaction must route 'trigger_returning_cohort_reminders' to the BI tool
+    instead of falling through to the 'Unknown transaction action' branch."""
+    result = execute_transaction(action="trigger_returning_cohort_reminders", parameters={})
+    assert "Unknown transaction action" not in result
+
+
 # ---------------------------------------------------------------------------
 # 3. AutoGen BIAgent Unit Tests
 # ---------------------------------------------------------------------------
@@ -233,7 +274,7 @@ async def test_bi_agent_process():
 
 
 def test_execute_bi_sql_query_repair():
-    from tools.bi_tools import execute_bi_sql_query
+    from ai.tools.bi_tools import execute_bi_sql_query
     from unittest.mock import patch, MagicMock
 
     with patch("tools.bi_tools.SessionLocal") as mock_session_class:
@@ -256,3 +297,4 @@ def test_execute_bi_sql_query_repair():
         called_sql = mock_db.execute.call_args[0][0].text
         expected_sql = "SELECT SUM(revenue) FROM appointments WHERE start_time::date = (CURRENT_DATE - INTERVAL '2 day') LIMIT 50"
         assert called_sql == expected_sql
+

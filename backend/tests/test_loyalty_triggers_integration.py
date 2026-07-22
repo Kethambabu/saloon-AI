@@ -7,9 +7,9 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 import uuid
 
-from db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus, Review, User
-from tools.booking_tools import create_appointment, cancel_appointment
-from services.review_service import ReviewService
+from infrastructure.db import Base, Branch, Staff, Customer, Service, Appointment, AppointmentStatus, Review, User
+from application.services.appointment_service import create_appointment, cancel_appointment
+from application.services.review_service import ReviewService
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -73,7 +73,7 @@ def test_loyalty_on_appointment_completion_and_cancellation(db_session):
     # 2. Complete appointment
     appt = db_session.query(Appointment).filter_by(id=uuid.UUID(appt_id)).first()
     
-    from tools.loyalty_triggers import trigger_loyalty_update_on_completion
+    from application.services.loyalty_service import trigger_loyalty_update_on_completion
     trigger_loyalty_update_on_completion(db_session, appt.id, customer.id)
     
     db_session.refresh(customer)
@@ -117,3 +117,4 @@ def test_loyalty_on_review_submission(db_session):
     db_session.refresh(customer)
     # Review submission: +25 base, 5-star rating: +50 bonus = +75 points total
     assert customer.loyalty_points == 75
+

@@ -12,11 +12,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.config import get_settings
+settings = get_settings()
+
 logger = logging.getLogger(__name__)
 
 # Output log path
-_BACKEND_DIR = Path(__file__).resolve().parent.parent
-_AUDIT_LOG_FILE = _BACKEND_DIR / "data" / "mcp_audit.jsonl"
+_AUDIT_LOG_FILE = Path(settings.data_dir) / "mcp_audit.jsonl"
 
 
 def _ensure_audit_dir():
@@ -84,3 +86,4 @@ def get_audit_logger() -> MCPAuditLogger:
     if _audit_logger is None:
         _audit_logger = MCPAuditLogger()
     return _audit_logger
+

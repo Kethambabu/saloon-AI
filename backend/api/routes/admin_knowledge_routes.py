@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 # Project imports
-from db import get_db, User, UserRole
+from infrastructure.db import get_db, User, UserRole
 from api.deps import get_current_user, RoleChecker
-from services.receptionist_rag_service import ReceptionistRAGService
-from db.models import KnowledgeDocument, SpecialOffer
+from application.services.receptionist_rag_service import ReceptionistRAGService
+from infrastructure.db.models import KnowledgeDocument, SpecialOffer
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +38,11 @@ ALLOWED_DOC_TYPES = {
 # --- Pydantic Schema Models ---
 
 class OfferCreate(BaseModel):
-    title: str = Field(..., example="Hair Spa Combo")
-    description: str = Field(..., example="Deep-cleansing hair spa plus precision haircut at 30% off.")
-    discount_pct: float = Field(default=0.0, ge=0.0, le=100.0, example=30.0)
-    start_date: datetime.date = Field(..., example="2026-06-01")
-    end_date: datetime.date = Field(..., example="2026-06-30")
+    title: str = Field(..., json_schema_extra={"example": "Hair Spa Combo"})
+    description: str = Field(..., json_schema_extra={"example": "Deep-cleansing hair spa plus precision haircut at 30% off."})
+    discount_pct: float = Field(default=0.0, ge=0.0, le=100.0, json_schema_extra={"example": 30.0})
+    start_date: datetime.date = Field(..., json_schema_extra={"example": "2026-06-01"})
+    end_date: datetime.date = Field(..., json_schema_extra={"example": "2026-06-30"})
 
 
 class OfferUpdate(BaseModel):
@@ -330,4 +330,5 @@ async def rebuild_knowledge_index(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Receptionist knowledge index rebuild failed: {str(e)}"
         )
+
 

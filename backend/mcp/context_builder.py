@@ -167,3 +167,4 @@ def build_context_from_dict(data: dict, session_id: Optional[str] = None) -> MCP
         branch_id=str(data["branch_id"]) if data.get("branch_id") else None,
         session_id=session_id,
     )
+

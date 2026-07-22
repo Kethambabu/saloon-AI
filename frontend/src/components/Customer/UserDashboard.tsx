@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../api/client';
 import { AgentChat } from '../AgentChat/AgentChat';
+import { DashboardSkeleton } from '../ui/Skeleton';
 import { useLoyalty } from '../../hooks/useLoyalty';
 import { LoyaltyCard } from '../Loyalty/LoyaltyCard';
 import { loyaltySyncService } from '../../services/LoyaltySyncService';
@@ -212,20 +213,22 @@ export const UserDashboard: React.FC = () => {
       // Loyalty points are now fetched via useLoyalty hook
       // No need to fetch here anymore
       refreshLoyalty();
-      
-      // Load services & branches
-      const srvRes = await apiClient.get<ServiceItem[]>('/services');
+
+      // Fire all independent reads in parallel instead of one at a time —
+      // five sequential round trips was turning this into a multi-second
+      // waterfall on every load.
+      const [srvRes, branchRes, apptRes, notifRes, leadRes] = await Promise.all([
+        apiClient.get<ServiceItem[]>('/services'),
+        apiClient.get<BranchItem[]>('/branches'),
+        apiClient.get<AppointmentRecord[]>('/appointments/my'),
+        apiClient.get<any[]>('/notifications').catch(() => ({ data: [] })),
+        apiClient.get('/leads/active').catch(() => ({ data: null })),
+      ]);
+
       setServices(srvRes.data);
-
-      const branchRes = await apiClient.get<BranchItem[]>('/branches');
       setBranches(branchRes.data);
-
-      // Load client's appointments
-      const apptRes = await apiClient.get<AppointmentRecord[]>('/appointments/my');
       setAppointments(apptRes.data);
 
-      // Load notifications dynamically
-      const notifRes = await apiClient.get<any[]>('/notifications').catch(() => ({ data: [] }));
       if (notifRes.data && notifRes.data.length > 0) {
         setNotifications(notifRes.data.map((n: any) => ({
           id: n.id,
@@ -238,13 +241,7 @@ export const UserDashboard: React.FC = () => {
         setNotifications([]);
       }
 
-      // Load active lead
-      try {
-        const leadRes = await apiClient.get('/leads/active');
-        setActiveLead(leadRes.data || null);
-      } catch (err) {
-        setActiveLead(null);
-      }
+      setActiveLead(leadRes.data || null);
     } catch (err) {
       console.warn('Backend offline or not returning customer data');
       setNotifications([]);
@@ -740,10 +737,7 @@ export const UserDashboard: React.FC = () => {
         )}
 
         {isLoading ? (
-          <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
-            <div className="w-10 h-10 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-            <span className="text-xs font-black text-slate-500 uppercase tracking-widest animate-pulse">Syncing client portfolio context...</span>
-          </div>
+          <DashboardSkeleton label="Syncing your account…" />
         ) : (
           <div className="space-y-8 animate-fade-in">
 

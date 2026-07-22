@@ -6,10 +6,10 @@ Public endpoints for services, branches, and basic discovery (no authentication 
 import logging
 from typing import List, Optional, Any
 from fastapi import APIRouter, Query, Path, HTTPException, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
-from db import (
+from infrastructure.db import (
     get_db,
     SessionLocal,
     Branch,
@@ -49,8 +49,7 @@ class BranchResponse(BaseModel):
     email: Optional[str] = Field(None, description="Email address")
     is_active: bool = Field(..., description="Is branch active")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ServiceResponse(BaseModel):
@@ -62,8 +61,7 @@ class ServiceResponse(BaseModel):
     duration_minutes: int = Field(..., description="Service duration in minutes")
     is_active: bool = Field(..., description="Is service active")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StaffResponse(BaseModel):
@@ -77,8 +75,7 @@ class StaffResponse(BaseModel):
     branch_id: str = Field(..., description="Branch UUID")
     is_active: bool = Field(..., description="Is staff active")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @property
     def full_name(self) -> str:
@@ -94,8 +91,7 @@ class CustomerResponse(BaseModel):
     phone: Optional[str] = Field(None, description="Phone number")
     is_active: bool = Field(..., description="Is customer active")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @property
     def full_name(self) -> str:
@@ -443,13 +439,15 @@ async def core_health():
         # Test database connection
         branch_count = db.query(Branch).count()
         service_count = db.query(Service).count()
+        from infrastructure.db import is_using_fallback
         
         return {
             "status": "healthy",
             "database": "connected",
+            "database_mode": "sqlite_fallback" if is_using_fallback() else "supabase",
             "branches": branch_count,
             "services": service_count,
-            "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+            "timestamp": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -512,14 +510,14 @@ async def get_my_appointments(
         
         # Trigger auto-cancellation of past customer appointments
         try:
-            from tools.booking_tools import auto_cancel_past_customer_appointments
+            from application.services.appointment_service import auto_cancel_past_customer_appointments
             auto_cancel_past_customer_appointments(str(current_user.customer_id), db)
         except Exception as cancel_err:
             logger.error(f"Auto-cancellation of past customer appointments failed: {cancel_err}")
             
         # Trigger lazy reminders (Rule 11)
         try:
-            from tools.booking_tools import send_appointment_reminders
+            from application.services.appointment_service import send_appointment_reminders
             send_appointment_reminders(str(current_user.customer_id), db)
         except Exception as e:
             logger.warning(f"Lazy reminders trigger failed: {e}")
@@ -531,7 +529,7 @@ async def get_my_appointments(
             
         # Trigger auto-cancellation of past staff appointments
         try:
-            from tools.booking_tools import auto_cancel_past_staff_appointments
+            from application.services.appointment_service import auto_cancel_past_staff_appointments
             auto_cancel_past_staff_appointments(str(current_user.staff_id), db)
         except Exception as cancel_err:
             logger.error(f"Auto-cancellation of past staff appointments failed: {cancel_err}")
@@ -594,7 +592,7 @@ async def book_appointment(
             detail="Only customer accounts can book appointments."
         )
         
-    from domain.appointment_service import get_appointment_service
+    from application.services.appointment_service import get_appointment_service
     svc = get_appointment_service()
     result = svc.book(
         customer_id=str(current_user.customer_id),
@@ -643,7 +641,7 @@ async def cancel_booking(
             detail="You are not authorized to cancel this appointment."
         )
         
-    from domain.appointment_service import get_appointment_service
+    from application.services.appointment_service import get_appointment_service
     svc = get_appointment_service()
     result = svc.cancel(
         appointment_id=appointment_id,
@@ -672,6 +670,11 @@ async def reschedule_booking(
     """
     Reschedule an existing appointment.
     """
+    from application.services.datetime_validation import validate_appointment_datetime
+    val = validate_appointment_datetime(payload.new_start_time)
+    if not val["valid"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=val["reason"])
+
     from uuid import UUID
     try:
         appt_uuid = UUID(appointment_id)
@@ -688,7 +691,7 @@ async def reschedule_booking(
             detail="You are not authorized to reschedule this appointment."
         )
         
-    from domain.appointment_service import get_appointment_service
+    from application.services.appointment_service import get_appointment_service
     svc = get_appointment_service()
     result = svc.reschedule(
         appointment_id=appointment_id,
@@ -763,7 +766,7 @@ async def update_appointment_status(
         )
         
     if target == AppointmentStatus.CANCELLED:
-        from domain.appointment_service import get_appointment_service
+        from application.services.appointment_service import get_appointment_service
         svc = get_appointment_service()
         result = svc.cancel(
             appointment_id=appointment_id,
@@ -802,7 +805,7 @@ async def update_appointment_status(
                 msg = f"Your service {appt.service.name} is completed. Thank you for visiting! Please leave a review."
                 # Auto-award loyalty points
                 try:
-                    from tools.loyalty_service import on_appointment_completed
+                    from application.services.loyalty_service import on_appointment_completed
                     on_appointment_completed(db=db, appointment_id=appt.id, customer_id=appt.customer_id)
                 except Exception as loyalty_err:
                     logger.error(f"Failed to auto-award loyalty points: {loyalty_err}")
@@ -841,7 +844,7 @@ async def join_waitlist(
             detail="Only customer accounts can join the waitlist."
         )
         
-    from tools.booking_tools import add_to_waitlist
+    from application.services.appointment_service import add_to_waitlist
     result = add_to_waitlist(
         customer_id=str(current_user.customer_id),
         branch_id=payload.branch_id,
@@ -859,4 +862,5 @@ async def join_waitlist(
         )
         
     return result
+
 

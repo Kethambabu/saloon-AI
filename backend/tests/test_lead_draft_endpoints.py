@@ -5,10 +5,21 @@ from sqlalchemy.orm import Session
 import uuid
 from datetime import date, time
 
-from db import User, UserRole, Customer, Lead, LeadStatus, SessionLocal, Branch, Service
-from tools.booking_tools import create_appointment
+from infrastructure.db import User, UserRole, Customer, Lead, LeadStatus, SessionLocal, Branch, Service, Appointment
+from application.services.appointment_service import create_appointment
 
 def test_lead_draft_flow(client: TestClient):
+    # Clear any existing appointments and leads for the test customer to ensure test isolation
+    db_init = SessionLocal()
+    try:
+        user_init = db_init.query(User).filter(User.email == "customer@example.com").first()
+        if user_init:
+            db_init.query(Appointment).filter(Appointment.customer_id == user_init.customer_id).delete()
+            db_init.query(Lead).filter(Lead.customer_id == user_init.customer_id).delete()
+            db_init.commit()
+    finally:
+        db_init.close()
+
     # 1. Login as customer
     login_resp = client.post("/api/v1/auth/login", json={
         "email": "customer@example.com",
@@ -73,19 +84,24 @@ def test_lead_draft_flow(client: TestClient):
 
     # 5. Book appointment and verify lead conversion
     # Create appointment using create_appointment logic
+    from datetime import datetime, timedelta
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == "customer@example.com").first()
         customer_id = str(user.customer_id)
+        
+        future_time = (datetime.now() + timedelta(days=3)).replace(hour=15, minute=0, second=0, microsecond=0)
+        start_time_str = future_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # Call booking tool
         appt_res = create_appointment(
             customer_id=customer_id,
             branch_id=branch_id,
             service_id=service_id,
-            start_time="2026-06-15T15:00:00Z",
+            start_time=start_time_str,
             db=db
         )
+        print("\nDEBUG APPT RESULT:", appt_res)
         assert appt_res["success"] is True
         
         # Verify the lead is now CONVERTED
@@ -94,3 +110,4 @@ def test_lead_draft_flow(client: TestClient):
         assert lead.converted is True
     finally:
         db.close()
+

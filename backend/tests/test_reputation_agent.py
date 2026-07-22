@@ -17,11 +17,11 @@ from sqlalchemy.orm import sessionmaker
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db.models import (
+from infrastructure.db.models import (
     Base, Branch, Service, Staff, Customer,
     Appointment, Review, AppointmentStatus, ReviewStatus,
 )
-from tools.reputation_tools import (
+from application.services.review_service import (
     fetch_reviews,
     get_review_analytics,
     detect_critical_reviews,
@@ -30,7 +30,7 @@ from tools.reputation_tools import (
     _classify_sentiment,
     _extract_themes,
 )
-from agents.reputation_agent import ReputationAgent, REPUTATION_SYSTEM_PROMPT
+from ai.agents.reputation_agent import ReputationAgent, REPUTATION_SYSTEM_PROMPT
 from autogen_agentchat.agents import AssistantAgent
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -45,7 +45,7 @@ def fixture_reputation_db_session():
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
 
-    with patch("tools.reputation_tools.SessionLocal", return_value=db):
+    with patch("application.services.review_service.SessionLocal", return_value=db):
         try:
             # 1. Seed Branch
             branch = Branch(name="Downtown Elite", code="BR-DWTN-01", address="123 Main St", city="Metro")
@@ -452,3 +452,4 @@ async def test_reputation_agent_memory_management():
 
     agent.clear_memory("session-1")
     assert agent._get_memory_context("session-1") == ""
+

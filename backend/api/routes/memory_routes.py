@@ -1,219 +1,233 @@
-"""
-FastAPI Router for Memory Pipeline Trigger Operations.
-Enables administrators and managers to manually consolidate memory databases.
-"""
-
 import logging
-import datetime
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+import uuid
+from datetime import datetime
 
 # Project imports
-from db import get_db, User, UserRole
+from infrastructure.db import get_db, User, UserRole
 from api.deps import get_current_user, RoleChecker
-from services.memory_pipeline_service import MemoryPipelineService
+from infrastructure.db.models import CuratedMemory, MemoryScope, MemoryStatus
+from application.services.memory_curator_service import MemoryCuratorService
+from infrastructure.events.event_bus import SalonEvent
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
-_memory_service = None
-
-
-def get_memory_service() -> MemoryPipelineService:
-    """Lazily load and cache the MemoryPipelineService singleton."""
-    global _memory_service
-    if _memory_service is None:
-        _memory_service = MemoryPipelineService()
-    return _memory_service
-
 # Role checker for admin/manager permissions
 check_admin_manager = RoleChecker([UserRole.ADMIN, UserRole.MANAGER])
 
 
+class ProcessEventRequest(BaseModel):
+    event_type: str = Field(..., description="The domain event type, e.g. customer.preference")
+    tenant_id: str = Field("default", description="The tenant identifier")
+    payload: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary event payload fields")
+
+
+class CuratedMemoryResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: str
+    scope: str
+    owner_id: Optional[str] = None
+    content: str
+    source_event_id: Optional[str] = None
+    source_type: Optional[str] = None
+    status: str
+    confidence: float
+    importance: float
+    created_at: datetime
+    updated_at: datetime
+    expires_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 @router.post(
-    "/trigger/daily",
+    "/events/process",
     status_code=status.HTTP_200_OK,
-    summary="Trigger daily memory consolidation pipeline"
+    summary="Submit a domain event to the memory curator"
 )
-async def trigger_daily_pipeline(
-    date_str: Optional[str] = Query(None, description="Target date in YYYY-MM-DD format (defaults to today)"),
-    agent_name: Optional[str] = Query(None, description="Target agent memory (receptionist, customer, staff, lead, upsell, reputation, business_intelligence)"),
+async def process_domain_event(
+    request: ProcessEventRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(check_admin_manager)
 ):
     """
-    Manually run the daily memory pipeline for the specified date.
-    Extracts customer queries, staff performance, leads updates, review ratings,
-    and upsells from PostgreSQL, compiles them using LLM summaries, and loads them into daily FAISS indices.
+    Submit a domain event to the Memory Curator Service.
+    It evaluates the event through Layer 1 (policy) and Layer 2 (LLM),
+    then saves to SQL and FAISS if deemed durable.
     """
-    logger.info(f"[Memory API] Manual daily trigger requested by {current_user.email} (date: {date_str or 'today'}, agent: {agent_name or 'all'})")
-    
+    logger.info(f"[Memory API] Processing event {request.event_type} requested by {current_user.email}")
     try:
-        if date_str:
-            target_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        # Construct a generic SalonEvent from request
+        event = SalonEvent(
+            tenant_id=request.tenant_id,
+            event_type=request.event_type,
+            payload=request.payload
+        )
+        curator = MemoryCuratorService()
+        result = await curator.process_event(db, event)
+        if result:
+            return {
+                "success": True,
+                "stored": True,
+                "memory": CuratedMemoryResponse.from_orm(result)
+            }
         else:
-            target_date = datetime.date.today()
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format. Use YYYY-MM-DD."
-        )
-
-    try:
-        memory_service = get_memory_service()
-        results = await memory_service.run_daily_pipeline(db, target_date, agent_name=agent_name)
-        return {
-            "success": True,
-            "message": f"Daily memory pipeline processed successfully for {target_date}.",
-            "details": results
-        }
+            return {
+                "success": True,
+                "stored": False,
+                "message": "Event did not trigger long-term memory storage."
+            }
     except Exception as e:
-        logger.error(f"[Memory API] Daily pipeline failed: {e}", exc_info=True)
+        logger.error(f"[Memory API] Failed to process event: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Daily memory compilation failed: {str(e)}"
+            detail=f"Failed to process event: {str(e)}"
         )
 
 
-@router.post(
-    "/trigger/weekly",
-    status_code=status.HTTP_200_OK,
-    summary="Trigger weekly memory consolidation pipeline"
+@router.get(
+    "/curated",
+    response_model=List[CuratedMemoryResponse],
+    summary="List curated memories"
 )
-async def trigger_weekly_pipeline(
-    end_date_str: Optional[str] = Query(None, description="End date of the week in YYYY-MM-DD format (defaults to today)"),
-    agent_name: Optional[str] = Query(None, description="Target agent memory (receptionist, customer, staff, lead, upsell, reputation, business_intelligence)"),
+def list_curated_memories(
+    scope: Optional[MemoryScope] = Query(None, description="Filter by memory scope"),
+    status_filter: Optional[MemoryStatus] = Query(None, alias="status", description="Filter by status"),
+    owner_id: Optional[str] = Query(None, description="Filter by owner ID"),
+    tenant_id: str = Query("default", description="Filter by tenant ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(check_admin_manager)
 ):
     """
-    Manually compile weekly memories from daily FAISS summaries for the last 7 days.
-    Creates weekly summaries for all agents and isolates customer/staff records.
+    List database records of curated memories with optional filters.
     """
-    logger.info(f"[Memory API] Manual weekly trigger requested by {current_user.email} (end_date: {end_date_str or 'today'}, agent: {agent_name or 'all'})")
-    
-    try:
-        if end_date_str:
-            end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
-        else:
-            end_date = datetime.date.today()
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format. Use YYYY-MM-DD."
-        )
-
-    try:
-        memory_service = get_memory_service()
-        results = await memory_service.run_weekly_pipeline(db, end_date, agent_name=agent_name)
-        return {
-            "success": True,
-            "message": f"Weekly memory pipeline processed successfully ending {end_date}.",
-            "details": results
-        }
-    except Exception as e:
-        logger.error(f"[Memory API] Weekly pipeline failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Weekly memory compilation failed: {str(e)}"
-        )
+    logger.info(f"[Memory API] Curated memory list requested by {current_user.email}")
+    query = db.query(CuratedMemory).filter(CuratedMemory.tenant_id == tenant_id)
+    if scope:
+        query = query.filter(CuratedMemory.scope == scope)
+    if status_filter:
+        query = query.filter(CuratedMemory.status == status_filter)
+    else:
+        query = query.filter(CuratedMemory.status == MemoryStatus.ACTIVE)
+    if owner_id:
+        query = query.filter(CuratedMemory.owner_id == owner_id)
+        
+    return query.all()
 
 
-@router.post(
-    "/trigger/monthly",
-    status_code=status.HTTP_200_OK,
-    summary="Trigger monthly memory consolidation pipeline"
+@router.delete(
+    "/curated/{memory_id}",
+    summary="Forget a curated memory (forget/delete path)"
 )
-async def trigger_monthly_pipeline(
-    end_date_str: Optional[str] = Query(None, description="End date of the month in YYYY-MM-DD format (defaults to today)"),
-    agent_name: Optional[str] = Query(None, description="Target agent memory (receptionist, customer, staff, lead, upsell, reputation, business_intelligence)"),
+def forget_curated_memory(
+    memory_id: uuid.UUID,
+    tenant_id: str = Query("default", description="Tenant ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(check_admin_manager)
 ):
     """
-    Manually compile monthly memories from weekly FAISS summaries for the last 30 days.
+    Deletes the memory completely from both SQL metadata and local FAISS vector store.
     """
-    logger.info(f"[Memory API] Manual monthly trigger requested by {current_user.email} (end_date: {end_date_str or 'today'}, agent: {agent_name or 'all'})")
-    
-    try:
-        if end_date_str:
-            end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
-        else:
-            end_date = datetime.date.today()
-    except ValueError:
+    logger.info(f"[Memory API] Forget curated memory {memory_id} requested by {current_user.email}")
+    curator = MemoryCuratorService()
+    success = curator.forget_memory(db, memory_id, tenant_id=tenant_id)
+    if not success:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid date format. Use YYYY-MM-DD."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Memory not found or unauthorized tenant."
         )
-
-    try:
-        memory_service = get_memory_service()
-        results = await memory_service.run_monthly_pipeline(db, end_date, agent_name=agent_name)
-        return {
-            "success": True,
-            "message": f"Monthly memory pipeline processed successfully ending {end_date}.",
-            "details": results
-        }
-    except Exception as e:
-        logger.error(f"[Memory API] Monthly pipeline failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Monthly memory compilation failed: {str(e)}"
-        )
+    return {"success": True, "message": "Memory successfully forgotten and deleted from all indices."}
 
 
-@router.post(
-    "/trigger/yearly",
-    status_code=status.HTTP_200_OK,
-    summary="Trigger yearly memory consolidation pipeline"
+@router.get(
+    "/curated/search",
+    summary="Semantic search over curated memories"
 )
-async def trigger_yearly_pipeline(
-    year: Optional[int] = Query(None, description="Target year to compile (defaults to current year)"),
-    agent_name: Optional[str] = Query(None, description="Target agent memory (receptionist, customer, staff, lead, upsell, reputation, business_intelligence)"),
+def search_curated_memories(
+    q: str = Query(..., description="Semantic search query"),
+    scope: MemoryScope = Query(MemoryScope.CUSTOMER, description="Domain/Scope to search"),
+    tenant_id: str = Query("default", description="Tenant ID"),
+    owner_id: Optional[str] = Query(None, description="Filter results for a specific owner"),
+    k: int = Query(3, description="Number of results"),
     db: Session = Depends(get_db),
     current_user: User = Depends(check_admin_manager)
 ):
     """
-    Manually compile yearly memories from monthly FAISS summaries for the specified year.
+    Performs semantic search over curated memories using per-tenant/per-domain FAISS index,
+    validating results against SQL to ensure authority.
     """
-    logger.info(f"[Memory API] Manual yearly trigger requested by {current_user.email} (year: {year or 'current'}, agent: {agent_name or 'all'})")
+    logger.info(f"[Memory API] Semantic memory search by {current_user.email} (q='{q}', scope={scope.value})")
+    from infrastructure.rag.retriever import search_curated_memory
     
-    if year is None:
-        year = datetime.date.today().year
+    results = search_curated_memory(
+        domain=scope.value,
+        query=q,
+        tenant_id=tenant_id,
+        owner_id=owner_id,
+        k=k
+    )
+    return results
 
+
+@router.get(
+    "/status",
+    summary="Get memory system status"
+)
+def get_memory_status(
+    current_user: User = Depends(check_admin_manager)
+):
+    """
+    Get vector index storage configuration status.
+    """
+    from infrastructure.rag.retriever import get_retriever
     try:
-        memory_service = get_memory_service()
-        results = await memory_service.run_yearly_pipeline(db, year, agent_name=agent_name)
-        return {
-            "success": True,
-            "message": f"Yearly memory pipeline processed successfully for year {year}.",
-            "details": results
+        retriever = get_retriever()
+        status_info = retriever.get_status()
+        status_info["event_driven_memory"] = {
+            "active": True,
+            "architecture": "Event-Driven Curated Memory Store (FAISS + SQL)",
+            "migration_completed": True
         }
+        return status_info
     except Exception as e:
-        logger.error(f"[Memory API] Yearly pipeline failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Yearly memory compilation failed: {str(e)}"
-        )
+        logger.error(f"[Memory API] Failed to get memory status: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.post(
+    "/trigger/sync",
+    summary="Legacy sync trigger stub"
+)
+def trigger_legacy_sync(
+    current_user: User = Depends(check_admin_manager)
+):
+    """Legacy endpoint placeholder - returns notice that old sync is retired."""
+    return {
+        "success": True,
+        "action": "skipped",
+        "message": "Unified roll-up synchronization is retired. Event-driven memory curation is now active."
+    }
 
 
 @router.post(
     "/trigger/interactions",
-    status_code=status.HTTP_200_OK,
     summary="Trigger Customer Interactions RAG Ingestion"
 )
-async def trigger_interactions_ingestion(
+def trigger_interactions_ingestion(
     current_user: User = Depends(check_admin_manager)
 ):
     """
-    Manually trigger customer interactions index ingestion.
-    Rebuilds the 'customer_interactions' FAISS index from the database contents.
+    Rebuild the customer_interactions index from scratch if manually requested.
     """
     logger.info(f"[Memory API] Manual customer interactions RAG trigger requested by {current_user.email}")
     try:
-        from rag.ingest import RAGIngestor
+        from infrastructure.rag.ingest import RAGIngestor
         ingestor = RAGIngestor()
         results = ingestor.ingest_interactions(force_rebuild=True)
         return {
@@ -227,94 +241,3 @@ async def trigger_interactions_ingestion(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Customer interactions ingestion failed: {str(e)}"
         )
-
-
-@router.get(
-    "/status",
-    status_code=status.HTTP_200_OK,
-    summary="Get current vector database synchronization status"
-)
-def get_sync_status(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(check_admin_manager)
-):
-    """
-    Get synchronization dates boundaries and whether sync is available.
-    """
-    logger.info(f"[Memory API] Sync status requested by {current_user.email}")
-    try:
-        service = get_memory_service()
-        return service.get_sync_status(db)
-    except Exception as e:
-        logger.error(f"[Memory API] Failed to get sync status: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve sync status: {str(e)}"
-        )
-
-
-@router.post(
-    "/trigger/sync",
-    status_code=status.HTTP_200_OK,
-    summary="Trigger unified vector database synchronization"
-)
-async def trigger_unified_sync(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(check_admin_manager)
-):
-    """
-    Triggers unified day-by-day incremental synchronization loop, saving narratives
-    to PostgreSQL and rebuilding FAISS indexes once at the end.
-    """
-    logger.info(f"[Memory API] Unified sync triggered by {current_user.email}")
-    service = get_memory_service()
-    
-    if getattr(service, "is_syncing", False):
-        return {
-            "success": True,
-            "action": "skipped",
-            "message": "Vector database synchronization is already in progress in the background."
-        }
-
-    try:
-        status_info = service.get_sync_status(db)
-        if not status_info["sync_available"]:
-            return {
-                "success": True,
-                "action": "skipped",
-                "message": "Vector database is already up to date.",
-                "details": status_info
-            }
-    except Exception as e:
-        logger.error(f"[Memory API] Failed to check sync status: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to check synchronization status: {str(e)}"
-        )
-
-    async def run_sync_in_background():
-        from db.database import SessionLocal
-        logger.info("[Memory API] Background task started for unified sync.")
-        service.is_syncing = True
-        bg_db = SessionLocal()
-        try:
-            await service.run_unified_sync(bg_db)
-        except Exception as bg_err:
-            logger.error(f"[Memory API] Background unified sync failed: {bg_err}", exc_info=True)
-        finally:
-            bg_db.close()
-            service.is_syncing = False
-            logger.info("[Memory API] Background task completed for unified sync.")
-
-    background_tasks.add_task(run_sync_in_background)
-    
-    return {
-        "success": True,
-        "action": "synchronized",
-        "message": "Vector database synchronization initiated in the background. Please refresh in a few minutes to see the updated status.",
-        "details": {
-            "start_date": status_info["next_sync_start"],
-            "end_date": status_info["next_sync_end"]
-        }
-    }

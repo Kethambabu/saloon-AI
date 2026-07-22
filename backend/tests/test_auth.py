@@ -11,7 +11,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from db import SessionLocal, User, UserRole
+from infrastructure.db import SessionLocal, User, UserRole
 from core.security import (
     hash_password,
     verify_password,
@@ -270,3 +270,72 @@ def test_api_analytics_staff_forbidden(client: TestClient):
     
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "Insufficient permissions" in response.json()["detail"]
+
+
+# --- 4. Signup Privilege-Escalation Tests ---
+
+def test_signup_owner_blocked_without_admin_auth(client: TestClient):
+    """An unauthenticated caller must NOT be able to self-register as OWNER."""
+    payload = {
+        "email": f"rogue-owner-{uuid.uuid4().hex[:8]}@example.com",
+        "password": "password123",
+        "role": "OWNER",
+        "first_name": "Rogue",
+        "last_name": "Owner",
+    }
+    response = client.post("/api/v1/auth/signup", json=payload)
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_signup_manager_blocked_without_admin_auth(client: TestClient):
+    """An unauthenticated caller must NOT be able to self-register as MANAGER."""
+    payload = {
+        "email": f"rogue-manager-{uuid.uuid4().hex[:8]}@example.com",
+        "password": "password123",
+        "role": "MANAGER",
+        "first_name": "Rogue",
+        "last_name": "Manager",
+    }
+    response = client.post("/api/v1/auth/signup", json=payload)
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_signup_manager_allowed_with_admin_auth(client: TestClient):
+    """An authenticated ADMIN caller (owner@salonai.com is seeded as UserRole.ADMIN)
+    CAN provision a MANAGER account — the gate only blocks unauthenticated/non-admin callers."""
+    admin_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@salonai.com", "password": "password123"},
+    )
+    token = admin_login.json().get("access_token")
+    assert token, "expected owner@salonai.com (seeded UserRole.ADMIN) to log in successfully"
+
+    payload = {
+        "email": f"new-manager-{uuid.uuid4().hex[:8]}@example.com",
+        "password": "password123",
+        "role": "MANAGER",
+        "first_name": "New",
+        "last_name": "Manager",
+    }
+    response = client.post(
+        "/api/v1/auth/signup",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # Only assert it wasn't blocked by the privileged-role gate itself.
+    assert response.status_code != status.HTTP_401_UNAUTHORIZED
+    assert response.status_code != status.HTTP_403_FORBIDDEN
+
+
+def test_signup_customer_still_allowed_unauthenticated(client: TestClient):
+    """CUSTOMER self-registration must remain unaffected by the privileged-role gate."""
+    payload = {
+        "email": f"new-customer-{uuid.uuid4().hex[:8]}@example.com",
+        "password": "password123",
+        "role": "CUSTOMER",
+        "first_name": "New",
+        "last_name": "Customer",
+    }
+    response = client.post("/api/v1/auth/signup", json=payload)
+    assert response.status_code == status.HTTP_201_CREATED
+

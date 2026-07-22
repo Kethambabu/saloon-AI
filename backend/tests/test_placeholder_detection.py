@@ -6,7 +6,7 @@ Tests the fix for the "invalid UUID" bug where LLM was using fake identifiers.
 import sys
 sys.path.insert(0, '/path/to/backend')  # Add backend to path
 
-from tools.booking_tools import _is_placeholder_value
+from application.services.appointment_service import _is_placeholder_value
 
 
 def test_placeholder_detection():
@@ -74,7 +74,7 @@ def test_placeholder_detection():
         print("❌ SOME TESTS FAILED - Check results above")
     print("=" * 70)
     
-    return all_pass
+    assert all_pass
 
 
 def test_booking_workflow_prevention():
@@ -124,3 +124,4 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+

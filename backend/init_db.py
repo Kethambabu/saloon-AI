@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from db.models import Base
-from db.database import engine
+from infrastructure.db.models import Base
+from infrastructure.db.database import engine
 
 # Load environment
 load_dotenv()
@@ -29,9 +29,14 @@ try:
     # Verify tables were created
     print("\n🔍 Verifying tables in database...")
     with engine.connect() as connection:
-        result = connection.execute(text(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-        ))
+        if engine.dialect.name == "sqlite":
+            result = connection.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ))
+        else:
+            result = connection.execute(text(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ))
         tables = [row[0] for row in result]
         
         print(f"\n✅ Found {len(tables)} tables in database:")
@@ -54,3 +59,4 @@ except Exception as e:
     print("2. Verify Supabase credentials are correct")
     print("3. Ensure network connection to Supabase")
     sys.exit(1)
+

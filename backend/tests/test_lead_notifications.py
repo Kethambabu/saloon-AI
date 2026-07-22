@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Lead, LeadStatus, Customer, User, UserRole, Notification
-from services.lead_service import send_lead_followup
-from tools.lead_tools import create_followup_reminder
+from infrastructure.db import Base, Lead, LeadStatus, Customer, User, UserRole, Notification
+from application.services.lead_service import send_lead_followup
+from application.services.lead_service import create_followup_reminder
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -261,5 +261,6 @@ def test_lead_dismissal(db_session):
     db_session.refresh(notif)
     assert notif.is_read is True
     assert notif.is_cleared is True
+
 
 

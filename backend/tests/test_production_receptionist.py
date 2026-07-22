@@ -8,12 +8,12 @@ import os
 import sys
 import pytest
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agents.receptionist_agent import (
+from ai.agents.receptionist_agent import (
     ReceptionistAgent,
     _is_placeholder_value,
     _is_valid_uuid,
@@ -35,7 +35,7 @@ from agents.receptionist_agent import (
 def test_tool_validation_and_repair():
     """Test Priority 2: Verifies date, time, UUID, branch, service, and staff repairs."""
     # Capture base system date
-    base_date = datetime.utcnow().strftime("%Y-%m-%d")
+    base_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     ReceptionistAgent.CURRENT_QUERY_CONTEXT = f"[SYSTEM TIME CONTEXT: Current system time is {base_date} 12:00:00]"
     
     # 1. Date repairs
@@ -56,7 +56,7 @@ def test_tool_validation_and_repair():
 
 def test_tool_argument_sanitization():
     """Test Priority 3: Verifies that sanitize_tool_arguments strips unknown fields."""
-    from agents.receptionist_agent import sanitize_tool_arguments
+    from ai.agents.receptionist_agent import sanitize_tool_arguments
     
     raw_args = {
         "branch_id": "Vijayawada Benz Circle",
@@ -85,7 +85,7 @@ def test_tool_argument_sanitization():
 def test_appointment_booking_and_history_repaired():
     """Test Priority 4 & 5: Verifies book, cancel, reschedule, and rebook wrappers resolve entities."""
     # Seed current query context
-    base_date = datetime.utcnow().strftime("%Y-%m-%d")
+    base_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     cust_id = "577186c8-5084-40f0-ad9a-627d395420fb"
     ReceptionistAgent.CURRENT_QUERY_CONTEXT = (
         f"[SYSTEM TIME CONTEXT: Current system time is {base_date} 12:00:00]\n"
@@ -197,3 +197,4 @@ async def test_graceful_emergency_mode():
         # Reset Circuit Breaker state
         ReceptionistAgent.CIRCUIT_BREAKER_TRIPPED = False
         ReceptionistAgent.FAILURE_COUNT = 0
+

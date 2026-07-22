@@ -146,6 +146,56 @@ interface Message {
   timestamp: string;
 }
 
+// Memoized so an unrelated re-render of the chat (new message appended,
+// input state changing) doesn't re-run the markdown parser over every prior
+// message in the conversation — same fix applied to AgentChat.tsx.
+const StaffChatMessageBubble = React.memo<{ msg: Message }>(({ msg }) => {
+  const isUser = msg.role === 'user';
+  const renderedContent = React.useMemo(
+    () => (isUser ? null : renderMarkdown(msg.content)),
+    [isUser, msg.content]
+  );
+
+  return (
+    <div
+      className={`flex items-start space-x-3.5 max-w-[85%] ${
+        isUser ? 'ml-auto flex-row-reverse space-x-reverse' : 'mr-auto'
+      }`}
+    >
+      {/* Avatar Icon wrapper */}
+      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-md flex-shrink-0 border transition-all ${
+        isUser
+          ? 'bg-gradient-to-br from-emerald-500 to-teal-600 border-emerald-400/30 text-white'
+          : 'bg-slate-900 border-slate-800 text-emerald-400'
+      }`}>
+        {isUser ? <User className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+      </div>
+
+      <div className="flex flex-col">
+        {/* Chat bubble content */}
+        <div className={`p-4 rounded-2xl shadow-lg leading-relaxed text-[12.5px] border ${
+          isUser
+            ? 'bg-gradient-to-br from-emerald-600/90 to-teal-700/95 text-white rounded-tr-none border-emerald-500/20 shadow-emerald-500/5'
+            : 'bg-slate-900/85 border border-slate-800/80 text-slate-100 rounded-tl-none shadow-black/10 backdrop-blur-sm'
+        }`}>
+          {isUser ? (
+            <p className="whitespace-pre-wrap text-left font-medium">{msg.content}</p>
+          ) : (
+            <div className="whitespace-pre-wrap text-left prose prose-invert max-w-none">
+              {renderedContent}
+            </div>
+          )}
+        </div>
+
+        {/* Timestamp */}
+        <span className={`text-[9px] text-slate-500 font-bold mt-1.5 uppercase tracking-wider ${isUser ? 'text-right' : 'text-left'}`}>
+          {msg.timestamp}
+        </span>
+      </div>
+    </div>
+  );
+});
+
 interface ChatSession {
   id: string;
   title: string;
@@ -414,48 +464,9 @@ export const StaffChat: React.FC = () => {
 
         {/* Message Log */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-slate-950/5">
-          {messages.map((msg) => {
-            const isUser = msg.role === 'user';
-            return (
-              <div
-                key={msg.id}
-                className={`flex items-start space-x-3.5 max-w-[85%] ${
-                  isUser ? 'ml-auto flex-row-reverse space-x-reverse' : 'mr-auto'
-                }`}
-              >
-                {/* Avatar Icon wrapper */}
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-md flex-shrink-0 border transition-all ${
-                  isUser 
-                    ? 'bg-gradient-to-br from-emerald-500 to-teal-600 border-emerald-400/30 text-white' 
-                    : 'bg-slate-900 border-slate-800 text-emerald-400'
-                }`}>
-                  {isUser ? <User className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
-                </div>
-
-                <div className="flex flex-col">
-                  {/* Chat bubble content */}
-                  <div className={`p-4 rounded-2xl shadow-lg leading-relaxed text-[12.5px] border ${
-                    isUser
-                      ? 'bg-gradient-to-br from-emerald-600/90 to-teal-700/95 text-white rounded-tr-none border-emerald-500/20 shadow-emerald-500/5'
-                      : 'bg-slate-900/85 border border-slate-800/80 text-slate-100 rounded-tl-none shadow-black/10 backdrop-blur-sm'
-                  }`}>
-                    {isUser ? (
-                      <p className="whitespace-pre-wrap text-left font-medium">{msg.content}</p>
-                    ) : (
-                      <div className="whitespace-pre-wrap text-left prose prose-invert max-w-none">
-                        {renderMarkdown(msg.content)}
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Timestamp */}
-                  <span className={`text-[9px] text-slate-500 font-bold mt-1.5 uppercase tracking-wider ${isUser ? 'text-right' : 'text-left'}`}>
-                    {msg.timestamp}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          {messages.map((msg) => (
+            <StaffChatMessageBubble key={msg.id} msg={msg} />
+          ))}
 
           {isLoading && (
             <div className="flex items-start space-x-3.5 mr-auto max-w-[85%]">

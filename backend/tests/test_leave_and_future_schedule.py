@@ -9,11 +9,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Branch, Staff, Customer, Service, StaffLeave, Appointment, AppointmentStatus
-from tools.booking_tools import get_available_slots, create_appointment
-from tools.staff_tools import get_schedule
-from agents.receptionist_agent import ReceptionistAgent
-from agents.staff_assistant_agent import StaffAssistantAgent
+from infrastructure.db import Base, Branch, Staff, Customer, Service, StaffLeave, Appointment, AppointmentStatus
+from application.services.appointment_service import get_available_slots, create_appointment
+from application.services.staff_service import get_schedule
+from ai.agents.receptionist_agent import ReceptionistAgent
+from ai.agents.staff_assistant_agent import StaffAssistantAgent
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -108,8 +108,8 @@ async def test_receptionist_booking_flow_stylist_on_leave(db_session):
     mock_slots = f"{{'success': False, 'error': 'John Doe is on leave', 'staff_on_leave': True, 'staff_name': 'John Doe', 'date': '{date_str}', 'slots': [{{'start_time': '{date_str}T17:00:00Z', 'available_staff_names': ['Priya Sharma']}}]}}"
     
     with patch("core.openai_client_adapter.OpenAIChatCompletionClient.create", return_value=mock_llm_res), \
-         patch("agents.receptionist_agent.check_stylist_availability", return_value=mock_slots), \
-         patch("agents.receptionist_agent.SessionLocal", return_value=db_session):
+         patch("ai.agents.receptionist_agent.check_stylist_availability", return_value=mock_slots), \
+         patch("ai.agents.receptionist_agent.SessionLocal", return_value=db_session):
          
         res = await agent.process({
             "query": f"book Bridal Makeup at Main Salon with John Doe tomorrow at 17:00",
@@ -150,3 +150,4 @@ def test_get_schedule_for_future_date(db_session):
     assert date_str in res or tomorrow.strftime('%B %d, %Y') in res
     assert "Bridal Makeup" in res
     assert "Jane Smith" in res
+

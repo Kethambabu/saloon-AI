@@ -134,10 +134,12 @@ def validate_and_sanitise(
     safe_filters: Dict[str, Any] = dict(filters)
 
     # ------------------------------------------------------------------
-    # ADMIN — no restrictions
+    # ADMIN / MANAGER / OWNER — no row-level restrictions.
+    # (MANAGER/OWNER are business-management roles granted the same access as
+    # ADMIN across the rest of the permission matrix — see permission_guard.py.)
     # ------------------------------------------------------------------
-    if role == MCPRole.ADMIN or role == "ADMIN":
-        logger.debug("[QueryGuard] ADMIN request — no guard rules applied.")
+    if role in (MCPRole.ADMIN, MCPRole.MANAGER, MCPRole.OWNER, "ADMIN", "MANAGER", "OWNER"):
+        logger.debug("[QueryGuard] %s request — no guard rules applied.", role)
         return safe_filters
 
     # ------------------------------------------------------------------
@@ -198,14 +200,21 @@ def validate_and_sanitise(
                 operation=operation,
             )
 
-        # Optionally narrow appointments to own branch
+        # Narrow appointments to the staff member's own branch. Force-override
+        # (not just default-fill) so a caller can't pass a different branch_id
+        # filter to read another branch's appointment data.
         if resource == "appointments" and context.branch_id:
-            if "branch_id" not in safe_filters:
-                safe_filters["branch_id"] = context.branch_id
-                logger.debug(
-                    "[QueryGuard] STAFF branch filter injected: branch_id=%s.",
-                    context.branch_id
+            if "branch_id" in safe_filters and safe_filters["branch_id"] != context.branch_id:
+                logger.warning(
+                    "[QueryGuard] STAFF tried to query branch_id='%s' but their "
+                    "assigned branch is '%s'. Overriding.",
+                    safe_filters["branch_id"], context.branch_id
                 )
+            safe_filters["branch_id"] = context.branch_id
+            logger.debug(
+                "[QueryGuard] STAFF branch filter enforced: branch_id=%s.",
+                context.branch_id
+            )
 
         return safe_filters
 
@@ -218,3 +227,4 @@ def validate_and_sanitise(
         resource=resource,
         operation=operation,
     )
+

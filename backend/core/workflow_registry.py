@@ -9,7 +9,7 @@ lazily from the ``backend.handlers`` package.
 
 Usage::
 
-    from backend.core.workflow_registry import get_workflow_registry
+    from core.workflow_registry import get_workflow_registry
 
     reg = get_workflow_registry()
     result = reg.dispatch("appointment_workflow", "book", ctx)
@@ -30,37 +30,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _import_handler(module_path: str, class_name: str) -> Any:
-    """Import and return *class_name* from *module_path*.
-
-    Returns ``None`` if the import fails, logging a warning.  This allows the
-    registry to be constructed even when handler modules are not yet present
-    (e.g. during unit testing of the registry itself).
-
-    Args:
-        module_path: Dotted module path, e.g. ``"backend.handlers.appointment"``.
-        class_name:  Name of the class to import.
-
-    Returns:
-        Class object or ``None``.
-    """
+    """Statically import and return *class_name* from core.handlers."""
     try:
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-    except (ImportError, AttributeError) as exc:
+        import core.handlers as handlers_module
+        return getattr(handlers_module, class_name)
+    except Exception as exc:
         logger.warning(
-            "[WorkflowRegistry] Could not import %s.%s: %s",
-            module_path,
+            "[WorkflowRegistry] Could not statically resolve %s: %s",
             class_name,
             exc,
         )
         return None
 
 
+
 # ---------------------------------------------------------------------------
 # Handler/Context base – imported from handlers.base if available
 # ---------------------------------------------------------------------------
 try:
-    from backend.handlers.base import BaseHandler, HandlerContext  # type: ignore
+    from core.handlers import BaseHandler, HandlerContext  # type: ignore
 except ImportError:  # pragma: no cover – fallback for standalone testing
     class HandlerContext:  # type: ignore
         """Minimal stand-in HandlerContext used when handlers.base is absent."""
@@ -92,7 +80,8 @@ class WorkflowRegistry:
         A :class:`threading.Lock` guards the internal workflow store so that
         ``register_workflow`` calls from multiple threads are safe.  Dispatch
         acquires the lock only long enough to retrieve the handler reference,
-        then releases it before calling ``handler.handle(ctx)``.
+        then releases it before calling ``handler.execute(ctx)`` (which runs
+        validate() and the permission_action check before handle()).
     """
 
     def __init__(self) -> None:
@@ -223,7 +212,7 @@ class WorkflowRegistry:
         )
 
         try:
-            result = handler.handle(ctx)
+            result = handler.execute(ctx)
             logger.debug(
                 "[WorkflowRegistry] Completed workflow='%s' action='%s' "
                 "trace_id='%s' tenant_id='%s'",
@@ -350,30 +339,65 @@ _WORKFLOW_DEFINITIONS: Dict[str, Dict[str, tuple]] = {
         "analytics":           (_REC, "RecommendationAnalyticsHandler"),
     },
     "staff_workflow": {
-        "get_schedule":        (_STF, "GetScheduleHandler"),
-        "today_schedule":      (_STF, "TodayScheduleHandler"),
-        "next_customer":       (_STF, "NextCustomerHandler"),
-        "customer_history":    (_STF, "CustomerHistoryHandler"),
-        "customer_preferences":(_STF, "CustomerPreferencesHandler"),
-        "staff_revenue":       (_STF, "StaffRevenueHandler"),
-        "staff_performance":   (_STF, "StaffKPIHandler"),
-        "pending_appointments":(_STF, "PendingAppointmentsHandler"),
-        "create_leave":        (_STF, "CreateLeaveHandler"),
-        "send_reminders":      (_STF, "SendRemindersHandler"),
+        "get_schedule":              (_STF, "GetScheduleHandler"),
+        "today_schedule":            (_STF, "TodayScheduleHandler"),
+        "next_customer":             (_STF, "NextCustomerHandler"),
+        "customer_history":          (_STF, "CustomerHistoryHandler"),
+        "customer_preferences":      (_STF, "CustomerPreferencesHandler"),
+        "staff_revenue":             (_STF, "StaffRevenueHandler"),
+        "staff_performance":         (_STF, "StaffKPIHandler"),
+        "pending_appointments":      (_STF, "PendingAppointmentsHandler"),
+        "create_leave":              (_STF, "CreateLeaveHandler"),
+        "send_reminders":            (_STF, "SendRemindersHandler"),
+        "get_leaves":                (_STF, "GetLeavesHandler"),
+        "cancel_leave":              (_STF, "CancelLeaveHandler"),
+        "recommend_services":        (_STF, "RecommendServicesHandler"),
+        "raw_sql":                   (_STF, "StaffRawSQLHandler"),
+        "staff_services":            (_STF, "StaffServicesHandler"),
+        "avg_appointment_duration":  (_STF, "AvgAppointmentDurationHandler"),
     },
     "analytics_workflow": {
-        "dashboard":       (_ANL, "DashboardHandler"),
-        "revenue":         (_ANL, "RevenueHandler"),
-        "customers":       (_ANL, "CustomerMetricsHandler"),
-        "staff":           (_ANL, "StaffPerformanceHandler"),
-        "leads":           (_ANL, "LeadAnalyticsHandler"),
-        "reviews":         (_ANL, "ReviewAnalyticsHandler"),
-        "upsell":          (_ANL, "UpsellAnalyticsHandler"),
-        "insights":        (_ANL, "AIInsightsHandler"),
-        "forecast":        (_ANL, "ForecastHandler"),
-        "business_context":(_ANL, "BusinessContextHandler"),
-        "raw_sql":         (_ANL, "RawSQLHandler"),
-        "cohort_reminders":(_ANL, "CohortRemindersHandler"),
+        # Core dashboard
+        "dashboard":            (_ANL, "DashboardHandler"),
+        "executive_scorecard":  (_ANL, "ExecutiveScorecardHandler"),
+        # Revenue analytics
+        "revenue":              (_ANL, "RevenueHandler"),
+        "revenue_by_period":    (_ANL, "RevenueByPeriodHandler"),
+        "average_ticket":       (_ANL, "AverageTicketHandler"),
+        "revenue_per_staff":    (_ANL, "RevenuePerStaffHandler"),
+        # Customer analytics
+        "customers":            (_ANL, "CustomerMetricsHandler"),
+        "customer_acquisition": (_ANL, "CustomerAcquisitionHandler"),
+        "churn_analysis":       (_ANL, "ChurnAnalysisHandler"),
+        "cohort_analysis":      (_ANL, "CohortAnalysisHandler"),
+        # Staff analytics
+        "staff":                (_ANL, "BIStaffPerformanceHandler"),
+        "staff_utilization":    (_ANL, "StaffUtilizationHandler"),
+        # Appointment analytics
+        "appointment_trends":   (_ANL, "AppointmentTrendsHandler"),
+        "peak_hours":           (_ANL, "PeakHoursHandler"),
+        "no_show_analysis":     (_ANL, "NoShowAnalysisHandler"),
+        "capacity_analysis":    (_ANL, "CapacityAnalysisHandler"),
+        "booking_lead_time":    (_ANL, "BookingLeadTimeHandler"),
+        # Lead & CRM analytics
+        "leads":                (_ANL, "LeadAnalyticsHandler"),
+        "lead_pipeline":        (_ANL, "LeadPipelineAnalysisHandler"),
+        # Service analytics
+        "service_popularity":   (_ANL, "ServicePopularityHandler"),
+        # Review & reputation
+        "reviews":              (_ANL, "BIReviewAnalyticsHandler"),
+        "review_trends":        (_ANL, "ReviewTrendsHandler"),
+        # Upsell analytics
+        "upsell":               (_ANL, "BIUpsellAnalyticsHandler"),
+        "upsell_conversion":    (_ANL, "UpsellConversionHandler"),
+        # Branch / multi-location
+        "branch_comparison":    (_ANL, "BranchComparisonHandler"),
+        # Other core
+        "insights":             (_ANL, "AIInsightsHandler"),
+        "forecast":             (_ANL, "ForecastHandler"),
+        "business_context":     (_ANL, "BusinessContextHandler"),
+        "raw_sql":              (_ANL, "RawSQLHandler"),
+        "cohort_reminders":     (_ANL, "CohortRemindersHandler"),
     },
 }
 
@@ -417,3 +441,4 @@ def get_workflow_registry() -> WorkflowRegistry:
                     reg.list_workflows(),
                 )
     return _registry_instance
+

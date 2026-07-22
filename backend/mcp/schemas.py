@@ -8,11 +8,11 @@ API endpoints, and the audit pipeline.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # ---------------------------------------------------------------------------
@@ -23,6 +23,8 @@ class MCPRole(str, Enum):
     """Roles recognised by the MCP permission system."""
     CUSTOMER = "CUSTOMER"
     STAFF = "STAFF"
+    MANAGER = "MANAGER"
+    OWNER = "OWNER"
     ADMIN = "ADMIN"
 
 
@@ -39,7 +41,7 @@ class MCPContext(BaseModel):
     """
 
     user_id: str = Field(..., description="Primary key of the authenticated User record")
-    role: MCPRole = Field(..., description="Role of the caller (CUSTOMER | STAFF | ADMIN)")
+    role: MCPRole = Field(..., description="Role of the caller (CUSTOMER | STAFF | MANAGER | OWNER | ADMIN)")
 
     # Optional identity references — populated depending on role
     customer_id: Optional[str] = Field(
@@ -61,12 +63,11 @@ class MCPContext(BaseModel):
         description="Conversation/session ID from the calling agent or API"
     )
     request_timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="UTC timestamp when the context was created"
     )
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +120,7 @@ class MCPRequest(BaseModel):
         description="Caller context (role, ids). Injected automatically by the MCP layer."
     )
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 # ---------------------------------------------------------------------------
@@ -186,3 +186,4 @@ class MCPTestResponse(BaseModel):
     permission_granted: bool = False
     guard_passed: bool = False
     audit_logged: bool = False
+

@@ -27,12 +27,12 @@ def check_staff_access(target_staff_id: Any) -> Optional[str]:
         # Fallback to class-level tracking variables in case ContextVar is lost in AutoGen thread/task pool
         fallback_contexts = []
         try:
-            from agents.receptionist_agent import ReceptionistAgent
+            from ai.agents.receptionist_agent import ReceptionistAgent
             fallback_contexts.append(getattr(ReceptionistAgent, "CURRENT_QUERY_CONTEXT", "") or "")
         except ImportError:
             pass
         try:
-            from agents.staff_assistant_agent import StaffAssistantAgent
+            from ai.agents.staff_assistant_agent import StaffAssistantAgent
             fallback_contexts.append(getattr(StaffAssistantAgent, "CURRENT_QUERY_CONTEXT", "") or "")
         except ImportError:
             pass
@@ -78,3 +78,4 @@ def check_staff_access(target_staff_id: Any) -> Optional[str]:
             pass
             
     return None
+

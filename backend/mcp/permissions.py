@@ -49,6 +49,12 @@ ROLE_PERMISSIONS: Dict[str, Union[FrozenSet[str], str]] = {
         "services",
         "branches",
     }),
+    # MANAGER and OWNER are business-management roles (see permission_guard.py's
+    # _ACTION_PERMISSIONS, which grants them the same access as ADMIN for nearly
+    # every workflow action — analytics, CRM, revenue, etc). They get the same
+    # wildcard here so the MCP layer doesn't silently downgrade them.
+    "MANAGER": _WILDCARD,
+    "OWNER": _WILDCARD,
     "ADMIN": _WILDCARD,   # Admin may access any resource
 }
 
@@ -113,3 +119,4 @@ def get_allowed_resources(role: str) -> Union[Set[str], str]:
     role = (role or "").upper().strip()
     allowed = ROLE_PERMISSIONS.get(role, frozenset())
     return allowed if isinstance(allowed, str) else set(allowed)
+

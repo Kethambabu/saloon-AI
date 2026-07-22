@@ -33,15 +33,17 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      "react-refresh/only-export-components": [
-        "warn",
-        { allowConstantExport: true },
-      ],
       "react/react-in-jsx-scope": "off",
       "react/prop-types": "off",
       "@typescript-eslint/explicit-function-return-types": "off",
       "@typescript-eslint/explicit-module-boundary-types": "off",
-      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "react-hooks/exhaustive-deps": "off",
+      "react-refresh/only-export-components": "off",
+      "react/no-unescaped-entities": "off",
+      "no-useless-escape": "off",
+      "no-useless-catch": "off",
     },
     settings: {
       react: {

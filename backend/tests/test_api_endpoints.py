@@ -29,7 +29,7 @@ def app_client():
     
     # Bypass authentication for API endpoint tests
     from api.deps import get_current_user
-    from db import User, UserRole
+    from infrastructure.db import User, UserRole
     
     mock_user = User(
         email="test_user@salonai.com",
@@ -101,3 +101,4 @@ def test_agent_chat_endpoint_validation_error(app_client):
     
     response = app_client.post("/api/v1/agent/chat", json=payload)
     assert response.status_code == 422  # Unprocessable Entity
+

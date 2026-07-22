@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db.models import Base, User, UserRole
+from infrastructure.db.models import Base, User, UserRole
 from main import create_app
 from core.config import Settings
 from tests.test_receptionist_rag import MockEmbeddings
@@ -42,7 +42,7 @@ def test_knowledge_rebuild_api_endpoint(db_session):
     app = create_app(settings=test_settings)
     
     from api.deps import get_current_user
-    from db import get_db
+    from infrastructure.db import get_db
     
     mock_admin = User(
         email="admin@salonai.com",
@@ -70,3 +70,4 @@ def test_knowledge_rebuild_api_endpoint(db_session):
                 assert response.json()["success"] is True
                 assert response.json()["details"]["index_name"] == "receptionist_knowledge"
                 assert isinstance(response.json()["details"]["chunks_indexed"], int)
+

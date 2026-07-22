@@ -1,19 +1,43 @@
-import React, { useEffect } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import {
-  Layout,
-  Login,
-  Signup,
-  ForgotPassword,
-  ResetPassword,
-  AdminDashboard,
-  StaffDashboard,
-  UserDashboard,
-  LandingPage,
-  Unauthorized,
-  Loading
-} from './components';
+// Importing these directly from their own files rather than the
+// `./components` barrel is deliberate: that barrel also re-exports
+// AgentChat (which pulls in recharts + lucide-react). Since App.tsx is the
+// eager entry point, going through the barrel dragged those dashboard-only
+// dependencies into the main bundle that even the public login/landing page
+// had to download — direct imports keep the eager entry's dependency graph
+// limited to what these specific public/shell components actually use.
+// (See also vite.config.ts's manualChunks, which forces recharts/lucide-react
+// into their own lazily-loaded vendor chunks as a second line of defense.)
+import { Layout } from './components/Layout';
+import { Loading } from './components/Loading';
+import { Login } from './components/Auth/Login';
+import { Signup } from './components/Auth/Signup';
+import { ForgotPassword } from './components/Auth/ForgotPassword';
+import { ResetPassword } from './components/Auth/ResetPassword';
+import { LandingPage } from './components/Public/LandingPage';
+import { Unauthorized } from './components/Public/Unauthorized';
+
+// Each portal is its own route-level chunk: a Customer session never
+// downloads/parses the Admin or Staff dashboard bundle (and vice versa).
+// These are large, chart/animation-heavy screens (recharts + framer-motion),
+// so this materially cuts initial JS payload and parse time per role.
+const AdminDashboard = lazy(() =>
+  import('./components/Admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const StaffDashboard = lazy(() =>
+  import('./components/Staff/StaffDashboard').then((m) => ({ default: m.StaffDashboard }))
+);
+const UserDashboard = lazy(() =>
+  import('./components/Customer/UserDashboard').then((m) => ({ default: m.UserDashboard }))
+);
+
+const RouteLoadingFallback: React.FC = () => (
+  <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
+    <Loading />
+  </div>
+);
 
 // Protected Route Guard wrapper
 const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User')[]; children: React.ReactNode }> = ({ allowedRoles, children }) => {
@@ -52,7 +76,11 @@ const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User
   }
 
   console.log('[DEBUG] [ProtectedRouteWrapper] Guard passed. Rendering layout container shell.');
-  return <Layout>{children}</Layout>;
+  return (
+    <Layout>
+      <Suspense fallback={<RouteLoadingFallback />}>{children}</Suspense>
+    </Layout>
+  );
 };
 
 // Landing Page route with automatic redirect

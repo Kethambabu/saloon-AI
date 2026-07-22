@@ -5,7 +5,7 @@ Handles Groq API with automatic fallback to Google Gemini on rate limits.
 
 import os
 import logging
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from enum import Enum
 
 from core.config import get_settings
@@ -23,11 +23,23 @@ GEMINI_MODEL = "gemini-2.0-flash"  # Fast, free tier available
 # ============================================================================
 # HUGGING FACE PROVIDER CONFIGURATION
 # ============================================================================
-_settings = get_settings()
-HUGGINGFACE_API_BASE_URL = _settings.huggingface_api_base_url
-HUGGINGFACE_MODEL = _settings.huggingface_model
-HUGGINGFACE_ENABLED = _settings.huggingface_enabled
-HUGGINGFACE_API_KEY = _settings.huggingface_api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN", "")
+def get_hf_base_url() -> str:
+    return get_settings().huggingface_api_base_url
+
+def get_hf_model() -> str:
+    return get_settings().huggingface_model
+
+def is_hf_enabled() -> bool:
+    return get_settings().huggingface_enabled
+
+def get_hf_api_key() -> str:
+    s = get_settings()
+    return s.huggingface_api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN", "")
+
+HUGGINGFACE_API_BASE_URL = get_settings().huggingface_api_base_url
+HUGGINGFACE_MODEL = get_settings().huggingface_model
+HUGGINGFACE_ENABLED = get_settings().huggingface_enabled
+HUGGINGFACE_API_KEY = get_settings().huggingface_api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN", "")
 
 def check_gemini_key_available() -> bool:
     """Check if Gemini API key is configured."""
@@ -123,16 +135,81 @@ class LLMConfigManager:
     # Track rate limit state
     RATE_LIMIT_ACTIVE = False
     FALLBACK_PROVIDER = None  # "gemini" or "groq"
+    _cooldowns: Dict[str, float] = {}
+    _groq_keys: List[str] = []
+    _gemini_keys: List[str] = []
+    _huggingface_keys: List[str] = []
+    _current_groq_idx: int = 0
+    _current_gemini_idx: int = 0
+    _current_huggingface_idx: int = 0
+    _exhausted_providers: set = set()  # Providers with daily quota = 0, skip until server restart
+
+    @classmethod
+    def rotate_key(cls, provider: str) -> str:
+        """Rotate to the next API key in the pool for the provider."""
+        if provider == "groq" and cls._groq_keys:
+            cls._current_groq_idx = (cls._current_groq_idx + 1) % len(cls._groq_keys)
+            new_key = cls._groq_keys[cls._current_groq_idx]
+            logger.warning(f"🔄 [llm_config] Rotated Groq API key to next in pool (index {cls._current_groq_idx}/{len(cls._groq_keys)}).")
+            return new_key
+        elif provider == "gemini" and cls._gemini_keys:
+            cls._current_gemini_idx = (cls._current_gemini_idx + 1) % len(cls._gemini_keys)
+            new_key = cls._gemini_keys[cls._current_gemini_idx]
+            logger.warning(f"🔄 [llm_config] Rotated Gemini API key to next in pool (index {cls._current_gemini_idx}/{len(cls._gemini_keys)}).")
+            return new_key
+        elif provider == "huggingface" and cls._huggingface_keys:
+            cls._current_huggingface_idx = (cls._current_huggingface_idx + 1) % len(cls._huggingface_keys)
+            new_key = cls._huggingface_keys[cls._current_huggingface_idx]
+            logger.warning(f"🔄 [llm_config] Rotated Hugging Face API key to next in pool (index {cls._current_huggingface_idx}/{len(cls._huggingface_keys)}).")
+            return new_key
+        return ""
+
+    @property
+    def current_groq_key(self) -> str:
+        if not self.__class__._groq_keys:
+            return self.api_key
+        return self.__class__._groq_keys[self.__class__._current_groq_idx]
+
+    @property
+    def current_gemini_key(self) -> str:
+        if not self.__class__._gemini_keys:
+            return self.gemini_api_key
+        return self.__class__._gemini_keys[self.__class__._current_gemini_idx]
+
+    @property
+    def current_huggingface_key(self) -> str:
+        if not self.__class__._huggingface_keys:
+            return HUGGINGFACE_API_KEY
+        return self.__class__._huggingface_keys[self.__class__._current_huggingface_idx]
+
+    @classmethod
+    def set_cooldown(cls, provider: str, model: str, duration: float):
+        """Set a cooldown for a specific provider and model."""
+        import time
+        cls._cooldowns[f"{provider}:{model}"] = time.time() + duration
+        logger.warning(f"🔒 [llm_config] Model '{model}' on '{provider}' put on cooldown for {duration}s.")
+
+    @classmethod
+    def is_on_cooldown(cls, provider: str, model: str) -> bool:
+        """Check if a model is currently on cooldown."""
+        import time
+        key = f"{provider}:{model}"
+        if key in cls._cooldowns:
+            if time.time() < cls._cooldowns[key]:
+                return True
+            else:
+                del cls._cooldowns[key]
+        return False
     
     def __init__(self):
         """Initialize LLM configuration manager."""
         self.settings = get_settings()
         # Determine primary provider based on environment
-        self.huggingface_available = HUGGINGFACE_ENABLED
+        self.huggingface_available = is_hf_enabled()
         if self.huggingface_available:
             self.current_provider = "huggingface"
-            self.primary_model = HUGGINGFACE_MODEL
-            self.base_url = HUGGINGFACE_API_BASE_URL
+            self.primary_model = get_hf_model()
+            self.base_url = get_hf_base_url()
         else:
             self.current_provider = "groq"
             self.primary_model = self._get_primary_model()
@@ -145,7 +222,59 @@ class LLMConfigManager:
         self.gemini_available = check_gemini_key_available()
         self.gemini_api_key = self.settings.gemini_api_key or self.settings.google_api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
         
+        # Scan env files for all keys
+        self.__class__._groq_keys, self.__class__._gemini_keys, self.__class__._huggingface_keys = self._extract_keys_from_env()
+        # Ensure default keys are in the pool if not already there
+        if self.api_key and self.api_key.strip() and self.api_key != "your-groq-key-here" and self.api_key not in self.__class__._groq_keys:
+            self.__class__._groq_keys.append(self.api_key)
+        if self.gemini_api_key and self.gemini_api_key.strip() and self.gemini_api_key != "your-gemini-key-here" and self.gemini_api_key not in self.__class__._gemini_keys:
+            self.__class__._gemini_keys.append(self.gemini_api_key)
+        if HUGGINGFACE_API_KEY and HUGGINGFACE_API_KEY.strip() and HUGGINGFACE_API_KEY not in self.__class__._huggingface_keys:
+            self.__class__._huggingface_keys.append(HUGGINGFACE_API_KEY)
+            
+        # Override availability if pool keys exist
+        if self.__class__._gemini_keys:
+            self.gemini_available = True
+            
+        logger.info(f"🔑 [llm_config] Loaded {len(self.__class__._groq_keys)} Groq keys, {len(self.__class__._gemini_keys)} Gemini keys, and {len(self.__class__._huggingface_keys)} Hugging Face keys from env.")
         logger.info(f"LLM Config initialized: provider={self.current_provider}, primary={self.primary_model}, fallback={self.fallback_model}, gemini={self.gemini_available}")
+
+    def _extract_keys_from_env(self) -> Tuple[List[str], List[str], List[str]]:
+        """Extract main and pool API keys for each provider."""
+        from dotenv import dotenv_values, find_dotenv
+        env_dict = dict(os.environ)
+        try:
+            dot_path = find_dotenv(usecwd=True)
+            if dot_path:
+                env_dict.update({k: v for k, v in dotenv_values(dot_path).items() if v is not None})
+        except Exception:
+            pass
+
+        groq_keys = []
+        main_groq = self.settings.groq_api_key or env_dict.get("GROQ_API_KEY", "")
+        if main_groq and main_groq.strip() and main_groq != "your-groq-key-here":
+            groq_keys.append(main_groq.strip())
+        for k, v in env_dict.items():
+            if k.startswith("GROQ_API_KEY_POOL_") and v and v.strip() and v.strip() not in groq_keys:
+                groq_keys.append(v.strip())
+
+        gemini_keys = []
+        main_gemini = self.settings.gemini_api_key or self.settings.google_api_key or env_dict.get("GEMINI_API_KEY") or env_dict.get("GOOGLE_API_KEY", "")
+        if main_gemini and main_gemini.strip() and main_gemini != "your-gemini-key-here":
+            gemini_keys.append(main_gemini.strip())
+        for k, v in env_dict.items():
+            if k.startswith("GEMINI_API_KEY_POOL_") and v and v.strip() and v.strip() not in gemini_keys:
+                gemini_keys.append(v.strip())
+
+        huggingface_keys = []
+        main_hf = self.settings.huggingface_api_key or env_dict.get("HUGGINGFACE_API_KEY") or env_dict.get("HF_TOKEN", "")
+        if main_hf and main_hf.strip() and main_hf != "your-huggingface-key-here":
+            huggingface_keys.append(main_hf.strip())
+        for k, v in env_dict.items():
+            if k.startswith("HUGGINGFACE_API_KEY_POOL_") and v and v.strip() and v.strip() not in huggingface_keys:
+                huggingface_keys.append(v.strip())
+
+        return groq_keys, gemini_keys, huggingface_keys
     
     def _get_api_key(self) -> str:
         """Get Groq API key from settings or environment."""
@@ -182,19 +311,28 @@ class LLMConfigManager:
         Returns:
             Dictionary with 'model', 'api_key', 'base_url', 'model_info', 'provider'.
         """
-        if self.current_provider == "huggingface":
+        if is_hf_enabled():
+            model = get_hf_model() if not use_fallback else self.fallback_model
+            api_key = self.current_huggingface_key or get_hf_api_key() or "huggingface"
+            base_url = get_hf_base_url()
+            provider = "huggingface"
+        elif self.current_provider == "huggingface":
             model = self.primary_model if not use_fallback else self.fallback_model
-            api_key = HUGGINGFACE_API_KEY or "huggingface"
+            api_key = self.current_huggingface_key or get_hf_api_key() or "huggingface"
+            base_url = self.base_url
+            provider = "huggingface"
         else:
             model = self.fallback_model if use_fallback else self.primary_model
-            api_key = self.api_key
+            api_key = self.current_groq_key
+            base_url = self.base_url
+            provider = self.current_provider
 
         return {
             "model": model,
             "api_key": api_key,
-            "base_url": self.base_url,
+            "base_url": base_url,
             "model_info": get_model_info_dict(model),
-            "provider": self.current_provider,
+            "provider": provider,
         }
     
     @staticmethod
@@ -274,7 +412,7 @@ class LLMConfigManager:
             logger.error(f"❌ Gemini fallback error: {str(e)}")
             return False, {}
     
-    def get_provider_chain(self) -> list:
+    def get_provider_chain(self, skip_cooldowns: bool = True) -> list:
         """
         Return a fresh, ordered list of provider configuration dicts for the
         current request.  Order: Hugging Face -> Groq (primary) -> Groq (fallback) -> Gemini.
@@ -284,28 +422,29 @@ class LLMConfigManager:
         Returns:
             List of dicts with keys: provider, model, api_key, base_url, model_info
         """
-        chain: list = []
+        raw_chain: list = []
 
         # --- Tier 1: Hugging Face model ---
-        if HUGGINGFACE_ENABLED:
-            chain.append({
+        if is_hf_enabled():
+            hf_model = get_hf_model()
+            raw_chain.append({
                 "provider": "huggingface",
-                "model": HUGGINGFACE_MODEL,
-                "api_key": HUGGINGFACE_API_KEY or "huggingface",
-                "base_url": HUGGINGFACE_API_BASE_URL,
+                "model": hf_model,
+                "api_key": self.current_huggingface_key or get_hf_api_key() or "huggingface",
+                "base_url": get_hf_base_url(),
                 "model_info": {
                     "vision": False,
                     "function_calling": True,
                     "json_output": True,
-                    "family": "qwen" if "qwen" in HUGGINGFACE_MODEL.lower() else "llama-3.3" if "llama" in HUGGINGFACE_MODEL.lower() else "unknown",
+                    "family": "qwen" if "qwen" in hf_model.lower() else "llama-3.3" if "llama" in hf_model.lower() else "unknown",
                     "structured_output": False,
                 },
             })
 
         # --- Tier 2: Groq primary (llama-3.3-70b-versatile) ---
-        groq_key = self.settings.groq_api_key or os.environ.get("GROQ_API_KEY", "")
+        groq_key = self.current_groq_key
         if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
-            chain.append({
+            raw_chain.append({
                 "provider": "groq",
                 "model": DEFAULT_PRIMARY_MODEL,
                 "api_key": groq_key,
@@ -313,7 +452,7 @@ class LLMConfigManager:
                 "model_info": get_model_info_dict(DEFAULT_PRIMARY_MODEL),
             })
             # --- Tier 3: Groq fallback (llama-3.1-8b-instant) ---
-            chain.append({
+            raw_chain.append({
                 "provider": "groq",
                 "model": DEFAULT_FALLBACK_MODEL,
                 "api_key": groq_key,
@@ -322,14 +461,9 @@ class LLMConfigManager:
             })
 
         # --- Tier 4: Gemini ---
-        gemini_key = (
-            self.settings.gemini_api_key
-            or self.settings.google_api_key
-            or os.environ.get("GEMINI_API_KEY")
-            or os.environ.get("GOOGLE_API_KEY", "")
-        )
+        gemini_key = self.current_gemini_key
         if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
-            chain.append({
+            raw_chain.append({
                 "provider": "gemini",
                 "model": GEMINI_MODEL,
                 "api_key": gemini_key,
@@ -343,15 +477,37 @@ class LLMConfigManager:
                 },
             })
 
-        return chain
+        if not skip_cooldowns:
+            return raw_chain
+
+        # Filter out providers that are both on cooldown OR have hit daily quota exhaustion
+        active_chain = [
+            cfg for cfg in raw_chain
+            if not self.is_on_cooldown(cfg["provider"], cfg["model"])
+            and cfg["provider"] not in self.__class__._exhausted_providers
+        ]
+        
+        # If all configured providers are on cooldown, reset cooldowns to avoid a complete failure
+        if not active_chain and raw_chain:
+            logger.warning("⚠️ All configured LLM providers are on cooldown. Resetting cooldowns to retry.")
+            for cfg in raw_chain:
+                key = f"{cfg['provider']}:{cfg['model']}"
+                self._cooldowns.pop(key, None)
+            # Still respect daily-exhausted providers even after cooldown reset
+            active_chain = [cfg for cfg in raw_chain if cfg["provider"] not in self.__class__._exhausted_providers]
+            if not active_chain:
+                active_chain = raw_chain  # Last resort: try everything
+
+        return active_chain
 
     def get_next_fallback_config(self, error: Exception) -> Optional[Dict[str, Any]]:
         """
-        Transition to the next fallback provider in the chain (Hugging Face -> Groq -> Gemini)
-        and return the configuration, or None if no fallbacks remain.
+        Return the configuration for the next fallback provider in the chain
+        (Hugging Face -> Groq -> Gemini) without mutating singleton state.
 
-        NOTE: This method intentionally does NOT mutate self.current_provider so that
-        the singleton always starts fresh with Hugging Face on the next request.
+        This is STATELESS per-request: it reads self.current_provider to determine
+        the current fallback position, but does NOT permanently mutate it. This
+        ensures each new request always starts from the top of the provider chain.
 
         Args:
             error: The exception that triggered the fallback.
@@ -359,13 +515,23 @@ class LLMConfigManager:
         Returns:
             Dictionary with next configuration or None.
         """
-        logger.warning(f"🚨 Provider error or rate limit detected on '{self.current_provider}': {str(error)[:150]}")
+        logger.warning("🚨 Provider error or rate limit detected on '%s': %s", self.current_provider, str(error)[:150])
 
-        if self.current_provider == "huggingface":
-            logger.info("🔄 Switching from Hugging Face to Groq fallback...")
-            groq_key = self.settings.groq_api_key or os.environ.get("GROQ_API_KEY", "")
-            if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
-                self.current_provider = "groq"
+        # Build a stateless fallback sequence based on current position
+        _current = self.current_provider
+        groq_key = self.settings.groq_api_key or os.environ.get("GROQ_API_KEY", "")
+        has_groq = bool(groq_key and groq_key.strip() and groq_key != "your-groq-key-here")
+        
+        # Check if the error is a hard daily-quota exhaustion (limit: 0)
+        err_str = str(error)
+        is_daily_exhausted = "limit: 0" in err_str or ("quota exceeded" in err_str.lower() and "per_day" in err_str.lower())
+        if is_daily_exhausted:
+            self.__class__._exhausted_providers.add(_current)
+            logger.warning(f"🚫 [{_current}] Daily quota exhausted — marking as skip-provider for this session.")
+
+        if _current == "huggingface":
+            logger.info("🔄 Falling back from Hugging Face → Groq for THIS request.")
+            if has_groq and "groq" not in self.__class__._exhausted_providers:
                 return {
                     "provider": "groq",
                     "model": DEFAULT_PRIMARY_MODEL,
@@ -373,17 +539,15 @@ class LLMConfigManager:
                     "base_url": GROQ_API_BASE_URL,
                     "model_info": get_model_info_dict(DEFAULT_PRIMARY_MODEL),
                 }
-            # No Groq key → fall straight through to Gemini
-            logger.warning("⚠️ No Groq key available, skipping Groq tier.")
-            self.current_provider = "gemini"
+            logger.warning("⚠️ No Groq key available or Groq daily-exhausted, skipping Groq tier.")
+            # Fall through to Gemini
 
-        if self.current_provider == "groq":
-            if self.gemini_available:
-                logger.info("🔄 Switching from Groq to Gemini fallback...")
-                self.current_provider = "gemini"
+        if _current in ("huggingface", "groq"):
+            if self.gemini_available and "gemini" not in self.__class__._exhausted_providers:
+                logger.info("🔄 Falling back → Gemini for THIS request.")
                 return {
                     "model": GEMINI_MODEL,
-                    "api_key": self.gemini_api_key,
+                    "api_key": self.current_gemini_key,
                     "base_url": GEMINI_API_BASE_URL,
                     "model_info": {
                         "vision": False,
@@ -395,12 +559,13 @@ class LLMConfigManager:
                     "provider": "gemini",
                 }
             else:
-                logger.error("❌ Gemini fallback is not available (API key missing).")
+                logger.error("❌ Gemini fallback not available or daily-exhausted — no further fallback.")
                 return None
 
         # Already on Gemini — no more fallbacks
         logger.error("❌ No more fallback providers in the chain.")
         return None
+
 
     def get_config_with_fallback(self, error: Optional[Exception] = None) -> Dict[str, Any]:
         """
@@ -421,7 +586,7 @@ class LLMConfigManager:
         if LLMConfigManager.RATE_LIMIT_ACTIVE and self.gemini_available:
             return {
                 "model": GEMINI_MODEL,
-                "api_key": self.gemini_api_key,
+                "api_key": self.current_gemini_key,
                 "base_url": GEMINI_API_BASE_URL,
                 "model_info": {
                     "vision": False,
@@ -523,3 +688,4 @@ def validate_llm_startup() -> bool:
     """Validate LLM configuration at application startup."""
     manager = get_llm_config()
     return manager.validate_at_startup()
+

@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from core.config import get_settings
 
 from autogen_core.models import (
@@ -28,6 +28,55 @@ UNSUPPORTED_PARAMS = {
 }
 
 
+from typing import Any, Dict, List, Optional
+
+def clean_and_parse_json(json_str: str) -> Optional[Dict[str, Any]]:
+    import re
+    json_str = json_str.strip()
+    try:
+        return json.loads(json_str)
+    except Exception:
+        pass
+
+    # Try removing trailing commas before closing braces/brackets
+    try:
+        cleaned = re.sub(r',\s*([\}\]])', r'\1', json_str)
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Try replacing multiple double quotes with a single double quote
+    try:
+        cleaned = re.sub(r'"+', '"', json_str)
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Try replacing "" with " specifically and fixing trailing quotes
+    try:
+        cleaned = json_str.replace('""', '"')
+        cleaned = re.sub(r'"\s*"\s*}', '"}', cleaned)
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # If it is flat, parse with regex
+    if json_str.count('{') == 1 and json_str.count('}') == 1:
+        try:
+            attribs = {}
+            matches = re.finditer(r'"([a-zA-Z0-9_]+)"\s*:\s*"+([^"]*)"*', json_str)
+            for m in matches:
+                key = m.group(1)
+                val = m.group(2).strip()
+                attribs[key] = val
+            if attribs:
+                return attribs
+        except Exception:
+            pass
+
+    return None
+
+
 class OpenAIChatCompletionClient(ChatCompletionClient):
     """OpenAI ChatCompletionClient for AutoGen."""
 
@@ -38,14 +87,16 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         base_url: str,
         model_info: Optional[ModelInfo] = None,
         timeout: float = 30.0,
+        disable_fallback: bool = False,
     ):
         """Initialize the client."""
         self.model = model
         self._model_info = model_info
+        self.disable_fallback = disable_fallback
         # Store the URL this client was originally pointed at so _find_chain_start can
         # locate the right starting position in the global fallback chain.
         self._initial_base_url = base_url
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=0)
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._actual_usage = {"prompt_tokens": 0, "completion_tokens": 0}
@@ -329,25 +380,44 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             if strict is not None:
                 openai_tool["function"]["strict"] = strict
 
-            # Clean tool schema specifically for Gemini compatibility
-            if "gemini" in self.model.lower():
-                logger.info(f"Converting tool schema '{name}' for Gemini compatibility")
-                def clean_schema_for_gemini(schema_dict):
-                    if not isinstance(schema_dict, dict):
-                        return schema_dict
-                    cleaned = {}
-                    for k, v in schema_dict.items():
-                        if k == "additionalProperties":
-                            continue
-                        if isinstance(v, dict):
-                            cleaned[k] = clean_schema_for_gemini(v)
-                        elif isinstance(v, list):
-                            cleaned[k] = [clean_schema_for_gemini(item) if isinstance(item, dict) else item for item in v]
+            # Clean tool schema for all models to ensure compatibility with various API providers
+            # (especially resolving anyOf/oneOf and null types for Groq/HuggingFace/Gemini)
+            def clean_schema(schema_dict, remove_additional_properties=False):
+                if not isinstance(schema_dict, dict):
+                    return schema_dict
+                cleaned = {}
+                for k, v in schema_dict.items():
+                    if k == "additionalProperties" and remove_additional_properties:
+                        continue
+                    if k in ("anyOf", "oneOf"):
+                        # Simplify anyOf / oneOf
+                        options = v
+                        non_null_options = [opt for opt in options if isinstance(opt, dict) and opt.get("type") != "null"]
+                        if non_null_options:
+                            cleaned_opt = clean_schema(non_null_options[0], remove_additional_properties)
+                            for ok, ov in cleaned_opt.items():
+                                cleaned[ok] = ov
                         else:
-                            cleaned[k] = v
-                    return cleaned
+                            cleaned["type"] = "string"
+                        continue
+                    if k == "type" and isinstance(v, list):
+                        non_null_types = [t for t in v if t != "null"]
+                        if non_null_types:
+                            cleaned["type"] = non_null_types[0]
+                        else:
+                            cleaned["type"] = "string"
+                        continue
+                    
+                    if isinstance(v, dict):
+                        cleaned[k] = clean_schema(v, remove_additional_properties)
+                    elif isinstance(v, list):
+                        cleaned[k] = [clean_schema(item, remove_additional_properties) if isinstance(item, dict) else item for item in v]
+                    else:
+                        cleaned[k] = v
+                return cleaned
 
-                openai_tool["function"]["parameters"] = clean_schema_for_gemini(openai_tool["function"]["parameters"])
+            remove_ap = "gemini" in self.model.lower()
+            openai_tool["function"]["parameters"] = clean_schema(openai_tool["function"]["parameters"], remove_additional_properties=remove_ap)
 
             logger.debug(f"  Final tool: type=function, name={name}")
             result.append(openai_tool)
@@ -359,6 +429,9 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         """Prunes messages to stay within a token budget while keeping system prompt and recent history."""
         if not openai_messages:
             return openai_messages
+
+        # Enforce lower target token budget for general queries to actively minimize context window sizes
+        max_tokens = min(max_tokens, 2500)
 
         estimated_tokens = self.count_tokens(openai_messages)
         if estimated_tokens <= max_tokens:
@@ -496,9 +569,24 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
         from core.llm_config import get_llm_config
         manager = get_llm_config()
 
-        full_chain    = manager.get_provider_chain()
-        start_idx     = self._find_chain_start(full_chain)
-        provider_chain = full_chain[start_idx:]
+        if getattr(self, "disable_fallback", False):
+            provider_chain = [{
+                "provider": "huggingface" if "huggingface" in self._initial_base_url or "router.huggingface.co" in self._initial_base_url else "gemini" if "google" in self._initial_base_url or "generativelanguage" in self._initial_base_url else "groq",
+                "model": self.model,
+                "api_key": self._client.api_key,
+                "base_url": self._initial_base_url,
+                "model_info": self._model_info or {
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "family": "gemini-2.0" if "gemini" in self.model.lower() else "llama-3.3" if "3.3" in self.model.lower() else "qwen" if "qwen" in self.model.lower() else "llama-3.1",
+                    "structured_output": False,
+                },
+            }]
+        else:
+            full_chain    = manager.get_provider_chain()
+            start_idx     = self._find_chain_start(full_chain)
+            provider_chain = full_chain[start_idx:]
 
         if not provider_chain:
             raise RuntimeError("No LLM providers are configured. Check HUGGINGFACE_ENABLED / GROQ_API_KEY / GEMINI_API_KEY.")
@@ -507,6 +595,9 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
         for provider_cfg in provider_chain:
             provider_name = provider_cfg["provider"]
+            # if provider_name == "huggingface" and tools:
+            #     logger.info(f"⏭️ Skipping Hugging Face provider for model '{provider_cfg['model']}' because tool calling is requested and Hugging Face serverless API does not support function calling.")
+            #     continue
             model_name    = provider_cfg["model"]
             api_key       = provider_cfg["api_key"]
             base_url      = provider_cfg["base_url"]
@@ -516,24 +607,33 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             self.model       = model_name
             self._model_info = model_info
             try:
-                self._client.close()
+                await self._client.close()
             except Exception:
                 pass
-            self._client = OpenAI(
+            # HuggingFace (Qwen-72B) often needs 60-90s; keep Groq/Gemini at 30s
+            _client_timeout = 120.0 if provider_name == "huggingface" else 30.0
+            self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=10.0 if provider_name == "huggingface" else 30.0,
+                timeout=_client_timeout,
                 max_retries=0,
             )
 
             succeeded = False
-            retries = 3
-            backoff = 2.0
+            keys_count = (
+                len(manager._huggingface_keys) if provider_name == "huggingface"
+                else len(manager._groq_keys) if provider_name == "groq"
+                else len(manager._gemini_keys) if provider_name == "gemini"
+                else 1
+            )
+            retries = max(2, keys_count)
+            backoff = 1.0
             for attempt in range(retries + 1):
                 try:
                     logger.info(f"🎯 [{provider_name}] Trying model '{model_name}' (attempt {attempt+1}/{retries+1})...")
                     openai_messages  = self._convert_messages(messages)
                     openai_messages  = self._prune_messages(openai_messages, max_prompt_tokens)
+                    logger.info(f"[DEBUG_LLM_MSGS] messages: {json.dumps(openai_messages, default=str)[:3000]}")
                     converted_tools  = self._convert_tools(tools)
                     filtered_kwargs  = self._filter_kwargs(kwargs)
 
@@ -546,7 +646,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                             param_str   = f"[{', '.join(param_names)}]" if param_names else "[]"
                             logger.info(f"  - Tool: {func.get('name', 'UNNAMED')} (params: {param_str})")
 
-                    response = self._client.chat.completions.create(
+                    response = await self._client.chat.completions.create(
                         model=model_name,
                         messages=openai_messages,
                         tools=converted_tools,
@@ -561,9 +661,36 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                     err_str = str(e)
                     status_code = getattr(e, "status_code", None)
                     is_quota    = "429" in err_str or "402" in err_str or "quota" in err_str.lower() or "rate limit" in err_str.lower() or "resource_exhausted" in err_str.lower() or "credits" in err_str.lower() or status_code in [402, 429]
+                    is_hard_quota = is_quota and ("limit: 0" in err_str or "quota exceeded" in err_str.lower() or "credits" in err_str.lower()) and "retry" not in err_str.lower() and "delay" not in err_str.lower()
+                    is_auth     = "401" in err_str or "invalid api key" in err_str.lower() or "authentication" in err_str.lower() or status_code == 401
+                    is_unavail  = "connect" in err_str.lower() or "connection refused" in err_str.lower() or "timed out" in err_str.lower() or "timeout" in err_str.lower() or status_code in [500, 502, 503, 504]
+                    is_no_tools = "does not support tools" in err_str.lower() or "tool_use_failed" in err_str.lower() or "failed_generation" in err_str.lower() or status_code == 400
+                    is_too_large = "413" in err_str or "too large" in err_str.lower() or "request too large" in err_str.lower() or status_code == 413
 
-                    if is_quota and attempt < retries:
+                    # Mark provider as daily-exhausted so future fallback decisions skip it instantly
+                    if is_hard_quota:
+                        manager._exhausted_providers.add(provider_name)
+                        logger.warning(f"🚫 [{provider_name}] Daily quota exhausted (limit: 0) — skipping this provider for the rest of the session.")
+
+                    if is_quota and not is_hard_quota and attempt < retries:
+                        new_key = manager.rotate_key(provider_name)
+                        if new_key and new_key != api_key:
+                            api_key = new_key
+                            try:
+                                await self._client.close()
+                            except Exception:
+                                pass
+                            self._client = AsyncOpenAI(
+                                api_key=api_key,
+                                base_url=base_url,
+                                timeout=_client_timeout,
+                                max_retries=0,
+                            )
+                            logger.info(f"🔄 Switched to rotated {provider_name} API key for attempt {attempt+2}.")
+                            continue
+
                         import re
+                        import time
                         retry_seconds = None
                         # Pattern 1: Match 'try again in 1.45s' or 'Please retry in 20.44s' or 'retry after 5s'
                         match = re.search(r"(?:retry in|try again in|try again after|retry after|retry_after|after|in)\s*[:\s]?\s*([0-9\.]+)\s*s", err_str, re.IGNORECASE)
@@ -577,23 +704,75 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
                         if retry_seconds is not None:
                             sleep_time = retry_seconds + 0.5
-                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited. Server requested wait. Sleeping for {sleep_time:.2f}s...")
+                            if sleep_time > 15.0:
+                                logger.warning(f"⚠️ [{provider_name}] '{model_name}' requested wait too long ({sleep_time:.2f}s). Falling back immediately to next provider.")
+                                break
+                            logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited. Sleeping for {sleep_time:.2f}s before retry...")
                         else:
                             sleep_time = backoff * (2 ** attempt)
+                            if sleep_time > 15.0:
+                                logger.warning(f"⚠️ [{provider_name}] '{model_name}' backoff sleep too long ({sleep_time:.2f}s). Falling back immediately to next provider.")
+                                break
                             logger.warning(f"⚠️ [{provider_name}] '{model_name}' rate limited (429). Sleeping for {sleep_time:.2f}s...")
 
-                        import time
                         time.sleep(sleep_time)
                         continue
 
-                    # For non-quota errors or if we exhausted all retries
-                    is_auth     = "401" in err_str or "invalid api key" in err_str.lower() or "authentication" in err_str.lower() or status_code == 401
-                    is_unavail  = "connect" in err_str.lower() or "connection refused" in err_str.lower() or "timed out" in err_str.lower() or "timeout" in err_str.lower() or status_code in [500, 502, 503, 504]
-                    is_no_tools = "does not support tools" in err_str.lower() or "tool_use_failed" in err_str.lower() or "failed_generation" in err_str.lower() or status_code == 400
-                    is_too_large = "413" in err_str or "too large" in err_str.lower() or "request too large" in err_str.lower() or status_code == 413
-                    
+                    # For non-quota errors, hard quota errors, or if we exhausted all retries
+                    if is_no_tools and "failed_generation" in err_str:
+                        import re
+                        fg_match = re.search(r"failed_generation.*?(<function.*?>.*?</function>|<function.*)", err_str, re.DOTALL)
+                        if fg_match:
+                            raw_fg = fg_match.group(1).replace('\\"', '"').replace('\\n', '\n').rstrip("'\"}")
+                            tool_names = []
+                            if tools:
+                                for tool in tools:
+                                    if isinstance(tool, dict):
+                                        tname = tool.get("name") or tool.get("function", {}).get("name")
+                                    else:
+                                        tname = getattr(tool, "name", None)
+                                    if tname:
+                                        tool_names.append(tname)
+                            
+                            flexible_pattern = r'[\(<=\s]*function(?:[=>\s\u0022\u0027]+|(?:\s+name=[\"\']?))([a-zA-Z0-9_]+)[=>\s\u0022\u0027\[\],]*({(?:[^{}]|{[^{}]*})*})(?:\s*</?function>)?'
+                            recovered_calls = []
+                            from autogen_core._types import FunctionCall
+                            import uuid
+                            for match in re.finditer(flexible_pattern, raw_fg, re.DOTALL):
+                                tag_name = match.group(1)
+                                args_str = match.group(2) or "{}"
+                                if tag_name in tool_names:
+                                    parsed_args = clean_and_parse_json(args_str)
+                                    args_str = json.dumps(parsed_args) if parsed_args is not None else json.dumps({"query": args_str})
+                                    recovered_calls.append(FunctionCall(id=f"call_{uuid.uuid4().hex[:8]}", arguments=args_str, name=tag_name))
+                            
+                            if recovered_calls:
+                                logger.info(f"✅ Successfully recovered {len(recovered_calls)} tool call(s) from Groq failed_generation payload.")
+                                return CreateResult(
+                                    finish_reason="function_calls",
+                                    content=recovered_calls,
+                                    usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
+                                    cached=False,
+                                )
+
                     if is_auth or is_quota or is_unavail or is_no_tools or is_too_large:
-                        logger.warning(f"⚠️ [{provider_name}] '{model_name}' failed ({err_str[:120]}), trying next provider...")
+                        cooldown_dur = 0.0
+                        if is_auth:
+                            cooldown_dur = 300.0
+                        elif is_quota:
+                            cooldown_dur = 300.0 if is_hard_quota else 30.0
+                        elif is_unavail:
+                            cooldown_dur = 15.0
+                        elif is_too_large:
+                            cooldown_dur = 60.0
+
+                        if cooldown_dur > 0:
+                            try:
+                                manager.set_cooldown(provider_name, model_name, cooldown_dur)
+                            except Exception as exc:
+                                logger.warning("Failed to set model cooldown: %s", exc)
+
+                        logger.warning(f"⚠️ [{provider_name}] '{model_name}' failed ({err_str}), trying next provider...")
                         break
                     
                     # Unexpected error — propagate immediately
@@ -633,7 +812,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         try:
                             import inspect as _inspect
                             args_dict = json.loads(raw_args)
-                            from agents import receptionist_agent
+                            from ai.agents import receptionist_agent
                             if hasattr(receptionist_agent, "sanitize_tool_arguments"):
                                 cleaned_args  = receptionist_agent.sanitize_tool_arguments(func_name, args_dict)
                                 sanitized_args = json.dumps(cleaned_args)
@@ -674,20 +853,52 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         import uuid
                         from autogen_core._types import FunctionCall
 
-                        pattern = r"<([a-zA-Z0-9_]+)(?:\s+[^>]*)?>(.+?)</\1>|<([a-zA-Z0-9_]+)\s*/>|<function=([a-zA-Z0-9_]+)>(.+?)</function>|<function\s+name=[\"\']?([a-zA-Z0-9_]+)[\"\']?\s*>(.+?)</function>"
+                        pattern = r"<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?>(.*?)</\1>|<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?\s*/>|<function=([a-zA-Z0-9_]+)>(.*?)</function>|<function\s+name=[\"\']?([a-zA-Z0-9_]+)[\"\']?\s*>(.*?)</function>|<function/([a-zA-Z0-9_]+)>(.*?)</function>|<([a-zA-Z0-9_]+)\s+({(?:[^{}]|{[^{}]*})*})\s*>?\s*</function>"
                         matches = list(re.finditer(pattern, content, re.DOTALL))
 
                         function_calls = []
                         for match in matches:
-                            tag_name = match.group(1) or match.group(3) or match.group(4) or match.group(6)
-                            args_str = match.group(2) or match.group(5) or match.group(7) or "{}"
+                            tag_name = match.group(1) or match.group(4) or match.group(6) or match.group(8) or match.group(10) or match.group(12)
+                            val_after_eq = match.group(2) or match.group(5) or match.group(13)
+                            
+                            # Check if the value after '=' is a tool name override or direct JSON arguments
+                            is_json_arg = False
+                            if val_after_eq:
+                                val_stripped = val_after_eq.strip()
+                                if val_stripped.startswith('{') or val_stripped.startswith('['):
+                                    is_json_arg = True
+                                else:
+                                    tag_name = val_stripped
 
                             if tag_name in tool_names:
-                                args_str = args_str.strip() or "{}"
-                                try:
-                                    json.loads(args_str)
-                                except Exception:
-                                    args_str = json.dumps({"query": args_str})
+                                if is_json_arg:
+                                    args_str = val_stripped
+                                else:
+                                    # Parse attributes from opening tag
+                                    first_gt = match.group(0).find(">")
+                                    opening_tag = match.group(0)[:first_gt+1] if first_gt != -1 else match.group(0)
+                                    attribs = {}
+                                    attr_matches = re.finditer(r'([a-zA-Z0-9_]+)\s*=\s*({(?:[^{}]|{[^{}]*})*}|\[.*?\]|"[^"]*"|\'[^\']*\'|[^\s>]+)', opening_tag)
+                                    for am in attr_matches:
+                                        key = am.group(1)
+                                        val = am.group(2).strip()
+                                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                                            val = val[1:-1]
+                                        parsed_val = clean_and_parse_json(val)
+                                        if parsed_val is not None:
+                                            val = parsed_val
+                                        attribs[key] = val
+
+                                    if attribs:
+                                        args_str = json.dumps(attribs)
+                                    else:
+                                        args_str = match.group(3) or match.group(7) or match.group(9) or match.group(11) or "{}"
+                                        args_str = args_str.strip() or "{}"
+                                        parsed_args = clean_and_parse_json(args_str)
+                                        if parsed_args is not None:
+                                            args_str = json.dumps(parsed_args)
+                                        else:
+                                            args_str = json.dumps({"query": args_str})
 
                                 function_calls.append(
                                     FunctionCall(
@@ -697,8 +908,32 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                                     )
                                 )
 
+                        # Fallback flexible pattern if no matches were found by the strict XML parser
+                        if not function_calls:
+                            flexible_pattern = r'[\(<=\s]*function(?:[=>\s\u0022\u0027]+|(?:\s+name=[\"\']?))([a-zA-Z0-9_]+)[=>\s\u0022\u0027\[\],]*({(?:[^{}]|{[^{}]*})*})(?:\s*</?function>)?'
+                            flex_matches = list(re.finditer(flexible_pattern, content, re.DOTALL))
+                            for match in flex_matches:
+                                tag_name = match.group(1)
+                                args_str = match.group(2) or "{}"
+                                
+                                if tag_name in tool_names:
+                                    args_str = args_str.strip() or "{}"
+                                    parsed_args = clean_and_parse_json(args_str)
+                                    if parsed_args is not None:
+                                        args_str = json.dumps(parsed_args)
+                                    else:
+                                        args_str = json.dumps({"query": args_str})
+
+                                    function_calls.append(
+                                        FunctionCall(
+                                            id=f"call_{uuid.uuid4().hex[:8]}",
+                                            arguments=args_str,
+                                            name=tag_name,
+                                        )
+                                    )
+
                         if function_calls:
-                            logger.info(f"Parsed {len(function_calls)} XML tool calls from response.")
+                            logger.info(f"Parsed {len(function_calls)} XML/flexible tool calls from response.")
                             content = function_calls
                             choice.finish_reason = "tool_calls"
 
@@ -754,6 +989,9 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
         for provider_cfg in provider_chain:
             provider_name = provider_cfg["provider"]
+            # if provider_name == "huggingface" and tools:
+            #     logger.info(f"⏭️ Skipping Hugging Face provider for model '{provider_cfg['model']}' because tool calling is requested and Hugging Face serverless API does not support function calling.")
+            #     continue
             model_name    = provider_cfg["model"]
             api_key       = provider_cfg["api_key"]
             base_url      = provider_cfg["base_url"]
@@ -762,13 +1000,13 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
             self.model       = model_name
             self._model_info = model_info
             try:
-                self._client.close()
+                await self._client.close()
             except Exception:
                 pass
-            self._client = OpenAI(
+            self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=10.0 if provider_name == "huggingface" else 30.0,
+                timeout=30.0,
                 max_retries=0,
             )
 
@@ -780,14 +1018,14 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                 filtered_kwargs = self._filter_kwargs(kwargs)
 
                 total_output_chars = 0
-                with self._client.chat.completions.create(
+                async with await self._client.chat.completions.create(
                     model=model_name,
                     messages=openai_messages,
                     tools=converted_tools,
                     stream=True,
                     **filtered_kwargs,
                 ) as response:
-                    for chunk in response:
+                    async for chunk in response:
                         if chunk.choices:
                             delta = chunk.choices[0].delta
                             if delta and delta.content:
@@ -827,6 +1065,23 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                 is_no_tools = "does not support tools" in err_str.lower() or "tool_use_failed" in err_str.lower() or "failed_generation" in err_str.lower() or status_code == 400
                 is_too_large = "413" in err_str or "too large" in err_str.lower() or "request too large" in err_str.lower() or status_code == 413
                 if is_auth or is_quota or is_unavail or is_no_tools or is_too_large:
+                    is_hard_quota = is_quota and ("limit: 0" in err_str or "quota exceeded" in err_str.lower() or "credits" in err_str.lower()) and "retry" not in err_str.lower() and "delay" not in err_str.lower()
+                    cooldown_dur = 0.0
+                    if is_auth:
+                        cooldown_dur = 300.0
+                    elif is_quota:
+                        cooldown_dur = 300.0 if is_hard_quota else 30.0
+                    elif is_unavail:
+                        cooldown_dur = 15.0
+                    elif is_too_large:
+                        cooldown_dur = 60.0
+
+                    if cooldown_dur > 0:
+                        try:
+                            manager.set_cooldown(provider_name, model_name, cooldown_dur)
+                        except Exception as exc:
+                            logger.warning("Failed to set model cooldown: %s", exc)
+
                     logger.warning(f"⚠️ [{provider_name}] '{model_name}' stream failed ({err_str[:120]}), trying next...")
                     continue
                 logger.error(f"❌ [{provider_name}] Unexpected stream error: {e}")
@@ -862,6 +1117,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
     async def close(self) -> None:
         """Close the client."""
         try:
-            self._client.close()
+            await self._client.close()
         except Exception:
             pass
+

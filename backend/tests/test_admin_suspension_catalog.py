@@ -6,7 +6,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from db import SessionLocal, User, UserRole, Service
+from infrastructure.db import SessionLocal, User, UserRole, Service
 from core.security import hash_password
 
 
@@ -160,8 +160,10 @@ def test_catalog_management(client: TestClient):
         
     finally:
         # Clean up
-        db_service = db.query(Service).filter(Service.id == service_id).first()
+        import uuid
+        db_service = db.query(Service).filter(Service.id == uuid.UUID(service_id)).first()
         if db_service:
             db.delete(db_service)
             db.commit()
         db.close()
+

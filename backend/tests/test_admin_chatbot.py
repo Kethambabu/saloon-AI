@@ -8,9 +8,9 @@ from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from db import User, UserRole
-from agents.orchestrator import MultiAgentOrchestrator, AgentIntent, classify_intent_rule_based
-from agents.bi_agent import BIAgent
+from infrastructure.db import User, UserRole
+from ai.orchestrator import MultiAgentOrchestrator, AgentIntent, classify_intent_rule_based
+from ai.agents.bi_agent import BIAgent
 
 def test_admin_chatbot_intent_classification():
     """Verify that rule-based intent classification routes analytical queries to BI agent."""
@@ -110,7 +110,7 @@ async def test_admin_agent_chat_routing(client: TestClient):
     }
 
     with patch("api.routes.agent_routes._receptionist_agent", new=AsyncMock()):
-        with patch("agents.orchestrator.MultiAgentOrchestrator.process", return_value=mock_orch_response) as mock_orch:
+        with patch("agents.orchestrator_v3.MultiAgentOrchestrator.process", return_value=mock_orch_response) as mock_orch:
             response = client.post("/api/v1/agent/chat", json=payload, headers=headers)
             
             assert response.status_code == status.HTTP_200_OK
@@ -124,3 +124,4 @@ async def test_admin_agent_chat_routing(client: TestClient):
             args = mock_orch.call_args[0][0]
             assert args["query"] == "Compare this month's revenue with last month"
             assert args["intent_override"] == "business_intelligence"
+

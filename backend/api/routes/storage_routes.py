@@ -9,8 +9,8 @@ from typing import Dict, Any
 from fastapi import APIRouter, UploadFile, File, Query, Depends, HTTPException, status
 
 from api.deps import get_current_user
-from db.models import User
-from utils.storage import upload_file
+from infrastructure.db.models import User
+from infrastructure.integrations.storage import upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,29 @@ ALLOWED_CATEGORIES = {
     "profile-images": "profile-images",
     "documents": "documents",
     "salon-assets": "salon-assets"
+}
+
+# Whitelist allowed (content_type -> extension) pairs per category. Rejects
+# anything else so a client can't set content_type=text/html (or upload a
+# .svg/.html/.js file) and get it served back as executable/renderable
+# content from the public bucket URL (stored XSS via attacker-controlled
+# Content-Type on same-origin-trusted storage).
+ALLOWED_UPLOAD_TYPES: Dict[str, Dict[str, set]] = {
+    "profile-images": {
+        "image/jpeg": {"jpg", "jpeg"},
+        "image/png": {"png"},
+        "image/webp": {"webp"},
+    },
+    "salon-assets": {
+        "image/jpeg": {"jpg", "jpeg"},
+        "image/png": {"png"},
+        "image/webp": {"webp"},
+    },
+    "documents": {
+        "application/pdf": {"pdf"},
+        "image/jpeg": {"jpg", "jpeg"},
+        "image/png": {"png"},
+    },
 }
 
 
@@ -53,14 +76,27 @@ async def upload_asset(
                 detail="File size exceeds the maximum limit of 10MB."
             )
             
-        # Generate a unique path inside the bucket
-        file_extension = file.filename.split(".")[-1] if "." in file.filename else "bin"
+        # Determine content type and validate it (and the extension) against
+        # the whitelist for this category — never trust the client-supplied
+        # content_type/filename alone.
+        content_type = (file.content_type or "").lower().split(";")[0].strip()
+        file_extension = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
+
+        allowed_for_category = ALLOWED_UPLOAD_TYPES.get(category, {})
+        allowed_extensions = allowed_for_category.get(content_type)
+        if not allowed_extensions or file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Unsupported file type '{content_type or 'unknown'}' with extension "
+                    f"'.{file_extension or 'none'}' for category '{category}'."
+                )
+            )
+
+        # Generate a unique path inside the bucket (never trust the client filename for the path)
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         target_path = f"uploads/{current_user.id}/{unique_filename}"
-        
-        # Determine content type
-        content_type = file.content_type or "application/octet-stream"
-        
+
         # Upload using the storage utility
         public_url = upload_file(
             bucket=category,
@@ -87,3 +123,4 @@ async def upload_asset(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload asset: {str(e)}"
         )
+

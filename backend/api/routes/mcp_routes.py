@@ -49,7 +49,7 @@ from mcp.context_builder import build_context
 from mcp.permissions import check_permission
 from mcp.query_guard import GuardViolationError
 from mcp.salon_mcp import SalonMCP
-from services.audit_service import get_audit_logger
+from application.services.audit_service import get_audit_logger
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,16 @@ async def mcp_test(
     of what happened (permission check result, guard outcome, data count, etc.).
     """
     t_start = time.perf_counter()
+
+    # Diagnostic/debug endpoint — restrict to privileged roles, consistent with
+    # /mcp-metrics and /mcp-cache/clear, rather than exposing raw MCP internals
+    # (permission_granted/guard_passed/error_code breakdowns) to any authenticated role.
+    role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if role_val not in ("ADMIN", "MANAGER", "OWNER"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admins, Managers, or Owners can access the MCP test endpoint.",
+        )
 
     # 1. Build MCP context from the authenticated user
     try:
@@ -218,6 +228,13 @@ async def mcp_info(current_user=Depends(get_current_user)) -> Dict[str, Any]:
     """
     from mcp.permissions import get_allowed_resources
 
+    role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if role_val not in ("ADMIN", "MANAGER", "OWNER"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admins, Managers, or Owners can access MCP diagnostic info.",
+        )
+
     ctx = build_context(current_user)
     role_str = ctx.role if isinstance(ctx.role, str) else ctx.role.value
     allowed = get_allowed_resources(role_str)
@@ -234,3 +251,4 @@ async def mcp_info(current_user=Depends(get_current_user)) -> Dict[str, Any]:
             "customers", "leads", "branches", "loyalty_points",
         ],
     }
+

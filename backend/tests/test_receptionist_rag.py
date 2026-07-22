@@ -12,9 +12,9 @@ from fastapi.testclient import TestClient
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db.models import Base, KnowledgeDocument, SpecialOffer, User, UserRole
-from services.receptionist_rag_service import ReceptionistRAGService
-from tools.receptionist_rag_tools import (
+from infrastructure.db.models import Base, KnowledgeDocument, SpecialOffer, User, UserRole
+from application.services.receptionist_rag_service import ReceptionistRAGService
+from infrastructure.rag.receptionist_rag_tools import (
     search_receptionist_knowledge,
     get_active_offers,
     get_business_timings,
@@ -196,7 +196,7 @@ def test_admin_routes_and_access(db_session, mock_embedding_model):
     
     # 1. Override dependencies to bypass auth and db Session
     from api.deps import get_current_user
-    from db import get_db
+    from infrastructure.db import get_db
     
     mock_admin = User(
         email="admin@salonai.com",
@@ -258,3 +258,4 @@ def test_admin_routes_and_access(db_session, mock_embedding_model):
             # Verify deleted offers are not returned in list
             list_offers_resp = client.get("/api/v1/admin/offers")
             assert len(list_offers_resp.json()["offers"]) == 0
+

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agents.lead_followup_agent import LeadFollowupAgent
+from ai.agents.lead_followup_agent import LeadFollowupAgent
 from autogen_agentchat.agents import AssistantAgent
 
 
@@ -118,3 +118,4 @@ async def test_lead_followup_agent_process_pipeline():
         context = agent._get_memory_context(session_id)
         assert "User: Find abandoned bookings" in context
         assert "Assistant: I found 3 abandoned bookings" in context
+

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Type
 
 def _get_models():
     """Import DB models lazily."""
-    from db import models as M
+    from infrastructure.db import models as M
     return M
 
 
@@ -116,3 +116,4 @@ def supports_aggregate(resource: str, metric: str) -> bool:
     resource = resource.lower().strip()
     metric = metric.lower().strip()
     return metric in AGGREGATE_SUPPORT.get(resource, [])
+

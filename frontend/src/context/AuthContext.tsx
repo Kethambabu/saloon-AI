@@ -95,21 +95,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const response = await apiClient.post('/auth/login', { email, password });
       console.log('[DEBUG] [AuthContext] Login response received:', response.data);
-      
+
+      // Handle role selection flow (user has multiple roles)
+      if (response.data?.require_role_selection) {
+        console.log('[DEBUG] [AuthContext] Role selection required. Available roles:', response.data.available_roles);
+        // Propagate this as a structured error for the Login component to handle
+        const roleError: any = new Error('ROLE_SELECTION_REQUIRED');
+        roleError.require_role_selection = true;
+        roleError.available_roles = response.data.available_roles;
+        roleError.email = response.data.email;
+        throw roleError;
+      }
+
       // Validate response structure
       if (!response.data || !response.data.access_token || !response.data.refresh_token) {
         console.error('[DEBUG] [AuthContext] Invalid login response structure:', response.data);
         throw new Error('Invalid login response: missing tokens');
       }
-      
+
       const { access_token, refresh_token } = response.data;
       console.log('[DEBUG] [AuthContext] Tokens received. Access token length:', access_token?.length, 'Refresh token length:', refresh_token?.length);
-      
+
       if (!access_token || !refresh_token) {
         console.error('[DEBUG] [AuthContext] Tokens are empty or null');
         throw new Error('Received empty tokens from server');
       }
-      
+
       console.log('[DEBUG] [AuthContext] Storing JWT tokens in localStorage');
       localStorage.setItem('auth_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
@@ -117,7 +128,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log('[DEBUG] [AuthContext] Fetching user profile details via /auth/me');
       const meResponse = await apiClient.get<UserProfile>('/auth/me');
       console.log('[DEBUG] [AuthContext] User profile received:', meResponse.data);
-      
+
       // Validate profile data
       if (!meResponse.data || !meResponse.data.id || !meResponse.data.role) {
         console.error('[DEBUG] [AuthContext] Invalid profile data received:', meResponse.data);
@@ -125,7 +136,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         localStorage.removeItem('refresh_token');
         throw new Error('Invalid user profile data received');
       }
-      
+
       const normalizedUser = {
         ...meResponse.data,
         role: normalizeRole(meResponse.data.role),
@@ -142,6 +153,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setLoading(false);
     }
   };
+
 
   const logout = async () => {
     setLoading(true);

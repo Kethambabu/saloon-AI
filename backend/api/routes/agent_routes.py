@@ -10,13 +10,17 @@ from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from pydantic import BaseModel, Field, ConfigDict
 
 # Project imports
-from agents.receptionist_agent import ReceptionistAgent
+from ai.agents.receptionist_agent import ReceptionistAgent
 from api.deps import get_current_user
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+# Maximum wall-clock time allotted to a single agent run before the request
+# is aborted and a timeout response is returned to the client.
+AGENT_TIMEOUT_SECONDS = 90.0
 
 # Thread-safe global singleton for the Orchestrator/Agent to optimize load times
 _agent_orchestrator: Any = None
@@ -28,7 +32,7 @@ def get_receptionist_agent() -> Any:
     global _agent_orchestrator, _receptionist_agent
     if _agent_orchestrator is None:
         logger.info("Initializing lazy OrchestratorV3 singleton...")
-        from agents.orchestrator_v3 import get_phase2_orchestrator
+        from ai.orchestrator import get_phase2_orchestrator
         _agent_orchestrator = get_phase2_orchestrator(tenant_id="default")
         _receptionist_agent = _agent_orchestrator
     return _agent_orchestrator
@@ -83,6 +87,8 @@ class ChatResponse(BaseModel):
     )
     response: str = Field(..., description="Conversational reply text from the AI Agent")
     agent_name: str = Field(..., description="Name of the agent replying")
+    response_type: str = Field(default="general_chat", description="Classification of the response payload")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Optional structured data accompanying the response")
 
 
 @router.post(
@@ -103,7 +109,7 @@ async def chat_with_agent(
     """
     logger.info(f"POST /api/agent/chat received (Session ID: {payload.session_id}, User Role: {current_user.role})")
     
-    from datetime import datetime
+    from datetime import datetime, timezone
     import asyncio
 
     # Enforce Customer Role profile requirement
@@ -112,11 +118,16 @@ async def chat_with_agent(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Customer users must have an associated customer profile"
         )
-    
+
     context_prefix = ""
-    # Inject current date and time context
-    now_dt = datetime.now()
-    context_prefix += f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (Today is {now_dt.strftime('%A, %B %d, %Y')}). Use this to calculate exact dates like 'tomorrow', 'next Tuesday', etc.]\n"
+    # Inject current date and time context.
+    # NOTE: Must be UTC — the orchestrator's own enriched-query builder also injects
+    # a "[SYSTEM TIME CONTEXT: ... (UTC)]" block using UTC, and all backend datetime
+    # validation (past-date/past-time rejection, business hours) is UTC-based. Using
+    # naive local server time here previously created a second, conflicting "current
+    # time" inside the same prompt and could mislead the LLM's relative-date reasoning.
+    now_dt = datetime.now(timezone.utc)
+    context_prefix += f"[SYSTEM TIME CONTEXT: Current system time is {now_dt.strftime('%Y-%m-%d %H:%M:%S')} (UTC) (Today is {now_dt.strftime('%A, %B %d, %Y')}). Use this to calculate exact dates like 'tomorrow', 'next Tuesday', etc.]\n"
     
     # Inject logged-in user context WITH ROLE ISOLATION
     if current_user:
@@ -128,17 +139,33 @@ async def chat_with_agent(
             context_prefix += f"[SYSTEM STAFF CONTEXT: The user chatting with you is logged in as Staff '{stf.full_name}' (ID: {stf.id}, Role: {stf.role}, Branch ID: {stf.branch_id}). You have access to internal staff tools and analytics.]\n"
         else:
             context_prefix += f"[SYSTEM USER CONTEXT: The user chatting with you is logged in with email: '{current_user.email}' (Role: {current_user.role.value if hasattr(current_user.role, 'value') else current_user.role}).]\n"
-            
-    full_query = context_prefix + "\n"
-    if payload.chat_history:
-        full_query += "Here is the conversation history so far for context:\n"
-        for idx, msg in enumerate(payload.chat_history[-5:]):
-            role = msg.get("role", "user").capitalize()
-            content = msg.get("content", "")
-            full_query += f"- {role}: {content}\n"
-        full_query += "\n"
-        
-    full_query += f"Latest User Message: {payload.message}"
+
+    # Populate conversation state service history from payload.chat_history when it is a new/empty session
+    try:
+        from application.services.conversation_state_service import get_state_service
+        state_svc = get_state_service()
+        session = state_svc.get_session(payload.session_id)
+        if not session or not session.history:
+            session = state_svc.get_or_create(
+                session_id=payload.session_id,
+                user_id=current_user.id,
+                user_role=current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
+            )
+            if payload.chat_history:
+                logger.info(f"Populating session {payload.session_id} history from payload chat_history ({len(payload.chat_history)} turns)")
+                for msg in payload.chat_history:
+                    role = msg.get("role", "user").lower()
+                    content = msg.get("content", "")
+                    # Don't add if empty
+                    if content.strip():
+                        # AutoGen format has sender/source, map to user or assistant
+                        role_clean = "assistant" if role in ("assistant", "agent", "clara") else "user"
+                        session.add_turn(role_clean, content)
+    except Exception as e:
+        logger.warning(f"Failed to populate conversation state from payload: {e}")
+
+    # Remove repeated history context from the queries, since the orchestrator already manages the session history in state_service
+    full_query = context_prefix + f"\nLatest User Message: {payload.message}"
     
     # 2. Lazy load the agent (returns the Multi-Agent Orchestrator in production)
     try:
@@ -151,7 +178,7 @@ async def chat_with_agent(
         )
 
     # 3. Store chat log with customer isolation
-    from db import get_db, ChatLog, SessionLocal
+    from infrastructure.db import get_db, ChatLog, SessionLocal
     
     # Store user message first
     db_sess = SessionLocal()
@@ -168,7 +195,7 @@ async def chat_with_agent(
         db_sess.add(chat_log)
         
         # Reset existing lead to NEW because they are active in the chat again!
-        from db import Lead, LeadStatus
+        from infrastructure.db import Lead, LeadStatus
         from datetime import datetime
         existing_lead = db_sess.query(Lead).filter(
             (Lead.notes.like(f"%Session ID: {payload.session_id}%")) |
@@ -188,40 +215,11 @@ async def chat_with_agent(
     finally:
         db_sess.close()
 
-    # Helper function to run agent processing in a background task
-    async def run_agent_in_background(query_data: Dict[str, Any]):
-        try:
-            logger.info("Executing agent process in background task...")
-            agent_res = await agent.process(query_data)
-            logger.info("Agent process completed in background task successfully.")
-            # Store agent response
-            db_sess_bg = SessionLocal()
-            try:
-                chat_log = ChatLog(
-                    session_id=payload.session_id,
-                    user_id=current_user.id,
-                    customer_id=current_user.customer_id if current_user.customer_id else None,
-                    staff_id=current_user.staff_id if current_user.staff_id else None,
-                    agent_type="RECEPTIONIST",
-                    sender="assistant",
-                    message=agent_res.get("response", "").strip()
-                )
-                db_sess_bg.add(chat_log)
-                db_sess_bg.commit()
-                logger.info(f"Stored bg agent chat log for user {current_user.id}")
-            except Exception as e:
-                logger.error(f"Failed to store background agent chat log: {e}")
-                db_sess_bg.rollback()
-            finally:
-                db_sess_bg.close()
-        except Exception as bg_ex:
-            logger.error(f"Error in background agent process execution: {bg_ex}")
-
-    # 4. Process query through AutoGen asynchronously with hybrid background forking
+    # 4. Process query through AutoGen asynchronously
     try:
         logger.debug(f"Sending query to agent: {full_query[:100]}...")
         
-        # Try to wait for the agent response for a maximum of 30.0 seconds
+        # Try to wait for the agent response for a maximum of AGENT_TIMEOUT_SECONDS
         agent_response = await asyncio.wait_for(
             agent.process({
                 "query": payload.message,
@@ -230,9 +228,10 @@ async def chat_with_agent(
                 "user_role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
                 "session_id": payload.session_id,
                 "customer_id": current_user.customer_id,
+                "staff_id": getattr(current_user, "staff_id", None),
                 "user_id": current_user.id,
             }),
-            timeout=30.0
+            timeout=AGENT_TIMEOUT_SECONDS
         )
         
         if not agent_response.get("success"):
@@ -267,7 +266,7 @@ async def chat_with_agent(
         finally:
             db_sess_sync.close()
 
-        logger.info(f"Agent successfully processed query within 30 seconds for session {payload.session_id}")
+        logger.info(f"Agent successfully processed query within {AGENT_TIMEOUT_SECONDS:.0f}s for session {payload.session_id}")
         return ChatResponse(
             success=True,
             session_id=payload.session_id,
@@ -278,21 +277,11 @@ async def chat_with_agent(
         )
 
     except asyncio.TimeoutError:
-        logger.warning(f"⏰ Agent execution exceeded 30.0 seconds. Forking task to FastAPI background worker.")
-        background_tasks.add_task(run_agent_in_background, {
-            "query": payload.message,
-            "full_query": full_query,
-            "intent_override": payload.intent_override,
-            "user_role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
-            "session_id": payload.session_id,
-            "customer_id": current_user.customer_id,
-            "user_id": current_user.id,
-        })
-        
+        logger.warning(f"⏰ Agent execution exceeded {AGENT_TIMEOUT_SECONDS:.0f}s. Returning timeout error.")
         return ChatResponse(
-            success=True,
+            success=False,
             session_id=payload.session_id,
-            response="Processing your request...",
+            response="I apologize, but processing your request timed out. Please try again.",
             agent_name="Clara"
         )
     except HTTPException as he:
@@ -314,3 +303,4 @@ async def chat_with_agent(
             response="An unexpected error occurred. Our team has been notified. Please try again later.",
             agent_name="Clara"
         )
+

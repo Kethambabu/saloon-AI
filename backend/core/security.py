@@ -5,6 +5,9 @@ Supports JWT authentication, secure bcrypt hashing, and refresh token cycles.
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Union, Dict, Optional
+import threading
+import time
+from collections import defaultdict
 import jwt
 import bcrypt
 from core.config import get_settings
@@ -15,6 +18,11 @@ settings = get_settings()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+# Brute-force login protection
+LOGIN_ATTEMPT_WINDOW_SECONDS = 900   # 15 minutes
+LOGIN_ATTEMPT_MAX = 5
+LOGIN_LOCKOUT_SECONDS = 900          # 15 minutes
 
 
 def hash_password(password: str) -> str:
@@ -106,3 +114,64 @@ def decode_token(token: str) -> Dict[str, Any]:
         raise e
     except jwt.InvalidTokenError as e:
         raise e
+
+
+class LoginAttemptLimiter:
+    """
+    In-memory brute-force guard for the login endpoint.
+
+    Tracks failed login attempts per email; once an email accumulates
+    ``LOGIN_ATTEMPT_MAX`` failures within ``LOGIN_ATTEMPT_WINDOW_SECONDS``,
+    further attempts for that email are rejected for ``LOGIN_LOCKOUT_SECONDS``
+    regardless of whether the password supplied is actually correct.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failures: Dict[str, list] = defaultdict(list)
+        self._locked_until: Dict[str, float] = {}
+
+    def check_locked(self, email: str) -> Optional[int]:
+        """Return remaining lockout seconds if *email* is locked out, else None."""
+        with self._lock:
+            locked_until = self._locked_until.get(email)
+            if locked_until is None:
+                return None
+            remaining = int(locked_until - time.time())
+            if remaining <= 0:
+                self._locked_until.pop(email, None)
+                self._failures.pop(email, None)
+                return None
+            return remaining
+
+    def record_failure(self, email: str) -> None:
+        """Record a failed login attempt, locking the account if over threshold."""
+        with self._lock:
+            now = time.time()
+            window_start = now - LOGIN_ATTEMPT_WINDOW_SECONDS
+            attempts = [t for t in self._failures[email] if t >= window_start]
+            attempts.append(now)
+            self._failures[email] = attempts
+            if len(attempts) >= LOGIN_ATTEMPT_MAX:
+                self._locked_until[email] = now + LOGIN_LOCKOUT_SECONDS
+
+    def record_success(self, email: str) -> None:
+        """Clear any failure history for *email* after a successful login."""
+        with self._lock:
+            self._failures.pop(email, None)
+            self._locked_until.pop(email, None)
+
+
+_login_limiter: Optional[LoginAttemptLimiter] = None
+_login_limiter_lock = threading.Lock()
+
+
+def get_login_attempt_limiter() -> LoginAttemptLimiter:
+    """Return the process-wide singleton :class:`LoginAttemptLimiter`."""
+    global _login_limiter
+    if _login_limiter is None:
+        with _login_limiter_lock:
+            if _login_limiter is None:
+                _login_limiter = LoginAttemptLimiter()
+    return _login_limiter
+

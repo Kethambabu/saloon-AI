@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from db import get_db, User, UserRole
+from infrastructure.db import get_db, User, UserRole
 from core.security import decode_token
 
 # Configure OAuth2 scheme
@@ -93,3 +93,4 @@ class RoleChecker:
                 detail="Access denied: Insufficient permissions",
             )
         return current_user
+

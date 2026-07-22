@@ -15,9 +15,9 @@ from langchain_core.documents import Document
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from rag.embeddings import EmbeddingConfig, EmbeddingProvider
-from rag.ingest import DocumentChunker, RAGIngestor
-from rag.retriever import SalonRAGRetriever, search_salon_knowledge, search_all_context
+from infrastructure.rag.embeddings import EmbeddingConfig, EmbeddingProvider
+from infrastructure.rag.ingest import DocumentChunker, RAGIngestor
+from infrastructure.rag.retriever import SalonRAGRetriever, search_salon_knowledge, search_all_context
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +167,4 @@ async def test_rag_autogen_agent_tools(mock_embedding_model):
             all_res = ast.literal_eval(all_str)
             assert all_res["success"] is True
             assert all_res["total"] > 0
+

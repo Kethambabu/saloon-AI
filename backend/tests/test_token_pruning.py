@@ -1,7 +1,7 @@
 import json
 import pytest
 from core.openai_client_adapter import OpenAIChatCompletionClient
-from agents.receptionist_agent import compress_history_for_prompt
+from ai.agents.receptionist_agent import compress_history_for_prompt
 
 def test_compress_history_for_prompt():
     # Mock a large customer booking history payload containing 10 appointments
@@ -108,3 +108,4 @@ def test_openai_client_adapter_message_pruning():
     # 3. Keep the very last user query
     assert pruned[-1]["role"] == "user"
     assert pruned[-1]["content"] == "Perfect, let's book 3pm please."
+

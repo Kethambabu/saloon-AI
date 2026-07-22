@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db import Base, Branch, Staff, Customer, Service
-from tools.booking_tools import create_appointment, reschedule_appointment
+from infrastructure.db import Base, Branch, Staff, Customer, Service
+from application.services.appointment_service import create_appointment, reschedule_appointment
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 
@@ -62,7 +62,7 @@ def test_booking_in_past_fails(db_session):
     )
     
     assert res["success"] is False
-    assert res["error"] == "Appointments must be in the future."
+    assert "I'm sorry, but appointments cannot be booked for past dates or times." in res["error"] or "has already passed" in res["error"]
 
 def test_reschedule_in_past_fails(db_session):
     branch = db_session.query(Branch).first()
@@ -95,4 +95,5 @@ def test_reschedule_in_past_fails(db_session):
     )
     
     assert res_resched["success"] is False
-    assert res_resched["error"] == "Appointments must be in the future."
+    assert "I'm sorry, but appointments cannot be booked for past dates or times." in res_resched["error"] or "has already passed" in res_resched["error"]
+

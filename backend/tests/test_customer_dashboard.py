@@ -8,7 +8,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from db import User, UserRole, Customer, Appointment, AppointmentStatus, SessionLocal
+from infrastructure.db import User, UserRole, Customer, Appointment, AppointmentStatus, SessionLocal
 from datetime import datetime, timezone, timedelta
 
 def test_customer_login_success(client: TestClient):
@@ -115,3 +115,4 @@ def test_customer_endpoints_role_guards(client: TestClient):
     # 3. Request customer dashboard without authentication - should be unauthorized
     dash_unauth = client.get("/api/v1/customer/dashboard")
     assert dash_unauth.status_code == status.HTTP_401_UNAUTHORIZED
+

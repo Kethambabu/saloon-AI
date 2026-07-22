@@ -12,14 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from db import get_db, Customer, UserRole, Appointment, Review, LoyaltyTransaction
+from infrastructure.db import get_db, Customer, UserRole, Appointment, Review, LoyaltyTransaction
 from api.deps import get_current_user
-from tools.loyalty_service import (
+from application.services.loyalty_service import (
     get_customer_loyalty_summary,
     on_appointment_completed,
     on_appointment_cancelled,
     on_review_submitted,
 )
+from application.services.appointment_service import auto_cancel_all_expired_appointments
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,9 @@ def get_customer_dashboard(
     """
     logger.info(f"Fetching dashboard for customer {customer.id}")
     
+    # Auto-cancel expired appointments before fetching dashboard
+    auto_cancel_all_expired_appointments(db)
+
     # Get all appointments
     all_appointments = db.query(Appointment).filter(
         Appointment.customer_id == customer.id
@@ -158,7 +162,7 @@ def get_customer_dashboard(
     avg_rating = sum(r.rating for r in reviews) / len(reviews) if reviews else 0.0
     
     # Count appointment statuses
-    from db.models import AppointmentStatus
+    from infrastructure.db.models import AppointmentStatus
     from datetime import datetime, timezone
     
     completed_count = sum(1 for a in all_appointments if a.status == AppointmentStatus.COMPLETED)
@@ -333,12 +337,15 @@ def get_customer_appointments(
     """
     logger.info(f"Fetching appointments for customer {customer.id}")
     
+    # Auto-cancel expired appointments before fetching appointment list
+    auto_cancel_all_expired_appointments(db)
+
     query = db.query(Appointment).filter(
         Appointment.customer_id == customer.id
     ).order_by(Appointment.created_at.desc())
     
     if status_filter:
-        from db.models import AppointmentStatus
+        from infrastructure.db.models import AppointmentStatus
         try:
             status_enum = AppointmentStatus[status_filter.upper()]
             query = query.filter(Appointment.status == status_enum)
@@ -425,3 +432,4 @@ def award_completion_points(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to award loyalty points"
         )
+

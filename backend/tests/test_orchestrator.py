@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agents.orchestrator import MultiAgentOrchestrator, AgentIntent, classify_intent_rule_based
+from ai.orchestrator import MultiAgentOrchestrator, AgentIntent, classify_intent_rule_based
 from autogen_agentchat.agents import AssistantAgent
 
 
@@ -127,3 +127,47 @@ async def test_orchestrator_process_intent_override():
         assert response["response"] == "Here are your upsell offers."
 
         mock_chat.assert_called_once_with(orchestrator.agents[AgentIntent.UPSELL], "Book an appointment")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_intent_override_blocked_for_disallowed_role():
+    """A CUSTOMER-role caller must NOT be able to use the client-supplied
+    intent_override field to self-elevate into a restricted agent
+    (e.g. BUSINESS_INTELLIGENCE) — it should be demoted to BOOKING exactly
+    like any other role-disallowed intent resolution."""
+    orchestrator = MultiAgentOrchestrator(name="Orchestrator")
+
+    with patch.object(orchestrator, "_run_group_chat", return_value="Sure, let's get you booked.") as mock_chat:
+        response = await orchestrator.process({
+            "query": "Book an appointment",
+            "intent_override": "business_intelligence",
+            "user_role": "CUSTOMER",
+        })
+
+        assert response["success"] is True
+        assert response["agent_name"] == "Clara_Receptionist"
+        assert response["intent"] == "booking"
+
+        mock_chat.assert_called_once_with(orchestrator.agents[AgentIntent.BOOKING], "Book an appointment")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_intent_override_allowed_for_privileged_role():
+    """Sanity check: the same override still works for a role that IS
+    permitted to reach BUSINESS_INTELLIGENCE, so the fix only tightens the
+    disallowed case rather than breaking the override feature outright."""
+    orchestrator = MultiAgentOrchestrator(name="Orchestrator")
+
+    with patch.object(orchestrator, "_run_group_chat", return_value="Here is the dashboard.") as mock_chat:
+        response = await orchestrator.process({
+            "query": "Book an appointment",
+            "intent_override": "business_intelligence",
+            "user_role": "OWNER",
+        })
+
+        assert response["success"] is True
+        assert response["agent_name"] == "Atlas_BI"
+        assert response["intent"] == "business_intelligence"
+
+        mock_chat.assert_called_once_with(orchestrator.agents[AgentIntent.BUSINESS_INTELLIGENCE], "Book an appointment")
+

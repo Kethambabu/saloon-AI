@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # Project imports
-from db import get_db
+from infrastructure.db import get_db
 from api.deps import get_current_user
-from services.recommendation_service import RecommendationService
+from application.services.recommendation_service import RecommendationService
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +166,4 @@ async def get_upsell_analytics(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
+

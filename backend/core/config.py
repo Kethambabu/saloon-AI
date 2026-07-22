@@ -5,7 +5,11 @@ import os
 from typing import List, Optional, Union
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Placeholder value shipped in source control — must never be used in production,
+#: since it would let anyone forge valid JWTs (see validate_secret_key_startup()).
+INSECURE_DEFAULT_SECRET_KEY = "your-secret-key-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -17,6 +21,18 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, alias="DEBUG")
     environment: str = Field(default="development", alias="ENVIRONMENT")
 
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
+
+    @property
+    def is_testing(self) -> bool:
+        return self.environment.lower() == "testing"
+
+    @property
+    def is_development(self) -> bool:
+        return self.environment.lower() in ("development", "dev")
+
     # Server
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8000, alias="PORT")
@@ -25,6 +41,10 @@ class Settings(BaseSettings):
     # Database
     database_url: Optional[str] = Field(default=None, alias="DATABASE_URL")
     database_echo: bool = Field(default=False, alias="DATABASE_ECHO")
+    
+    # Redis configuration
+    redis_url: Optional[str] = Field(default=None, alias="REDIS_URL")
+
 
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -32,7 +52,7 @@ class Settings(BaseSettings):
 
     # Security & CORS
     secret_key: str = Field(
-        default="your-secret-key-change-in-production",
+        default=INSECURE_DEFAULT_SECRET_KEY,
         alias="SECRET_KEY"
     )
     cors_origins: Union[List[str], str] = Field(
@@ -78,15 +98,21 @@ class Settings(BaseSettings):
     enable_rag: bool = Field(default=True, alias="ENABLE_RAG")
     enable_agents: bool = Field(default=True, alias="ENABLE_AGENTS")
 
-    class Config:
-        """Pydantic configuration."""
-        env_file = (
+    @property
+    def data_dir(self) -> str:
+        # Resolves to project backend/data directory
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(backend_dir, "data")
+
+    model_config = SettingsConfigDict(
+        env_file=(
             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
             ".env"
-        )
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+        ),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
 
 
 @lru_cache(maxsize=1)
@@ -95,5 +121,19 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def validate_secret_key_startup(settings_obj: Optional["Settings"] = None) -> bool:
+    """
+    Refuse to treat startup as valid if running in production with the
+    insecure placeholder SECRET_KEY still in place — that value is public
+    (shipped in source control), so leaving it in production lets anyone
+    forge valid JWTs for any user/role.
+    """
+    s = settings_obj or get_settings()
+    if s.is_production and s.secret_key == INSECURE_DEFAULT_SECRET_KEY:
+        return False
+    return True
+
+
 # Export settings instance
 settings = get_settings()
+

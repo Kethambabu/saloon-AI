@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../api/client';
 import { StaffChat } from './StaffChat';
+import { DashboardSkeleton } from '../ui/Skeleton';
+import { StatCard } from '../ui/StatCard';
 import { StaffInsights } from './StaffInsights';
 import { PerformanceCard } from './PerformanceCard';
 import { RevenueCard } from './RevenueCard';
@@ -76,9 +78,18 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
   const loadStaffData = async () => {
     try {
       setIsLoading(true);
-      
-      // Load real appointments from the backend
-      const apptRes = await apiClient.get<any[]>('/appointments/my').catch(() => ({ data: [] }));
+
+      // Fire all independent reads in parallel instead of awaiting them one
+      // at a time — five sequential round trips to a remote DB pooler is
+      // what was turning this into a 10-20s+ waterfall on every load.
+      const [apptRes, leavesRes, custRes, leadsRes, staffSumRes] = await Promise.all([
+        apiClient.get<any[]>('/appointments/my').catch(() => ({ data: [] })),
+        apiClient.get<any[]>('/staff/leaves').catch(() => ({ data: [] })),
+        apiClient.get<any[]>('/customers').catch(() => ({ data: [] })),
+        apiClient.get<any[]>('/staff/leads').catch(() => ({ data: [] })),
+        apiClient.get('/analytics/staff-summary').catch(() => ({ data: null })),
+      ]);
+
       if (apptRes.data && apptRes.data.length > 0) {
         setAppointments(apptRes.data.map((appt: any) => {
           let normalized = appt.start_time;
@@ -114,11 +125,8 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
         setAppointments([]);
       }
 
-      // Load leaves from backend
-      const leavesRes = await apiClient.get<any[]>('/staff/leaves').catch(() => ({ data: [] }));
       setLeaves(leavesRes.data);
 
-      const custRes = await apiClient.get<any[]>('/customers').catch(() => ({ data: [] }));
       if (custRes.data && custRes.data.length > 0) {
         setCustomers(custRes.data.map((c: any) => ({
           id: c.id,
@@ -132,27 +140,21 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
         setCustomers([]);
       }
 
-      const leadsRes = await apiClient.get<any[]>('/staff/leads').catch(() => ({ data: [] }));
       setLeads(leadsRes.data.length ? leadsRes.data : []);
 
-      try {
-        const staffSumRes = await apiClient.get('/analytics/staff-summary');
-        if (staffSumRes.data?.success && staffSumRes.data?.staff?.roster) {
-          const roster = staffSumRes.data.staff.roster;
-          const matched = roster.find((s: any) => s.email === user?.email || s.id === user?.staff_id);
-          if (matched) {
-            setPersonalStats({
-              name: matched.name || 'Stylist',
-              appointments: matched.appointments || 0,
-              revenue: matched.revenue || 0.0,
-              rating: matched.rating || 0.0,
-              upsells: matched.upsells || 0.0,
-              role: matched.role || 'Stylist'
-            });
-          }
+      if (staffSumRes.data?.success && staffSumRes.data?.staff?.roster) {
+        const roster = staffSumRes.data.staff.roster;
+        const matched = roster.find((s: any) => s.email === user?.email || s.id === user?.staff_id);
+        if (matched) {
+          setPersonalStats({
+            name: matched.name || 'Stylist',
+            appointments: matched.appointments || 0,
+            revenue: matched.revenue || 0.0,
+            rating: matched.rating || 0.0,
+            upsells: matched.upsells || 0.0,
+            role: matched.role || 'Stylist'
+          });
         }
-      } catch (err) {
-        console.warn('Failed to load dynamic staff analytics benchmarks.', err);
       }
     } catch (e) {
       console.warn('Failed to load dynamic stylist logs', e);
@@ -375,9 +377,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
       {/* Main Stylist Operations Panel */}
       <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
         {isLoading ? (
-          <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
-            Establishing Creative Session...
-          </div>
+          <DashboardSkeleton label="Establishing creative session…" />
         ) : (
           <div className="animate-fade-in space-y-6">
             
@@ -409,16 +409,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
                 {/* Stats Grid */}
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {stats.map((stat, idx) => (
-                    <div key={idx} className="bg-slate-900/60 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl shadow-md flex items-center space-x-4">
-                      <div className="w-12 h-12 rounded-xl bg-slate-850 flex items-center justify-center text-2xl">
-                        {stat.icon}
-                      </div>
-                      <div>
-                        <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">{stat.title}</span>
-                        <span className="text-lg font-black text-white block mt-0.5">{stat.value}</span>
-                        <span className="text-[9px] text-slate-500 block mt-0.5 font-bold uppercase">{stat.desc}</span>
-                      </div>
-                    </div>
+                    <StatCard key={idx} title={stat.title} value={stat.value} desc={stat.desc} icon={stat.icon} />
                   ))}
                 </section>
 

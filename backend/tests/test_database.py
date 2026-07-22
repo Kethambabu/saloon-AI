@@ -17,7 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError, DataError
 
-from db import (
+from infrastructure.db import (
     Base,
     Branch,
     Staff,
@@ -222,3 +222,4 @@ def test_enums_serialization(db_session):
     assert isinstance(retrieved.status, LeadStatus)
     assert retrieved.first_name == "Bob"
     assert retrieved.last_name == "Inquirer"
+

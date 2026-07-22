@@ -12,8 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
-from db import get_db, Staff, UserRole, Appointment, User, Customer
+from infrastructure.db import get_db, Staff, UserRole, Appointment, User, Customer
 from api.deps import get_current_user
+from application.services.appointment_service import auto_cancel_all_expired_appointments
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,9 @@ def get_staff_dashboard(
     """
     logger.info(f"Fetching dashboard for staff {staff.id}")
     
+    # Auto-cancel expired appointments before calculating dashboard
+    auto_cancel_all_expired_appointments(db)
+
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
@@ -149,7 +153,7 @@ def get_staff_dashboard(
     ]
     
     # Upcoming appointments (confirmed/pending in future)
-    from db.models import AppointmentStatus
+    from infrastructure.db.models import AppointmentStatus
     upcoming_appointments = [
         a for a in all_appointments
         if is_after(a.start_time, now)
@@ -181,7 +185,7 @@ def get_staff_dashboard(
     )
     
     # Get reviews/ratings
-    from db.models import Review
+    from infrastructure.db.models import Review
     reviews = db.query(Review).filter(
         Review.appointment_id.in_([a.id for a in all_appointments])
     ).all()
@@ -189,6 +193,10 @@ def get_staff_dashboard(
     avg_rating = sum(r.rating for r in reviews) / len(reviews) if reviews else 0.0
     
     # Performance metrics
+    total_revenue = sum(
+        float(a.service.price) for a in all_appointments
+        if a.status == AppointmentStatus.COMPLETED and a.service
+    )
     performance = StaffPerformanceMetrics(
         staff_id=str(staff.id),
         name=staff.full_name,
@@ -197,7 +205,7 @@ def get_staff_dashboard(
         completed_appointments=completed_appointments,
         cancelled_appointments=cancelled_appointments,
         average_rating=round(avg_rating, 2),
-        total_revenue=0.0  # Can be calculated from appointment prices
+        total_revenue=round(total_revenue, 2)
     )
     
     return StaffDashboardResponse(
@@ -256,6 +264,9 @@ def get_today_appointments(
     """Get all appointments scheduled for today."""
     logger.info(f"Fetching today's appointments for staff {staff.id}")
     
+    # Auto-cancel expired appointments before listing
+    auto_cancel_all_expired_appointments(db)
+
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
@@ -295,7 +306,7 @@ def get_upcoming_appointments(
     """Get upcoming appointments for the staff member."""
     logger.info(f"Fetching upcoming appointments for staff {staff.id}")
     
-    from db.models import AppointmentStatus
+    from infrastructure.db.models import AppointmentStatus
     
     now = datetime.now(timezone.utc)
     
@@ -336,7 +347,7 @@ def get_performance_metrics(
     """Get staff performance metrics."""
     logger.info(f"Fetching performance metrics for staff {staff.id}")
     
-    from db.models import AppointmentStatus, Review
+    from infrastructure.db.models import AppointmentStatus, Review
     
     # Get all appointments
     all_appointments = db.query(Appointment).filter(
@@ -360,6 +371,11 @@ def get_performance_metrics(
     
     avg_rating = sum(r.rating for r in reviews) / len(reviews) if reviews else 0.0
     
+    total_revenue = sum(
+        float(a.service.price) for a in all_appointments
+        if a.status == AppointmentStatus.COMPLETED and a.service
+    )
+
     return StaffPerformanceMetrics(
         staff_id=str(staff.id),
         name=staff.full_name,
@@ -368,12 +384,12 @@ def get_performance_metrics(
         completed_appointments=completed_appointments,
         cancelled_appointments=cancelled_appointments,
         average_rating=round(avg_rating, 2),
-        total_revenue=0.0
+        total_revenue=round(total_revenue, 2)
     )
 
 
 # --- Leaves Management ---
-from db import StaffLeave
+from infrastructure.db import StaffLeave
 
 class LeaveCreateRequest(BaseModel):
     leave_date: str  # YYYY-MM-DD
@@ -544,7 +560,7 @@ def get_staff_orchestrator():
     global _staff_orchestrator
     if _staff_orchestrator is None:
         logger.info("Initializing lazy OrchestratorV3 singleton for staff...")
-        from agents.orchestrator_v3 import get_phase2_orchestrator
+        from ai.orchestrator import get_phase2_orchestrator
         _staff_orchestrator = get_phase2_orchestrator(tenant_id="default")
     return _staff_orchestrator
 
@@ -603,7 +619,7 @@ async def chat_with_staff_agent(
     full_query += f"Latest User Message: {payload.message}"
 
     # Store user message in ChatLog
-    from db import ChatLog, SessionLocal
+    from infrastructure.db import ChatLog, SessionLocal
     db_sess = SessionLocal()
     try:
         chat_log = ChatLog(
@@ -680,4 +696,5 @@ async def chat_with_staff_agent(
             response="An unexpected error occurred in the AI assistant. Please try again.",
             agent_name="Atlas"
         )
+
 

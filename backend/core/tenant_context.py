@@ -13,7 +13,7 @@ Provides:
 
 Usage::
 
-    from backend.core.tenant_context import (
+    from core.tenant_context import (
         get_tenant_registry,
         set_current_tenant,
         get_current_tenant,
@@ -524,3 +524,4 @@ def get_tenant_registry() -> TenantRegistry:
                     "pre-registered with ENTERPRISE plan."
                 )
     return _tenant_registry_instance
+

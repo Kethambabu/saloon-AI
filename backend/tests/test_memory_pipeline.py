@@ -18,12 +18,12 @@ from langchain_core.embeddings import Embeddings
 # Add backend directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db.models import (
+from infrastructure.db.models import (
     Base, Branch, Customer, Staff, Service, Appointment, Lead, 
     Review, ChatLog, CustomerRecommendation, BusinessMetricsHistory, 
     AppointmentStatus, LeadStatus, ReviewStatus
 )
-from services.memory_pipeline_service import MemoryPipelineService
+from application.services.memory_pipeline_service import MemoryPipelineService
 
 
 # ---------------------------------------------------------------------------
@@ -225,105 +225,17 @@ async def test_memory_pipeline_e2e(db_session, mock_embedding_model):
             mock_client.create = AsyncMock(return_value=MockLLMResult("This is a mock LLM generated memory summary."))
             
             with patch("services.memory_pipeline_service.OpenAIChatCompletionClient", return_value=mock_client):
+                from application.services.memory_pipeline_service import DeprecatedError
                 service = MemoryPipelineService()
                 
-                # A. Run Daily Pipeline
-                daily_res = await service.run_daily_pipeline(db_session, target_date=today)
-                assert daily_res["receptionist"] == 1
-                assert daily_res["customer"] == 1
-                assert daily_res["staff"] == 1
-                assert daily_res["lead"] == 1
-                assert daily_res["upsell"] == 1
-                assert daily_res["reputation"] == 1
-                assert daily_res["business_intelligence"] == 1
+                with pytest.raises(DeprecatedError):
+                    await service.run_daily_pipeline(db_session, target_date=today)
                 
-                # Check directories
-                assert os.path.exists(os.path.join(tmpdir, "customer", "daily", "index.faiss"))
-                assert os.path.exists(os.path.join(tmpdir, "staff", "daily", "index.faiss"))
-                assert os.path.exists(os.path.join(tmpdir, "business_intelligence", "daily", "index.faiss"))
-                
-                # B. Run Weekly Pipeline
-                weekly_res = await service.run_weekly_pipeline(db_session, end_date=today)
-                assert weekly_res["customer"] == 1
-                assert weekly_res["staff"] == 1
-                assert weekly_res["business_intelligence"] == 1
-                assert os.path.exists(os.path.join(tmpdir, "business_intelligence", "weekly", "index.faiss"))
-                
-                # C. Run Monthly Pipeline
-                monthly_res = await service.run_monthly_pipeline(db_session, end_date=today)
-                assert monthly_res["business_intelligence"] == 1
-                assert os.path.exists(os.path.join(tmpdir, "business_intelligence", "monthly", "index.faiss"))
-                
-                # D. Run Yearly Pipeline
-                yearly_res = await service.run_yearly_pipeline(db_session, year=today.year)
-                assert yearly_res["business_intelligence"] == 1
-                assert os.path.exists(os.path.join(tmpdir, "business_intelligence", "yearly", "index.faiss"))
-                
-                # E. Retrieve Hierarchically
-                from rag.retriever import (
-                    search_receptionist_memory, 
-                    search_customer_memory, 
-                    search_staff_memory, 
-                    search_bi_memory
-                )
-                
-                # Set threshold to 0.0 to match mock embeddings
-                with patch("rag.retriever.search_agent_memory", side_effect=lambda agent, query, entity_id=None: 
-                           search_agent_memory_with_custom_threshold(agent, query, entity_id, threshold=0.0, tmpdir=tmpdir)):
+                with pytest.raises(DeprecatedError):
+                    await service.run_weekly_pipeline(db_session, end_date=today)
                     
-                    # Test customer memory search
-                    cust_mem = search_customer_memory("haircut preference", customer_id=cust.id)
-                    assert "long-term memory" in cust_mem
-                    assert "Daily Memory" in cust_mem or "Weekly Memory" in cust_mem
-                    
-                    # Test BI memory search
-                    bi_mem = search_bi_memory("revenue")
-                    assert "long-term memory" in bi_mem
-                    assert "Yearly Memory" in bi_mem
-                    
-                    # Test receptionist memory search
-                    rec_mem = search_receptionist_memory("timings")
-                    assert "long-term memory" in rec_mem
+                status_info = service.get_sync_status(db_session)
+                assert status_info["deprecated"] is True
 
 
-def search_agent_memory_with_custom_threshold(agent_name, query, entity_id=None, threshold=0.0, tmpdir=None):
-    """Modified search helper for unit test to use 0.0 relevance threshold for mock zero vectors."""
-    levels = ["yearly", "monthly", "weekly", "daily"]
-    results = []
-    embedding_model = MockEmbeddings()
-    
-    for level in levels:
-        index_path = os.path.join(tmpdir, agent_name, level)
-        if not os.path.exists(os.path.join(index_path, "index.faiss")):
-            continue
-            
-        try:
-            from langchain_community.vectorstores import FAISS
-            vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
-            
-            filter_meta = {}
-            if entity_id:
-                filter_meta[f"{agent_name}_id"] = str(entity_id)
-                
-            raw_res = vectorstore.similarity_search_with_relevance_scores(query, k=2)
-            
-            for doc, score in raw_res:
-                if score >= threshold:
-                    if filter_meta:
-                        if all(doc.metadata.get(key) == val for key, val in filter_meta.items()):
-                            results.append((doc, score, level))
-                    else:
-                        results.append((doc, score, level))
-        except Exception:
-            pass
-            
-    if not results:
-        return f"No relevant memory found for {agent_name} assistant."
-        
-    lines = [f"--- Relevant Memories from {agent_name.capitalize()} long-term memory ---"]
-    results.sort(key=lambda x: x[1], reverse=True)
-    for idx, (doc, score, level) in enumerate(results[:5], 1):
-        lines.append(f"\n[{idx}] ({level.capitalize()} Memory, relevance: {score:.2f})")
-        lines.append(doc.page_content)
-    lines.append("\n--- End of Memory Context ---")
-    return "\n".join(lines)
+

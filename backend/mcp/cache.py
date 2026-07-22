@@ -175,3 +175,4 @@ def get_cache() -> MCPCache:
     if _cache is None:
         _cache = MCPCache()
     return _cache
+

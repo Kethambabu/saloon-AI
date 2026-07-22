@@ -6,6 +6,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiClient } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend
+} from 'recharts';
 
 /**
  * Lightweight inline Markdown renderer for assistant chat messages.
@@ -139,13 +154,153 @@ function renderMarkdown(text: string): React.ReactNode {
   return <div className="space-y-0.5">{elements}</div>;
 }
 
+interface InlineChartRendererProps {
+  data: {
+    type: 'bar' | 'line' | 'pie';
+    title?: string;
+    series: Array<{ label: string; value: number }>;
+  };
+}
+
+const COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ec4899', '#06b6d4', '#f43f5e'];
+
+const InlineChartRenderer: React.FC<InlineChartRendererProps> = React.memo(({ data }) => {
+  if (!data || !data.series || !Array.isArray(data.series) || data.series.length === 0) {
+    return null;
+  }
+
+  const chartType = data.type || 'bar';
+  const chartTitle = data.title || 'Analytics Graph';
+  const chartData = data.series.map(item => ({
+    name: item.label,
+    value: Number(item.value)
+  }));
+
+  return (
+    <div className="w-full mt-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 shadow-inner">
+      <h5 className="text-xs font-bold text-slate-355 mb-4 text-left flex items-center space-x-1.5">
+        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+        <span>{chartTitle}</span>
+      </h5>
+      <div className="w-full h-48 text-xs font-medium">
+        <ResponsiveContainer width="100%" height="100%">
+          {chartType === 'line' ? (
+            <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="name" stroke="#64748b" tickLine={false} />
+              <YAxis stroke="#64748b" tickLine={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+              />
+              <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6', r: 3 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          ) : chartType === 'pie' ? (
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={40}
+                outerRadius={65}
+                paddingAngle={3}
+                dataKey="value"
+              >
+                {chartData.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                itemStyle={{ color: '#fff' }}
+              />
+              <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+            </PieChart>
+          ) : (
+            <BarChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="name" stroke="#64748b" tickLine={false} />
+              <YAxis stroke="#64748b" tickLine={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+              />
+              <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]}>
+                {chartData.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+});
+
+
 // Structured interface for chat messages
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  data?: any;
+  response_type?: string;
 }
+
+// Memoized so an unrelated re-render of the chat (e.g. the input box
+// changing, or a new message being appended) doesn't re-run the markdown
+// parser over every prior message in the conversation — without this, a
+// long chat session gets progressively slower to type in as history grows.
+const ChatMessageBubble = React.memo<{ msg: Message; assistantInitial: string }>(
+  ({ msg, assistantInitial }) => {
+    const renderedContent = React.useMemo(
+      () => (msg.role === 'assistant' ? renderMarkdown(msg.content) : null),
+      [msg.role, msg.content]
+    );
+
+    return (
+      <div
+        className={`flex items-start space-x-3.5 max-w-[85%] ${
+          msg.role === 'user' ? 'ml-auto flex-row-reverse space-x-reverse' : 'mr-auto'
+        }`}
+      >
+        {/* Avatar Icon */}
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm border ${
+          msg.role === 'user'
+            ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white'
+            : 'bg-slate-900 border-slate-800 text-blue-400'
+        }`}>
+          {msg.role === 'user' ? 'U' : assistantInitial}
+        </div>
+
+        {/* Chat Bubble */}
+        <div className="flex flex-col max-w-full">
+          <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed border ${
+            msg.role === 'user'
+              ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-750 text-white rounded-tr-none shadow-md shadow-blue-600/10'
+              : 'bg-slate-900/60 border border-slate-800/80 text-slate-100 rounded-tl-none'
+          }`}>
+            {msg.role === 'assistant' ? (
+              <div className="whitespace-pre-wrap text-left prose-sm prose-invert max-w-none">
+                {renderedContent}
+                {msg.response_type === 'visualization' && msg.data && (
+                  <InlineChartRenderer data={msg.data} />
+                )}
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap text-left">{msg.content}</p>
+            )}
+          </div>
+          <span className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+            {msg.timestamp}
+          </span>
+        </div>
+      </div>
+    );
+  }
+);
 
 // Session metadata interface
 interface ChatSession {
@@ -331,7 +486,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
           id: `msg_assistant_${Date.now()}`,
           role: 'assistant',
           content: response.data.response,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          data: response.data.data,
+          response_type: response.data.response_type
         };
 
         const finalMessages = [...updatedMessages, assistantMsg];
@@ -503,39 +660,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         {/* Message Log */}
         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 custom-scrollbar bg-slate-950/20">
           {messages.map((msg) => (
-            <div
+            <ChatMessageBubble
               key={msg.id}
-              className={`flex items-start space-x-3.5 max-w-[85%] ${
-                msg.role === 'user' ? 'ml-auto flex-row-reverse space-x-reverse' : 'mr-auto'
-              }`}
-            >
-              {/* Avatar Icon */}
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm border ${
-                msg.role === 'user'
-                  ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white'
-                  : 'bg-slate-900 border-slate-800 text-blue-400'
-              }`}>
-                {msg.role === 'user' ? 'U' : (intentOverride === 'business_intelligence' ? 'A' : 'C')}
-              </div>
-
-              {/* Chat Bubble */}
-              <div className="flex flex-col max-w-full">
-                <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed border ${
-                  msg.role === 'user'
-                    ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-750 text-white rounded-tr-none shadow-md shadow-blue-600/10'
-                    : 'bg-slate-900/60 border border-slate-800/80 text-slate-100 rounded-tl-none'
-                }`}>
-                    {msg.role === 'assistant' ? (
-                    <div className="whitespace-pre-wrap text-left prose-sm prose-invert max-w-none">{renderMarkdown(msg.content)}</div>
-                  ) : (
-                    <p className="whitespace-pre-wrap text-left">{msg.content}</p>
-                  )}
-                </div>
-                <span className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  {msg.timestamp}
-                </span>
-              </div>
-            </div>
+              msg={msg}
+              assistantInitial={intentOverride === 'business_intelligence' ? 'A' : 'C'}
+            />
           ))}
 
           {/* Typing Loading Indicator */}

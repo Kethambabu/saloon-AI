@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Quick script to add missing loyalty_points column to customers table"""
 
-from db.database import SessionLocal
+from infrastructure.db.database import SessionLocal
 from sqlalchemy import text
 
 db = SessionLocal()
@@ -26,3 +26,4 @@ except Exception as e:
     db.rollback()
 finally:
     db.close()
+

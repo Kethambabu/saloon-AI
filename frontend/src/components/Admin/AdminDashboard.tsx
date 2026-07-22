@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../api/client';
 import { AgentChat } from '../AgentChat/AgentChat';
+import { DashboardSkeleton } from '../ui/Skeleton';
+import { StatCard } from '../ui/StatCard';
 
 interface UserRecord {
   id: string;
@@ -115,6 +117,7 @@ export const AdminDashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // --- BI Agent State Trackers with Premium Fallback Defaults ---
+  const [dashboardPeriod, setDashboardPeriod] = useState<'today' | 'weekly' | 'monthly' | 'yearly'>('today');
   const [dashboardSummary, setDashboardSummary] = useState<any>({
     revenue_today: 0,
     appointments_today: 0,
@@ -254,7 +257,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   // --- Fetch BI Data from Backend Analytics ---
-  const fetchBIData = async () => {
+  const fetchBIData = async (period: 'today' | 'weekly' | 'monthly' | 'yearly' = dashboardPeriod) => {
     try {
       setIsBIDataLoading(true);
       const [
@@ -268,7 +271,7 @@ export const AdminDashboard: React.FC = () => {
         insightsRes,
         forecastRes
       ] = await Promise.all([
-        apiClient.get('/analytics/dashboard-summary').catch(() => ({ data: { success: false, summary: null } })),
+        apiClient.get(`/analytics/dashboard-summary?period=${period}`).catch(() => ({ data: { success: false, summary: null } })),
         apiClient.get('/analytics/revenue-summary').catch(() => ({ data: { success: false, revenue: null } })),
         apiClient.get('/analytics/customer-summary').catch(() => ({ data: { success: false, customers: null } })),
         apiClient.get('/analytics/staff-summary').catch(() => ({ data: { success: false, staff: null } })),
@@ -311,12 +314,18 @@ export const AdminDashboard: React.FC = () => {
     const fetchAllData = async () => {
       try {
         setIsLoading(true);
+        // All of these reads are independent — firing them in one batch
+        // instead of a two-stage waterfall (5 calls, THEN wait, THEN 11 more)
+        // roughly halves the time-to-first-render on initial dashboard load.
         const [usersRes, apptsRes, leadsRes, reviewsRes, servicesRes] = await Promise.all([
           apiClient.get<UserRecord[]>('/auth/users').catch(() => ({ data: [] })),
           apiClient.get<AppointmentRecord[]>('/appointments/my').catch(() => ({ data: [] })),
           apiClient.get<any[]>('/leads').catch(() => ({ data: [] })),
           apiClient.get<any>('/reviews').catch(() => ({ data: { success: false, reviews: [] } })),
-          apiClient.get<any[]>('/services?active_only=false').catch(() => ({ data: [] }))
+          apiClient.get<any[]>('/services?active_only=false').catch(() => ({ data: [] })),
+          fetchKnowledgeDocs(),
+          fetchOffers(),
+          fetchBIData(),
         ]);
 
         setUsers(usersRes.data || []);
@@ -328,12 +337,6 @@ export const AdminDashboard: React.FC = () => {
           ...s,
           duration: s.duration_minutes || s.duration
         })));
-
-        await Promise.all([
-          fetchKnowledgeDocs(),
-          fetchOffers(),
-          fetchBIData()
-        ]);
       } catch (err) {
         console.warn('Failed to compile operations ledger', err);
       } finally {
@@ -372,9 +375,15 @@ export const AdminDashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [activeAiConfigTab]);
 
-  // --- Auto-refresh dashboard telemetry periodically (every 15 seconds) ---
+  // --- Auto-refresh dashboard telemetry periodically ---
+  // Interval matches the backend's analytics ResultCache TTL (30s, see
+  // api/routes/analytics_routes.py) — polling faster than the cache TTL just
+  // guarantees cache misses and forces the DB to recompute these aggregates
+  // from scratch every tick. Skipped entirely while the tab is hidden so a
+  // backgrounded dashboard doesn't keep hammering the backend.
   useEffect(() => {
     const interval = setInterval(async () => {
+      if (document.hidden) return;
       try {
         const [
           dashRes,
@@ -388,7 +397,7 @@ export const AdminDashboard: React.FC = () => {
           forecastRes,
           apptsRes
         ] = await Promise.all([
-          apiClient.get('/analytics/dashboard-summary').catch(() => ({ data: { success: false, summary: null } })),
+          apiClient.get(`/analytics/dashboard-summary?period=${dashboardPeriod}`).catch(() => ({ data: { success: false, summary: null } })),
           apiClient.get('/analytics/revenue-summary').catch(() => ({ data: { success: false, revenue: null } })),
           apiClient.get('/analytics/customer-summary').catch(() => ({ data: { success: false, customers: null } })),
           apiClient.get('/analytics/staff-summary').catch(() => ({ data: { success: false, staff: null } })),
@@ -425,10 +434,10 @@ export const AdminDashboard: React.FC = () => {
       } catch (err) {
         console.warn('Background dynamic telemetry refresh failed', err);
       }
-    }, 15000); // Poll every 15 seconds for hot updates
+    }, 30000); // Matches backend analytics cache TTL — see comment above
 
     return () => clearInterval(interval);
-  }, []);
+  }, [dashboardPeriod]);
 
   const handleToggleActive = async (userId: string) => {
     try {
@@ -782,44 +791,104 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Main Operations Container */}
       <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
-        {isLoading || isBIDataLoading ? (
-          <div className="py-24 text-center text-slate-500 font-bold animate-pulse">
-            Establishing Secure Admin Session & BI Telemetry logs...
-          </div>
+        {isLoading ? (
+          <DashboardSkeleton label="Establishing secure admin session and loading BI telemetry…" />
         ) : (
           <div className="animate-fade-in space-y-6">
             
             {/* ── 1. Executive Overview Subpage ── */}
             {activeTab === 'dashboard' && (
               <div className="space-y-6">
-                <div className="border-b border-slate-850 pb-3 flex justify-between items-center">
+                <div className="border-b border-slate-850 pb-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Dashboard</span>
                     <h2 className="text-xl font-black mt-0.5 text-white">Good Morning, {adminName}</h2>
                   </div>
-                  <button 
-                    onClick={fetchBIData}
-                    className="px-3.5 py-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-450 hover:bg-slate-850 transition-all cursor-pointer"
-                  >
-                    🔄 Sync Analytics
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Time Period Selector */}
+                    <div className="flex bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+                      {(['today', 'weekly', 'monthly', 'yearly'] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => {
+                            setDashboardPeriod(p);
+                            fetchBIData(p);
+                          }}
+                          className={`px-3 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-wider transition-all cursor-pointer ${
+                            dashboardPeriod === p
+                              ? 'bg-blue-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => fetchBIData(dashboardPeriod)}
+                      disabled={isBIDataLoading}
+                      aria-busy={isBIDataLoading}
+                      className="px-3.5 py-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-450 hover:bg-slate-850 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                    >
+                      {isBIDataLoading ? '⏳ Syncing…' : '🔄 Sync Analytics'}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Indicated Metrics Cards Grid */}
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    { title: "Revenue Today", value: `₹${dashboardSummary?.revenue_today?.toLocaleString()}`, desc: "Reflects completed bookings today", color: "text-emerald-400" },
-                    { title: "Appointments Today", value: dashboardSummary?.appointments_today, desc: "Total scheduled guest visits", color: "text-blue-400" },
-                    { title: "New Customers", value: dashboardSummary?.new_customers, desc: "First-time registered users", color: "text-purple-400" },
-                    { title: "Lead Conversion Rate", value: `${dashboardSummary?.lead_conversion_rate}%`, desc: "CRM pipeline conversion score", color: "text-amber-400" },
-                    { title: "Average Rating", value: `${dashboardSummary?.average_rating} ★`, desc: "Based on verified approved reviews", color: "text-pink-400" },
-                    { title: "Upsell Revenue Today", value: `₹${dashboardSummary?.upsell_revenue?.toLocaleString()}`, desc: "Yield from accepted add-ons", color: "text-indigo-400" }
+                    { 
+                      title: dashboardPeriod === 'today' ? 'Revenue Today' : `Revenue (${dashboardPeriod.charAt(0).toUpperCase() + dashboardPeriod.slice(1)})`, 
+                      value: `₹${dashboardSummary?.revenue_today?.toLocaleString()}`, 
+                      desc: `Reflects completed bookings ${dashboardPeriod === 'today' ? 'today' : dashboardPeriod === 'weekly' ? 'this week' : dashboardPeriod === 'monthly' ? 'this month' : 'this year'}`, 
+                      color: "text-emerald-400",
+                      tabId: "revenue"
+                    },
+                    { 
+                      title: dashboardPeriod === 'today' ? 'Appointments Today' : `Appointments (${dashboardPeriod.charAt(0).toUpperCase() + dashboardPeriod.slice(1)})`, 
+                      value: dashboardSummary?.appointments_today, 
+                      desc: `Total scheduled guest visits ${dashboardPeriod === 'today' ? 'today' : dashboardPeriod === 'weekly' ? 'this week' : dashboardPeriod === 'monthly' ? 'this month' : 'this year'}`, 
+                      color: "text-blue-400",
+                      tabId: "revenue"
+                    },
+                    { 
+                      title: dashboardPeriod === 'today' ? 'New Customers' : `New Customers (${dashboardPeriod.charAt(0).toUpperCase() + dashboardPeriod.slice(1)})`, 
+                      value: dashboardSummary?.new_customers, 
+                      desc: `First-time registered users ${dashboardPeriod === 'today' ? 'today' : dashboardPeriod === 'weekly' ? 'this week' : dashboardPeriod === 'monthly' ? 'this month' : 'this year'}`, 
+                      color: "text-purple-400",
+                      tabId: "customer-intelligence"
+                    },
+                    { 
+                      title: "Lead Conversion Rate", 
+                      value: `${dashboardSummary?.lead_conversion_rate}%`, 
+                      desc: "CRM pipeline conversion score", 
+                      color: "text-amber-400",
+                      tabId: "lead-intelligence"
+                    },
+                    { 
+                      title: "Average Rating", 
+                      value: `${dashboardSummary?.average_rating} ★`, 
+                      desc: "Based on verified approved reviews", 
+                      color: "text-pink-400",
+                      tabId: "reputation-intelligence"
+                    },
+                    { 
+                      title: dashboardPeriod === 'today' ? 'Upsell Revenue Today' : `Upsell Revenue (${dashboardPeriod.charAt(0).toUpperCase() + dashboardPeriod.slice(1)})`, 
+                      value: `₹${dashboardSummary?.upsell_revenue?.toLocaleString()}`, 
+                      desc: `Yield from accepted add-ons ${dashboardPeriod === 'today' ? 'today' : dashboardPeriod === 'weekly' ? 'this week' : dashboardPeriod === 'monthly' ? 'this month' : 'this year'}`, 
+                      color: "text-indigo-400",
+                      tabId: "upsell-intelligence"
+                    }
                   ].map((item, idx) => (
-                    <div key={idx} className="bg-slate-900/60 backdrop-blur-xl border border-slate-850/80 p-5 rounded-2xl shadow-md space-y-1.5">
-                      <span className="block text-[10px] font-black text-slate-550 uppercase tracking-wider">{item.title}</span>
-                      <span className={`text-2xl font-black block ${item.color}`}>{item.value}</span>
-                      <span className="text-[9px] text-slate-500 block font-bold uppercase">{item.desc}</span>
-                    </div>
+                    <StatCard
+                      key={idx}
+                      title={item.title}
+                      value={item.value}
+                      desc={item.desc}
+                      color={item.color}
+                      onClick={item.tabId ? () => setActiveTab(item.tabId as any) : undefined}
+                    />
                   ))}
                 </section>
 
@@ -1123,7 +1192,7 @@ export const AdminDashboard: React.FC = () => {
                     <p className="text-xs text-slate-500">Autonomous campaign conversions and pipeline indicators.</p>
                   </div>
                   <button 
-                    onClick={fetchBIData}
+                    onClick={() => fetchBIData()}
                     className="px-3.5 py-1.5 bg-slate-900 border border-slate-800 hover:text-white rounded-xl text-xs font-bold text-slate-450 hover:bg-slate-850 transition-all cursor-pointer"
                   >
                     🔄 Refresh Leads
