@@ -92,7 +92,8 @@ node-dist/
 .prettiercache
 .parcel-cache
 .next/
-
+# DOCX
+.docx
 # Prisma generated
 /generated/prisma
 frontend/generated/
