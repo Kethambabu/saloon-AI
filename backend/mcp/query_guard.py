@@ -200,6 +200,29 @@ def validate_and_sanitise(
                 operation=operation,
             )
 
+        # Enforce that staff can only view their own staff record
+        if resource == "staff" and context.staff_id:
+            for key in ("id", "staff_id"):
+                if key in safe_filters and safe_filters[key] and str(safe_filters[key]) != str(context.staff_id):
+                    raise GuardViolationError(
+                        "Access denied. You do not have permission to view details of other staff members.",
+                        role=role,
+                        resource=resource,
+                        operation=operation,
+                    )
+            safe_filters["id"] = context.staff_id
+
+        # Enforce that staff can only view their own appointments
+        if resource == "appointments" and context.staff_id:
+            if "staff_id" in safe_filters and safe_filters["staff_id"] and str(safe_filters["staff_id"]) != str(context.staff_id):
+                raise GuardViolationError(
+                    "Access denied. You do not have permission to view details of other staff members.",
+                    role=role,
+                    resource=resource,
+                    operation=operation,
+                )
+            safe_filters["staff_id"] = context.staff_id
+
         # Narrow appointments to the staff member's own branch. Force-override
         # (not just default-fill) so a caller can't pass a different branch_id
         # filter to read another branch's appointment data.

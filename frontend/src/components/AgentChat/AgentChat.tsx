@@ -1,5 +1,5 @@
 /**
- * AgentChat Component - Enterprise AI Receptionist Dashboard
+ * AgentChat Component - ChatGPT-style conversational interface for the AI receptionist / BI analyst.
  * Driven by React, TypeScript, Tailwind CSS, and communicating with the FastAPI agent backend.
  */
 
@@ -56,19 +56,19 @@ function renderMarkdown(text: string): React.ReactNode {
     const headerCells = rows.length > 0 ? parseRow(rows[0]) : [];
     const bodyRows = rows.slice(1).map(parseRow);
     elements.push(
-      <div key={`tbl-${elements.length}`} className="overflow-x-auto my-2">
+      <div key={`tbl-${elements.length}`} className="overflow-x-auto my-3 rounded-xl border border-neutral-800">
         <table className="min-w-full border-collapse text-xs">
           {headerCells.length > 0 && (
             <thead>
-              <tr className="border-b border-slate-700">
-                {headerCells.map((c, i) => <th key={i} className="px-3 py-1.5 text-left font-semibold text-blue-300">{inlineFormat(c)}</th>)}
+              <tr className="border-b border-neutral-800 bg-neutral-900/60">
+                {headerCells.map((c, i) => <th key={i} className="px-3 py-2 text-left font-semibold text-neutral-300">{inlineFormat(c)}</th>)}
               </tr>
             </thead>
           )}
           <tbody>
             {bodyRows.map((row, ri) => (
-              <tr key={ri} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-                {row.map((c, ci) => <td key={ci} className="px-3 py-1.5 text-slate-300">{inlineFormat(c)}</td>)}
+              <tr key={ri} className="border-b border-neutral-800/60 last:border-0">
+                {row.map((c, ci) => <td key={ci} className="px-3 py-2 text-neutral-300">{inlineFormat(c)}</td>)}
               </tr>
             ))}
           </tbody>
@@ -87,9 +87,9 @@ function renderMarkdown(text: string): React.ReactNode {
     while ((match = regex.exec(text)) !== null) {
       if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
       if (match[2]) parts.push(<strong key={match.index}><em>{match[2]}</em></strong>);
-      else if (match[3]) parts.push(<strong key={match.index}>{match[3]}</strong>);
+      else if (match[3]) parts.push(<strong key={match.index} className="text-neutral-50 font-semibold">{match[3]}</strong>);
       else if (match[4]) parts.push(<em key={match.index}>{match[4]}</em>);
-      else if (match[5]) parts.push(<code key={match.index} className="bg-slate-800 px-1 py-0.5 rounded text-blue-300 text-xs">{match[5]}</code>);
+      else if (match[5]) parts.push(<code key={match.index} className="bg-neutral-800 px-1.5 py-0.5 rounded text-[13px] text-neutral-200 font-mono">{match[5]}</code>);
       lastIndex = regex.lastIndex;
     }
     if (lastIndex < text.length) parts.push(text.slice(lastIndex));
@@ -132,18 +132,18 @@ function renderMarkdown(text: string): React.ReactNode {
 
     // Headers
     if (trimmed.startsWith('#### ')) {
-      elements.push(<h6 key={`h-${i}`} className="text-xs font-bold text-blue-300 mt-2 mb-0.5">{inlineFormat(trimmed.slice(5))}</h6>);
+      elements.push(<h6 key={`h-${i}`} className="text-xs font-semibold text-neutral-200 mt-3 mb-1">{inlineFormat(trimmed.slice(5))}</h6>);
     } else if (trimmed.startsWith('### ')) {
-      elements.push(<h5 key={`h-${i}`} className="text-sm font-bold text-blue-300 mt-2 mb-0.5">{inlineFormat(trimmed.slice(4))}</h5>);
+      elements.push(<h5 key={`h-${i}`} className="text-sm font-semibold text-neutral-200 mt-3 mb-1">{inlineFormat(trimmed.slice(4))}</h5>);
     } else if (trimmed.startsWith('## ')) {
-      elements.push(<h4 key={`h-${i}`} className="text-sm font-bold text-blue-200 mt-2 mb-1">{inlineFormat(trimmed.slice(3))}</h4>);
+      elements.push(<h4 key={`h-${i}`} className="text-base font-semibold text-neutral-100 mt-3 mb-1">{inlineFormat(trimmed.slice(3))}</h4>);
     } else if (trimmed.startsWith('# ')) {
-      elements.push(<h3 key={`h-${i}`} className="text-base font-bold text-blue-200 mt-2 mb-1">{inlineFormat(trimmed.slice(2))}</h3>);
+      elements.push(<h3 key={`h-${i}`} className="text-lg font-semibold text-neutral-100 mt-3 mb-1.5">{inlineFormat(trimmed.slice(2))}</h3>);
     } else if (trimmed === '' || trimmed === '---') {
-      if (trimmed === '---') elements.push(<hr key={`hr-${i}`} className="border-slate-700 my-2" />);
-      else if (elements.length > 0) elements.push(<div key={`br-${i}`} className="h-1" />);
+      if (trimmed === '---') elements.push(<hr key={`hr-${i}`} className="border-neutral-800 my-3" />);
+      else if (elements.length > 0) elements.push(<div key={`br-${i}`} className="h-2" />);
     } else {
-      elements.push(<p key={`p-${i}`} className="my-0.5">{inlineFormat(trimmed)}</p>);
+      elements.push(<p key={`p-${i}`} className="my-1">{inlineFormat(trimmed)}</p>);
     }
   }
 
@@ -151,7 +151,7 @@ function renderMarkdown(text: string): React.ReactNode {
   if (tableBuffer.length > 0) flushTable();
   if (listBuffer) flushList();
 
-  return <div className="space-y-0.5">{elements}</div>;
+  return <div>{elements}</div>;
 }
 
 interface InlineChartRendererProps {
@@ -177,21 +177,18 @@ const InlineChartRenderer: React.FC<InlineChartRendererProps> = React.memo(({ da
   }));
 
   return (
-    <div className="w-full mt-4 p-4 rounded-xl bg-slate-950/80 border border-slate-800 shadow-inner">
-      <h5 className="text-xs font-bold text-slate-355 mb-4 text-left flex items-center space-x-1.5">
-        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-        <span>{chartTitle}</span>
-      </h5>
+    <div className="w-full mt-3 p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+      <h5 className="text-xs font-medium text-neutral-400 mb-3">{chartTitle}</h5>
       <div className="w-full h-48 text-xs font-medium">
         <ResponsiveContainer width="100%" height="100%">
           {chartType === 'line' ? (
             <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="name" stroke="#64748b" tickLine={false} />
-              <YAxis stroke="#64748b" tickLine={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#292929" />
+              <XAxis dataKey="name" stroke="#737373" tickLine={false} />
+              <YAxis stroke="#737373" tickLine={false} />
               <Tooltip
-                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
-                labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                contentStyle={{ backgroundColor: '#171717', borderColor: '#404040', borderRadius: '8px' }}
+                labelStyle={{ color: '#a3a3a3', fontWeight: 'bold' }}
               />
               <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6', r: 3 }} activeDot={{ r: 5 }} />
             </LineChart>
@@ -211,19 +208,19 @@ const InlineChartRenderer: React.FC<InlineChartRendererProps> = React.memo(({ da
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                contentStyle={{ backgroundColor: '#171717', borderColor: '#404040', borderRadius: '8px' }}
                 itemStyle={{ color: '#fff' }}
               />
               <Legend verticalAlign="bottom" height={36} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
             </PieChart>
           ) : (
             <BarChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="name" stroke="#64748b" tickLine={false} />
-              <YAxis stroke="#64748b" tickLine={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#292929" />
+              <XAxis dataKey="name" stroke="#737373" tickLine={false} />
+              <YAxis stroke="#737373" tickLine={false} />
               <Tooltip
-                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
-                labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                contentStyle={{ backgroundColor: '#171717', borderColor: '#404040', borderRadius: '8px' }}
+                labelStyle={{ color: '#a3a3a3', fontWeight: 'bold' }}
               />
               <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]}>
                 {chartData.map((_, index) => (
@@ -249,53 +246,48 @@ interface Message {
   response_type?: string;
 }
 
+interface Accent {
+  avatarBg: string;
+  avatarText: string;
+  sendBg: string;
+}
+
 // Memoized so an unrelated re-render of the chat (e.g. the input box
 // changing, or a new message being appended) doesn't re-run the markdown
 // parser over every prior message in the conversation — without this, a
 // long chat session gets progressively slower to type in as history grows.
-const ChatMessageBubble = React.memo<{ msg: Message; assistantInitial: string }>(
-  ({ msg, assistantInitial }) => {
+const ChatMessageBubble = React.memo<{ msg: Message; assistantInitial: string; accent: Accent }>(
+  ({ msg, assistantInitial, accent }) => {
+    const isUser = msg.role === 'user';
     const renderedContent = React.useMemo(
-      () => (msg.role === 'assistant' ? renderMarkdown(msg.content) : null),
-      [msg.role, msg.content]
+      () => (isUser ? null : renderMarkdown(msg.content)),
+      [isUser, msg.content]
     );
 
     return (
-      <div
-        className={`flex items-start space-x-3.5 max-w-[85%] ${
-          msg.role === 'user' ? 'ml-auto flex-row-reverse space-x-reverse' : 'mr-auto'
-        }`}
-      >
-        {/* Avatar Icon */}
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm border ${
-          msg.role === 'user'
-            ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-700 text-white'
-            : 'bg-slate-900 border-slate-800 text-blue-400'
-        }`}>
-          {msg.role === 'user' ? 'U' : assistantInitial}
-        </div>
+      <div className="w-full py-3">
+        <div className={`max-w-3xl mx-auto px-4 md:px-6 flex gap-4 ${isUser ? 'justify-end' : ''}`}>
+          {!isUser && (
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 ${accent.avatarBg} ${accent.avatarText}`}>
+              {assistantInitial}
+            </div>
+          )}
 
-        {/* Chat Bubble */}
-        <div className="flex flex-col max-w-full">
-          <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed border ${
-            msg.role === 'user'
-              ? 'bg-gradient-to-tr from-blue-600 to-indigo-600 border-indigo-750 text-white rounded-tr-none shadow-md shadow-blue-600/10'
-              : 'bg-slate-900/60 border border-slate-800/80 text-slate-100 rounded-tl-none'
-          }`}>
-            {msg.role === 'assistant' ? (
-              <div className="whitespace-pre-wrap text-left prose-sm prose-invert max-w-none">
+          <div className={`flex flex-col ${isUser ? 'items-end max-w-[75%]' : 'flex-1 min-w-0'}`}>
+            {isUser ? (
+              <div className="px-4 py-2.5 rounded-3xl bg-neutral-700/70 text-neutral-50 text-[14px] leading-relaxed">
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+              </div>
+            ) : (
+              <div className="text-[14px] leading-relaxed text-neutral-100 whitespace-pre-wrap">
                 {renderedContent}
                 {msg.response_type === 'visualization' && msg.data && (
                   <InlineChartRenderer data={msg.data} />
                 )}
               </div>
-            ) : (
-              <p className="whitespace-pre-wrap text-left">{msg.content}</p>
             )}
+            <span className="text-[10px] text-neutral-500 mt-1">{msg.timestamp}</span>
           </div>
-          <span className={`text-[10px] text-slate-400 mt-1 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
-            {msg.timestamp}
-          </span>
         </div>
       </div>
     );
@@ -316,6 +308,14 @@ interface AgentChatProps {
 }
 
 export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, intentOverride }) => {
+  const isBI = intentOverride === 'business_intelligence';
+  const assistantName = isBI ? 'Atlas' : 'Clara';
+  const assistantSubtitle = isBI ? 'Business Intelligence Analyst' : 'AI Salon Receptionist';
+  const assistantInitial = isBI ? 'A' : 'C';
+  const accent: Accent = isBI
+    ? { avatarBg: 'bg-violet-500/15', avatarText: 'text-violet-400', sendBg: 'bg-violet-600 hover:bg-violet-500' }
+    : { avatarBg: 'bg-blue-500/15', avatarText: 'text-blue-400', sendBg: 'bg-blue-600 hover:bg-blue-500' };
+
   // --- States ---
   const { user } = useAuth();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -324,14 +324,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false); // Collapsed by default
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(true); // Open by default
 
-  // References for scrolling
+  // References for scrolling / textarea auto-grow
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Get user-specific localStorage key
   const getStorageKey = (): string => {
-    const prefix = intentOverride === 'business_intelligence' ? 'salonai_bi_sessions' : 'salonai_sessions';
+    const prefix = isBI ? 'salonai_bi_sessions' : 'salonai_sessions';
     if (!user || !user.id) {
       return `${prefix}_anonymous`;
     }
@@ -359,12 +360,22 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
     } else {
       createNewSession();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   // --- Auto-scroll to Bottom on New Messages ---
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  // --- Auto-grow the input textarea as the user types ---
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    }
+  }, [inputMessage]);
 
   // --- Helper: Save sessions to localStorage ---
   const saveSessions = (updatedSessions: ChatSession[]) => {
@@ -378,7 +389,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
     const newSessionId = `sess_${Math.random().toString(36).substring(2, 11)}`;
     const newSession: ChatSession = {
       id: newSessionId,
-      title: intentOverride === 'business_intelligence'
+      title: isBI
         ? `BI Analysis - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
         : `Booking Session - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
       lastActive: new Date().toLocaleDateString(),
@@ -386,7 +397,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         {
           id: `msg_welcome_${Date.now()}`,
           role: 'assistant',
-          content: intentOverride === 'business_intelligence'
+          content: isBI
             ? "Welcome to SalonAI Business Assistant. I'm Atlas, your corporate growth analyst and operational consultant. Ask me any analytical questions about revenue performance, top stylists, customer retention cohorts, lead conversions, reviews complaints, or forecasts."
             : "Hello! I'm Clara, your AI Salon Receptionist. How can I style your schedule today? I can help you check available slots, book haircuts or stone massages, reschedule, or review your historical bookings.",
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -415,7 +426,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
   const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation(); // Avoid switching to the session being deleted
     const filtered = sessions.filter(s => s.id !== sessionId);
-    
+
     if (filtered.length === 0) {
       // If no sessions remain, reset completely
       const storageKey = getStorageKey();
@@ -497,10 +508,10 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         // Update title dynamically if it was a generic default
         const currentSession = sessions.find(s => s.id === activeSessionId);
         const hasCustomTitle = currentSession && !currentSession.title.startsWith('Booking Session -');
-        const newTitle = hasCustomTitle 
-          ? currentSession.title 
-          : text.length > 25 
-            ? `${text.substring(0, 22)}...` 
+        const newTitle = hasCustomTitle
+          ? currentSession.title
+          : text.length > 25
+            ? `${text.substring(0, 22)}...`
             : text;
 
         const finalSessions = sessions.map(s => {
@@ -516,7 +527,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         saveSessions(finalSessions);
       } else {
         // If backend returned success=false but has a response field, show it as a chat message
-        const fallbackMsg = response.data?.response || response.data?.error || `Failed to receive a valid response from ${intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'}.`;
+        const fallbackMsg = response.data?.response || response.data?.error || `Failed to receive a valid response from ${assistantName}.`;
         const errorAssistantMsg: Message = {
           id: `msg_error_${Date.now()}`,
           role: 'assistant',
@@ -535,7 +546,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
       }
     } catch (err: any) {
       console.error('Error sending chat query:', err);
-      const errorMsg = err.response?.data?.detail || err.message || `Connecting to ${intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'} timed out or failed. Is the backend API running?`;
+      const errorMsg = err.response?.data?.detail || err.message || `Connecting to ${assistantName} timed out or failed. Is the backend API running?`;
       setError(errorMsg);
     } finally {
       setIsLoading(false);
@@ -552,69 +563,68 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
   };
 
   // --- Predefined Suggestions Cards ---
-  const suggestions = intentOverride === 'business_intelligence' ? [
-    { title: "📊 Revenue Analysis", prompt: "How much revenue did we earn this month? Which branch or service earns the most?" },
-    { title: "⭐ Staff Performance", prompt: "Who are our top performing stylists? Show stylist ratings and appointment counts." },
-    { title: "📈 Forecast & Growth", prompt: "Forecast next month's expected revenue and appointments." },
-    { title: "💡 Executive Insights", prompt: "Give me an executive context summary of salon performance." }
+  const suggestions = isBI ? [
+    { title: 'Revenue Analysis', prompt: 'How much revenue did we earn this month? Which branch or service earns the most?' },
+    { title: 'Staff Performance', prompt: 'Who are our top performing stylists? Show stylist ratings and appointment counts.' },
+    { title: 'Forecast & Growth', prompt: "Forecast next month's expected revenue and appointments." },
+    { title: 'Executive Insights', prompt: 'Give me an executive context summary of salon performance.' }
   ] : [
-    { title: "📅 Check Availability", prompt: "What slots are available for a Signature Haircut tomorrow?" },
-    { title: "✂️ Book Appointment", prompt: "I'd like to book a Signature Haircut for tomorrow at 11 AM with Marcus." },
-    { title: "📋 My Appointments", prompt: "Can you show me my upcoming appointments history?" },
-    { title: "❌ Cancel Appointment", prompt: "I need to cancel my upcoming appointment." }
+    { title: 'Check Availability', prompt: 'What slots are available for a Signature Haircut tomorrow?' },
+    { title: 'Book Appointment', prompt: "I'd like to book a Signature Haircut for tomorrow at 11 AM with Marcus." },
+    { title: 'My Appointments', prompt: 'Can you show me my upcoming appointments history?' },
+    { title: 'Cancel Appointment', prompt: 'I need to cancel my upcoming appointment.' }
   ];
 
+  const isEmptyState = messages.length <= 1 && !isLoading;
+
   return (
-    <div className="w-full max-w-7xl mx-auto flex flex-col md:flex-row bg-slate-950/40 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-800/80 overflow-hidden" style={{ height: '70vh', minHeight: '600px' }}>
-      
+    <div className="w-full max-w-7xl mx-auto flex bg-neutral-950 rounded-2xl border border-neutral-800 overflow-hidden h-full">
+
       {/* --- Sidebar Section (Chat Session History) --- */}
-      <aside className={`bg-slate-950/60 text-slate-100 flex flex-col border-r border-slate-800/80 transition-all duration-300 ease-in-out ${
-        isHistoryOpen ? 'w-full md:w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden border-none'
-      }`}>
-        
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-slate-800/80 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-white shadow-md shadow-blue-500/20">
-              S
-            </div>
-            <span className="font-semibold text-lg tracking-wide text-slate-200">Conversations</span>
-          </div>
-          <button 
-            onClick={createNewSession}
-            className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800/60 transition-all cursor-pointer"
-            title="Create New Session"
+      <aside className={`bg-neutral-950 flex flex-col border-r border-neutral-800 transition-all duration-200 ease-in-out ${isHistoryOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden border-none'
+        }`}>
+        <div className="px-4 py-3.5 border-b border-neutral-800 flex items-center justify-between shrink-0">
+          <span className="text-xs font-black uppercase tracking-wider text-neutral-500">Chat History</span>
+          <button
+            onClick={() => setIsHistoryOpen(false)}
+            className="p-1.5 rounded-md hover:bg-neutral-850 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+            title="Collapse Sidebar"
           >
-            <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
         </div>
 
-        {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
+        <div className="p-3">
+          <button
+            onClick={createNewSession}
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-neutral-700 hover:bg-neutral-800 text-sm text-neutral-200 transition-colors cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New chat
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5 custom-scrollbar">
           {sessions.map((s) => (
             <div
               key={s.id}
               onClick={() => handleSwitchSession(s.id)}
-              className={`p-3.5 rounded-xl flex items-center justify-between group cursor-pointer transition-all ${
-                s.id === activeSessionId
-                  ? 'bg-blue-600 text-white font-medium shadow-lg shadow-blue-500/20'
-                  : 'hover:bg-slate-900/60 text-slate-400 hover:text-slate-200'
-              }`}
+              className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${s.id === activeSessionId
+                  ? 'bg-neutral-800 text-neutral-100'
+                  : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                }`}
             >
-              <div className="flex items-center space-x-3 overflow-hidden">
-                <svg className={`w-5 h-5 flex-shrink-0 ${s.id === activeSessionId ? 'text-white' : 'text-slate-500'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                <span className="truncate text-sm text-left">{s.title}</span>
-              </div>
+              <span className="truncate text-sm">{s.title}</span>
               <button
                 onClick={(e) => handleDeleteSession(e, s.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-slate-850/60 text-slate-400 hover:text-red-400 transition-all cursor-pointer"
+                className="opacity-40 group-hover:opacity-100 p-1 rounded hover:bg-neutral-700 text-neutral-500 hover:text-red-400 transition-all cursor-pointer shrink-0"
                 title="Delete Session"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </button>
@@ -624,149 +634,154 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
       </aside>
 
       {/* --- Main Chat Section --- */}
-      <section className="flex-1 bg-slate-900/20 backdrop-blur-md flex flex-col relative">
-        
-        {/* Chat Area Header */}
-        <header className="p-4 border-b border-slate-800/80 bg-slate-950/40 flex items-center justify-between">
-          <div className="flex items-center space-x-3.5">
-            {/* Toggle Sidebar Button */}
-            <button
-              onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-              className={`p-2 rounded-xl border transition-all duration-300 cursor-pointer flex items-center justify-center shadow-sm ${
-                isHistoryOpen
-                  ? 'bg-blue-950/50 border-blue-900 text-blue-400 hover:bg-blue-900/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-blue-400 hover:border-slate-700'
-              }`}
-              title={isHistoryOpen ? "Hide History" : "Show History"}
-            >
-              <svg className="w-5 h-5 animate-pulse-subtle" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                {isHistoryOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h12M4 18h16" />
-                )}
-              </svg>
-            </button>
+      <section className="flex-1 bg-neutral-950 flex flex-col min-w-0">
 
-            <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-blue-950/50 border border-blue-900/60 flex items-center justify-center font-bold text-blue-400 shadow-sm">
-                {intentOverride === 'business_intelligence' ? 'A' : 'C'}
-              </div>
-              <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-white animate-pulse" title="Online" />
-            </div>
-            <div>
-              <h2 className="text-white font-bold leading-tight">{intentOverride === 'business_intelligence' ? 'Atlas - AI Business Analyst' : 'Clara - AI Receptionist'}</h2>
-              <span className="text-xs text-slate-450 font-medium">{intentOverride === 'business_intelligence' ? 'Executive Analytics Advisor' : 'SalonAI Workforce Co-pilot'}</span>
-            </div>
+        {/* Chat Area Header */}
+        <header className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            {!isHistoryOpen && (
+              <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="p-1.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+                title="Show History"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            )}
+            <span className="text-sm font-medium text-neutral-200">{assistantName}</span>
+            <span className="text-xs text-neutral-500">{assistantSubtitle}</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs px-2.5 py-1 rounded-full bg-blue-950/40 text-blue-400 font-semibold border border-blue-900/40">
-              PostgreSQL Active
-            </span>
-          </div>
+          <button
+            onClick={createNewSession}
+            className="p-1.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+            title="New chat"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
         </header>
 
-        {/* Message Log */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 custom-scrollbar bg-slate-950/20">
-          {messages.map((msg) => (
-            <ChatMessageBubble
-              key={msg.id}
-              msg={msg}
-              assistantInitial={intentOverride === 'business_intelligence' ? 'A' : 'C'}
-            />
-          ))}
-
-          {/* Typing Loading Indicator */}
-          {isLoading && (
-            <div className="flex items-start space-x-3.5 mr-auto max-w-[85%]">
-              <div className="w-8 h-8 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center font-bold text-sm text-blue-400 shadow-sm">
-                {intentOverride === 'business_intelligence' ? 'A' : 'C'}
-              </div>
-              <div className="flex flex-col">
-                <div className="p-4 bg-slate-900/60 border border-slate-800/80 rounded-2xl rounded-tl-none shadow-sm flex items-center space-x-1.5">
-                  <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-                <span className="text-[10px] text-slate-555 mt-1 text-left">{intentOverride === 'business_intelligence' ? 'Atlas' : 'Clara'} is thinking...</span>
-              </div>
+        {isEmptyState ? (
+          /* --- Centered empty-state hero, ChatGPT home-screen style --- */
+          <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6 text-center custom-scrollbar">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-semibold mb-4 ${accent.avatarBg} ${accent.avatarText}`}>
+              {assistantInitial}
             </div>
-          )}
-
-          {/* Error Banner with Retry */}
-          {error && (
-            <div className="p-3 bg-red-950/30 border border-red-900/50 text-red-400 text-xs rounded-xl flex items-center justify-between shadow-sm">
-              <div className="flex items-center space-x-2">
-                <svg className="w-5 h-5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <span className="text-left font-medium">{error}</span>
-              </div>
-              <button
-                onClick={handleRetry}
-                className="px-3 py-1 bg-red-900/40 hover:bg-red-900/70 text-red-200 rounded-lg text-xs font-semibold border border-red-800 transition-all cursor-pointer flex-shrink-0 ml-3"
-              >
-                🔄 Retry
-              </button>
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Suggestion Prompt Cards */}
-        {messages.length === 1 && !isLoading && (
-          <div className="p-4 bg-slate-950/40 border-t border-slate-800/80">
-            <p className="text-xs font-semibold text-slate-450 mb-3 tracking-wide uppercase text-left">
-              {intentOverride === 'business_intelligence' ? 'Quick analysis queries' : 'Quick booking suggestions'}
+            <h2 className="text-xl font-semibold text-neutral-100 mb-1.5">{assistantName}</h2>
+            <p className="text-sm text-neutral-500 max-w-md mb-8">
+              {isBI
+                ? 'Ask analytical questions about revenue, staff performance, retention, or forecasts.'
+                : 'Ask me to check availability, book, reschedule, or review your appointments.'}
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl">
               {suggestions.map((card, idx) => (
                 <button
                   key={idx}
                   onClick={() => handleSendMessage(card.prompt)}
-                  className="p-3 text-left bg-slate-900/60 hover:bg-slate-800/60 border border-slate-800 hover:border-blue-900 hover:text-blue-300 rounded-xl font-medium text-xs text-slate-350 shadow-sm transition-all duration-200 cursor-pointer"
+                  className="p-3 text-left bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-xl transition-colors cursor-pointer"
                 >
-                  <span className="block font-bold mb-0.5 text-blue-400">{card.title}</span>
-                  <span className="text-slate-500 line-clamp-1">{card.prompt}</span>
+                  <span className="block font-medium text-sm text-neutral-200 mb-0.5">{card.title}</span>
+                  <span className="text-xs text-neutral-500 line-clamp-1">{card.prompt}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        ) : (
+          /* --- Message Log --- */
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {messages.map((msg) => (
+              <ChatMessageBubble
+                key={msg.id}
+                msg={msg}
+                assistantInitial={assistantInitial}
+                accent={accent}
+              />
+            ))}
+
+            {/* Typing Loading Indicator */}
+            {isLoading && (
+              <div className="w-full py-3">
+                <div className="max-w-3xl mx-auto px-4 md:px-6 flex gap-4">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 ${accent.avatarBg} ${accent.avatarText}`}>
+                    {assistantInitial}
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-2.5">
+                    <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+
+        {/* Error Banner with Retry */}
+        {error && (
+          <div className="max-w-3xl w-full mx-auto px-4 md:px-6 pb-2 shrink-0">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span className="font-medium">{error}</span>
+              </div>
+              <button
+                onClick={handleRetry}
+                className="px-3 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-300 rounded-lg text-xs font-medium transition-colors cursor-pointer flex-shrink-0 ml-3"
+              >
+                Retry
+              </button>
             </div>
           </div>
         )}
 
         {/* Chat Input Console */}
-        <footer className="p-4 border-t border-slate-800/80 bg-slate-950/40 flex items-center space-x-3">
-          <input
-            type="text"
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSendMessage(inputMessage);
-            }}
-            placeholder={intentOverride === 'business_intelligence' 
-              ? "Ask Atlas a business question (e.g., 'Why is revenue decreasing? Compare with last 3 months')..." 
-              : "Type a booking query (e.g., 'book a haircut tomorrow for Alice Smith')..."}
-            disabled={isLoading}
-            className="flex-1 px-4 py-3 bg-slate-900/80 border border-slate-800 hover:border-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-950 rounded-xl text-sm focus:outline-none transition-all text-white placeholder-slate-500 disabled:bg-slate-950 disabled:text-slate-600"
-          />
-          <button
-            onClick={() => handleSendMessage(inputMessage)}
-            disabled={isLoading || !inputMessage.trim()}
-            className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm tracking-wide shadow-md shadow-blue-600/10 transition-all flex items-center justify-center space-x-2 disabled:bg-slate-800 disabled:text-slate-650 disabled:shadow-none cursor-pointer"
-          >
-            <span>Send</span>
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
-          </button>
+        <footer className="border-t border-neutral-800 px-4 pt-3 pb-2 shrink-0">
+          <div className="max-w-3xl mx-auto flex items-end gap-2 rounded-3xl border border-neutral-700 bg-neutral-900 px-3 py-2 focus-within:border-neutral-500 transition-colors">
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(inputMessage);
+                }
+              }}
+              placeholder={isBI
+                ? 'Ask Atlas a business question...'
+                : 'Message Clara...'}
+              disabled={isLoading}
+              className="flex-1 resize-none bg-transparent text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none max-h-48 py-1.5 disabled:text-neutral-600"
+            />
+            <button
+              onClick={() => handleSendMessage(inputMessage)}
+              disabled={isLoading || !inputMessage.trim()}
+              className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed ${inputMessage.trim() && !isLoading
+                  ? `${accent.sendBg} text-white`
+                  : 'bg-neutral-800 text-neutral-600'
+                }`}
+              title="Send"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5m0 0l-6 6m6-6l6 6" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-center text-[10px] text-neutral-600 mt-1.5">{assistantName} can make mistakes. Verify important details.</p>
         </footer>
 
       </section>
-      
+
     </div>
   );
 };
 
 export default AgentChat;
-

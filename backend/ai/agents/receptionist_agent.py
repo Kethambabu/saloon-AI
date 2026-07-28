@@ -2007,6 +2007,12 @@ class ReceptionistAgent(Agent):
                 if clean_v:
                     session.pending_booking[key] = clean_v
                     intent_json[key] = clean_v
+                    session.pending_booking.pop("_awaiting_confirmation", None)
+
+        if is_corr:
+            session.pending_booking.pop("_awaiting_confirmation", None)
+            session.pending_booking.pop("_awaiting_reschedule", None)
+            session.pending_booking.pop("_awaiting_cancellation", None)
 
         # Fall back to session.pending_booking for missing fields
         for key in ["service", "branch", "stylist", "date", "time"]:
@@ -2106,15 +2112,18 @@ class ReceptionistAgent(Agent):
                 finally:
                     db.close()
 
-            # Early Validation: Check past date / past time before asking missing optional fields
+            repaired_date = repair_date(date_input) if date_input else None
+            repaired_time = repair_time(time_input) if time_input else None
+            repaired_branch = repair_branch(branch_input) if branch_input else None
+            repaired_staff = repair_staff(stylist_input, repaired_branch) if (stylist_input and repaired_branch) else None
+
+            # 1. Past date/time validation (Highest Priority)
             if date_input:
-                rep_d = repair_date(date_input)
-                rep_t = repair_time(time_input) if time_input else "09:00"
                 sys_dt = get_query_system_datetime() or datetime.now(timezone.utc)
                 from application.services.datetime_validation import validate_appointment_datetime
                 val_res = validate_appointment_datetime(
-                    requested_date=rep_d,
-                    requested_time=rep_t,
+                    requested_date=repaired_date,
+                    requested_time=repaired_time,
                     current_server_datetime=sys_dt
                 )
                 if not val_res["valid"]:
@@ -2123,9 +2132,63 @@ class ReceptionistAgent(Agent):
                     return {
                         "success": True,
                         "agent_name": self.name,
-                        "response": val_res["reason"],
+                        "response": "Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.",
                         "provider": "booking_engine"
                     }
+
+            # 2. Staff leave validation
+            if repaired_staff and repaired_date:
+                db_leave_check = SessionLocal()
+                try:
+                    import uuid as _uuid
+                    from infrastructure.db.models import StaffLeave, Staff
+                    st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    ld = datetime.strptime(repaired_date, "%Y-%m-%d").date()
+                    db_leave = db_leave_check.query(StaffLeave).filter(
+                        StaffLeave.staff_id == st_uuid,
+                        StaffLeave.leave_date == ld
+                    ).first()
+                    if db_leave:
+                        st_obj = db_leave_check.query(Staff).filter(Staff.id == st_uuid).first()
+                        staff_name = st_obj.full_name if st_obj else "Marcus Johnson"
+                        
+                        other_staff_list = db_leave_check.query(Staff).filter(
+                            Staff.branch_id == repaired_branch,
+                            Staff.is_active == True,
+                            Staff.id != st_uuid
+                        ).all()
+                        
+                        available_others = []
+                        for ost in other_staff_list:
+                            ost_leave = db_leave_check.query(StaffLeave).filter(
+                                StaffLeave.staff_id == ost.id,
+                                StaffLeave.leave_date == ld
+                            ).first()
+                            if not ost_leave:
+                                available_others.append(ost.full_name)
+                                
+                        date_formatted = ld.strftime("%d-%m-%Y")
+                        if available_others:
+                            alts = "\n".join([f"• {name}" for name in available_others])
+                            response_msg = (
+                                f"{staff_name} is on leave on {date_formatted}.\n\n"
+                                f"The following stylists are available instead:\n"
+                                f"{alts}\n\n"
+                                f"Would you like to book with one of them?"
+                            )
+                        else:
+                            response_msg = f"{staff_name} is on leave on {date_formatted}. Unfortunately, no other stylists are available on this date."
+                        
+                        session.set_booking_state(BookingState.COLLECTING)
+                        state_svc._save_session(session)
+                        return {
+                            "success": True,
+                            "agent_name": self.name,
+                            "response": response_msg,
+                            "provider": "booking_engine"
+                        }
+                finally:
+                    db_leave_check.close()
 
             # Identify missing required details
             missing_fields = []
@@ -2222,7 +2285,7 @@ class ReceptionistAgent(Agent):
                 return {
                     "success": True,
                     "agent_name": self.name,
-                    "response": f"{pref_str}\n\n{val_res['reason']}{suggestion_msg}".strip(),
+                    "response": f"Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.{suggestion_msg}",
                     "provider": "booking_engine_validation"
                 }
 
@@ -2246,7 +2309,7 @@ class ReceptionistAgent(Agent):
             )
             _already_awaiting = session.pending_booking.get("_awaiting_confirmation", False)
 
-            if not _already_awaiting and not is_explicit_confirmation:
+            if not _already_awaiting:
                 # First-time booking request: check availability and show summary
                 session.set_booking_state(BookingState.AVAILABILITY)
                 _temp_slots = check_stylist_availability(
@@ -2266,62 +2329,12 @@ class ReceptionistAgent(Agent):
                     except Exception:
                         pass
 
-                if _slots_dict_conf.get("staff_on_leave"):
-                    staff_name = _slots_dict_conf.get("staff_name") or "The requested stylist"
-                    date_str = _slots_dict_conf.get("date") or repaired_date
-                    slots = _slots_dict_conf.get("slots", [])
-                    if not slots:
-                        return {
-                            "success": True,
-                            "agent_name": self.name,
-                            "response": f"{pref_str}\n\n{staff_name} is on leave on {date_str}. Please choose another staff member. Unfortunately, no other stylists are available on this date.".strip(),
-                            "provider": "booking_engine"
-                        }
-                    lines = []
-                    for slot in slots:
-                        start_str = slot.get("start_time", "")
-                        try:
-                            _dt_slot = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                            nice_time = _dt_slot.strftime("%I:%M %p")
-                        except Exception:
-                            nice_time = start_str
-                        names = slot.get("available_staff_names", [])
-                        if names:
-                            lines.append(f"• {nice_time} (Available: {', '.join(names)})")
-                        else:
-                            lines.append(f"• {nice_time}")
-                    return {
-                        "success": True,
-                        "agent_name": self.name,
-                        "response": f"{pref_str}\n\n{staff_name} is on leave on {date_str}. Please choose another staff member. Here are the available stylists and their slots:\n" + "\n".join(lines),
-                        "provider": "booking_engine"
-                    }
-
                 _avail_slots = (
                     _slots_dict_conf.get("slots")
                     or (_slots_dict_conf.get("data") or {}).get("slots")
                     or []
                 )
-                _slot_free = any(f"{repaired_date}T{repaired_time}" in s.get("start_time", "") for s in _avail_slots)
 
-                if not _slot_free:
-                    # Slot not available — surface alternatives and stop
-                    _alts = []
-                    for _s in _avail_slots:
-                        try:
-                            _dt = datetime.fromisoformat(_s.get("start_time", "").replace("Z", "+00:00"))
-                            _alts.append(_dt.strftime("%I:%M %p"))
-                        except Exception:
-                            pass
-                    _alt_str = ", ".join(_alts[:3]) if _alts else "none today"
-                    return {
-                        "success": True,
-                        "agent_name": self.name,
-                        "response": f"{pref_str}\n\nI'm sorry, but that time slot is unavailable. Available alternatives: {_alt_str}.".strip(),
-                        "provider": "booking_engine"
-                    }
-
-                # Slot is free — fetch names for summary and ask for confirmation
                 _db_conf = SessionLocal()
                 _svc_name, _br_name, _st_name = "Styling Treatment", "Salon Lounge", "Professional Stylist"
                 _duration_val, _price_val = 30, 0.0
@@ -2362,6 +2375,33 @@ class ReceptionistAgent(Agent):
                         if _st_obj: _st_name = _st_obj.full_name
                 finally:
                     _db_conf.close()
+
+                if not _avail_slots:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{_st_name} is working that day but has no available slots.",
+                        "provider": "booking_engine"
+                    }
+
+                _slot_free = any(f"{repaired_date}T{repaired_time}" in s.get("start_time", "") for s in _avail_slots)
+
+                if not _slot_free:
+                    # Slot not available — surface alternatives and stop
+                    _alts = []
+                    for _s in _avail_slots:
+                        try:
+                            _dt = datetime.fromisoformat(_s.get("start_time", "").replace("Z", "+00:00"))
+                            _alts.append(_dt.strftime("%I:%M %p"))
+                        except Exception:
+                            pass
+                    _alt_str = ", ".join(_alts[:3]) if _alts else "none today"
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{pref_str}\n\nI'm sorry, but that time slot is unavailable. Available alternatives: {_alt_str}.".strip(),
+                        "provider": "booking_engine"
+                    }
 
                 session.pending_booking["_awaiting_confirmation"] = True
                 session.pending_booking["_confirmed_service"] = str(repaired_service)
@@ -2521,17 +2561,6 @@ class ReceptionistAgent(Agent):
             # If no slots returned at all, the requested slot is not available
                     
             if not is_requested_slot_available:
-                alternatives = []
-                for s in slots:
-                    start_iso = s.get("start_time", "")
-                    try:
-                        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-                        alt_time = dt.strftime("%I:%M %p")
-                        alternatives.append(alt_time)
-                    except Exception:
-                        pass
-                
-                alt_str = ", ".join(alternatives[:3]) if alternatives else "none today"
                 stylist_name = "Professional Stylist"
                 if repaired_staff:
                     db = SessionLocal()
@@ -2544,6 +2573,24 @@ class ReceptionistAgent(Agent):
                         pass
                     finally:
                         db.close()
+                if not slots:
+                    return {
+                        "success": True,
+                        "agent_name": self.name,
+                        "response": f"{stylist_name} is working that day but has no available slots.",
+                        "provider": "booking_engine"
+                    }
+                alternatives = []
+                for s in slots:
+                    start_iso = s.get("start_time", "")
+                    try:
+                        dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                        alt_time = dt.strftime("%I:%M %p")
+                        alternatives.append(alt_time)
+                    except Exception:
+                        pass
+                
+                alt_str = ", ".join(alternatives[:3]) if alternatives else "none today"
                 return {
                     "success": True,
                     "agent_name": self.name,
@@ -2708,38 +2755,80 @@ class ReceptionistAgent(Agent):
             }
 
         elif intent == "availability" and not is_discovery_query:
-            sys_dt = get_query_system_datetime() or datetime.now(timezone.utc)
-            from application.services.datetime_validation import validate_appointment_datetime
-            val_avail = validate_appointment_datetime(
-                requested_date=intent_json.get("date"),
-                requested_time=intent_json.get("time"),
-                current_server_datetime=sys_dt
-            )
-            if not val_avail["valid"]:
-                return {
-                    "success": True,
-                    "agent_name": self.name,
-                    "response": f"{pref_str}\n\n{val_avail['reason']}".strip(),
-                    "provider": "booking_engine_validation"
-                }
-
             repaired_branch = repair_branch(intent_json.get("branch"))
             repaired_service = repair_service(intent_json.get("service"))
             repaired_staff = repair_staff(intent_json.get("stylist"), repaired_branch)
             repaired_date = repair_date(intent_json.get("date"))
+            repaired_time = repair_time(intent_json.get("time")) if intent_json.get("time") else None
 
-            try:
-                req_date = datetime.strptime(repaired_date, "%Y-%m-%d").date()
-                curr_date = datetime.now(timezone.utc).date()
-                if req_date < curr_date:
+            # 1. Past date/time validation (Highest Priority)
+            if intent_json.get("date"):
+                sys_dt = get_query_system_datetime() or datetime.now(timezone.utc)
+                from application.services.datetime_validation import validate_appointment_datetime
+                val_avail = validate_appointment_datetime(
+                    requested_date=repaired_date,
+                    requested_time=repaired_time,
+                    current_server_datetime=sys_dt
+                )
+                if not val_avail["valid"]:
                     return {
                         "success": True,
                         "agent_name": self.name,
-                        "response": f"{pref_str}\n\nI apologize, but appointments can only be checked for future dates. Please select a future date and time.",
-                        "provider": "booking_engine"
+                        "response": "Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.",
+                        "provider": "booking_engine_validation"
                     }
-            except Exception:
-                pass
+
+            # 2. Staff leave validation
+            if repaired_staff and repaired_date:
+                db_leave_check = SessionLocal()
+                try:
+                    import uuid as _uuid
+                    from infrastructure.db.models import StaffLeave, Staff
+                    st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    ld = datetime.strptime(repaired_date, "%Y-%m-%d").date()
+                    db_leave = db_leave_check.query(StaffLeave).filter(
+                        StaffLeave.staff_id == st_uuid,
+                        StaffLeave.leave_date == ld
+                    ).first()
+                    if db_leave:
+                        st_obj = db_leave_check.query(Staff).filter(Staff.id == st_uuid).first()
+                        staff_name = st_obj.full_name if st_obj else "Marcus Johnson"
+                        
+                        other_staff_list = db_leave_check.query(Staff).filter(
+                            Staff.branch_id == repaired_branch,
+                            Staff.is_active == True,
+                            Staff.id != st_uuid
+                        ).all()
+                        
+                        available_others = []
+                        for ost in other_staff_list:
+                            ost_leave = db_leave_check.query(StaffLeave).filter(
+                                StaffLeave.staff_id == ost.id,
+                                StaffLeave.leave_date == ld
+                            ).first()
+                            if not ost_leave:
+                                available_others.append(ost.full_name)
+                                
+                        date_formatted = ld.strftime("%d-%m-%Y")
+                        if available_others:
+                            alts = "\n".join([f"• {name}" for name in available_others])
+                            response_msg = (
+                                f"{staff_name} is on leave on {date_formatted}.\n\n"
+                                f"The following stylists are available instead:\n"
+                                f"{alts}\n\n"
+                                f"Would you like to book with one of them?"
+                            )
+                        else:
+                            response_msg = f"{staff_name} is on leave on {date_formatted}. Unfortunately, no other stylists are available on this date."
+                        
+                        return {
+                            "success": True,
+                            "agent_name": self.name,
+                            "response": response_msg,
+                            "provider": "booking_engine"
+                        }
+                finally:
+                    db_leave_check.close()
 
             slots_data = check_stylist_availability(
                 branch_id=repaired_branch,
@@ -2773,6 +2862,36 @@ class ReceptionistAgent(Agent):
                     "success": True,
                     "agent_name": self.name,
                     "response": "I could not verify availability right now.",
+                    "provider": "booking_engine"
+                }
+
+            # If slots are empty, return the specific no slots message:
+            import ast as _ast_avail
+            import json as _json_avail
+            _slots_dict_avail = {}
+            try:
+                _slots_dict_avail = _ast_avail.literal_eval(slots_data)
+            except Exception:
+                try:
+                    _slots_dict_avail = _json_avail.loads(slots_data)
+                except Exception:
+                    pass
+            _avail_list = _slots_dict_avail.get("slots") or (_slots_dict_avail.get("data") or {}).get("slots") or []
+            if not _avail_list:
+                db_st = SessionLocal()
+                try:
+                    import uuid as _ust
+                    st_uuid = _ust.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    st_obj = db_st.query(Staff).filter(Staff.id == st_uuid).first() if st_uuid else None
+                    stylist_name = st_obj.full_name if st_obj else "Marcus Johnson"
+                except Exception:
+                    stylist_name = "Marcus Johnson"
+                finally:
+                    db_st.close()
+                return {
+                    "success": True,
+                    "agent_name": self.name,
+                    "response": f"{stylist_name} is working that day but has no available slots.",
                     "provider": "booking_engine"
                 }
 

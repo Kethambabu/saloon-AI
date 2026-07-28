@@ -886,12 +886,12 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                         import uuid
                         from autogen_core._types import FunctionCall
 
-                        pattern = r"<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?>(.*?)</\1>|<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?\s*/>|<function=([a-zA-Z0-9_]+)>(.*?)</function>|<function\s+name=[\"\']?([a-zA-Z0-9_]+)[\"\']?\s*>(.*?)</function>|<function/([a-zA-Z0-9_]+)>(.*?)</function>|<([a-zA-Z0-9_]+)\s+({(?:[^{}]|{[^{}]*})*})\s*>?\s*</function>"
+                        pattern = r"<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?>(.*?)</\1>|<([a-zA-Z0-9_]+)(?:=({(?:[^{}]|{[^{}]*})*}|\[.*?\]|[a-zA-Z0-9_]+))?(?:\s+[^>]*)?\s*/>|<function=([a-zA-Z0-9_]+)>(.*?)</function>|<function\s+name=[\"\']?([a-zA-Z0-9_]+)[\"\']?\s*>(.*?)</function>|<function/([a-zA-Z0-9_]+)>(.*?)</function>|<([a-zA-Z0-9_]+)\s+({(?:[^{}]|{[^{}]*})*})\s*>?\s*</function>|<([a-zA-Z0-9_]+)>(.*?)</function>"
                         matches = list(re.finditer(pattern, content, re.DOTALL))
 
                         function_calls = []
                         for match in matches:
-                            tag_name = match.group(1) or match.group(4) or match.group(6) or match.group(8) or match.group(10) or match.group(12)
+                            tag_name = match.group(1) or match.group(4) or match.group(6) or match.group(8) or match.group(10) or match.group(12) or match.group(14)
                             val_after_eq = match.group(2) or match.group(5) or match.group(13)
                             
                             # Check if the value after '=' is a tool name override or direct JSON arguments
@@ -925,7 +925,7 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                                     if attribs:
                                         args_str = json.dumps(attribs)
                                     else:
-                                        args_str = match.group(3) or match.group(7) or match.group(9) or match.group(11) or "{}"
+                                        args_str = match.group(3) or match.group(7) or match.group(9) or match.group(11) or match.group(15) or "{}"
                                         args_str = args_str.strip() or "{}"
                                         parsed_args = clean_and_parse_json(args_str)
                                         if parsed_args is not None:

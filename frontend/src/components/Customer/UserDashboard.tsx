@@ -147,10 +147,11 @@ const getInitialDateTimeForReschedule = (isoString: string) => {
 };
 
 export const UserDashboard: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   
   // Navigation & active views
   const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'my-appointments' | 'history' | 'assistant' | 'services' | 'notifications' | 'profile' | 'recommendations' | 'reviews'>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // Data loading states
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
@@ -642,25 +643,47 @@ export const UserDashboard: React.FC = () => {
       return status === 'CANCELLED' || status === 'CANCELED';
     });
   };
-
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-slate-950 text-white font-sans">
+    <div className="flex flex-col lg:flex-row h-full overflow-hidden bg-slate-950 text-white font-sans relative">
       
       {/* ============================================================================
           SIDEBAR NAVIGATION BAR
           ============================================================================ */}
-      <aside className="w-full lg:w-72 bg-slate-900 border-b lg:border-b-0 lg:border-r border-slate-800/80 p-6 flex flex-col justify-between">
-        <div className="space-y-8">
-          {/* Custom Salon Brand Header */}
-          <div className="text-left pb-4 border-b border-slate-800">
-            <h2 className="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-              SalonAI Elite
-            </h2>
-            <span className="block text-[8px] tracking-widest text-slate-500 uppercase font-black -mt-0.5">Customer Experience Portal</span>
+      <aside className={`bg-slate-900 border-r border-slate-800/80 flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
+        isSidebarOpen ? 'w-full lg:w-72 p-6' : 'w-full lg:w-20 p-4'
+      }`}>
+        <div className="flex flex-col flex-1 min-h-0 gap-6">
+          {/* Custom Salon Brand Header & Toggle Button */}
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800 gap-2 shrink-0">
+            {isSidebarOpen ? (
+              <div>
+                <h2 className="text-2xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                  SalonAI Elite
+                </h2>
+                <span className="block text-[8px] tracking-widest text-slate-500 uppercase font-black -mt-0.5">Customer Experience Portal</span>
+              </div>
+            ) : (
+              <span className="text-xl">👑</span>
+            )}
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer shrink-0"
+              title={isSidebarOpen ? 'Collapse Sidebar' : 'Expand Sidebar'}
+            >
+              {isSidebarOpen ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              )}
+            </button>
           </div>
 
           {/* Navigation Links */}
-          <nav className="flex flex-col gap-1.5">
+          <nav className={`flex flex-col gap-1.5 flex-1 overflow-y-auto ${isSidebarOpen ? 'custom-scrollbar' : 'scrollbar-none'}`}>
             {[
               { id: 'dashboard', label: 'Dashboard Home', icon: '🏠' },
               { id: 'recommendations', label: 'Recommended For You', icon: '💡' },
@@ -679,17 +702,18 @@ export const UserDashboard: React.FC = () => {
                   setActiveTab(tab.id as any);
                   setBookingStep(1); // Reset booking wizard whenever switching
                 }}
-                className={`flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold text-left transition-all duration-300 cursor-pointer ${
+                className={`flex items-center justify-between px-4 py-2.5 rounded-2xl text-xs font-bold text-left transition-all duration-300 cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                     : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
-                }`}
+                } ${!isSidebarOpen ? 'justify-center px-2' : ''}`}
+                title={tab.label}
               >
                 <div className="flex items-center space-x-3.5">
                   <span className="text-lg">{tab.icon}</span>
-                  <span>{tab.label}</span>
+                  {isSidebarOpen && <span>{tab.label}</span>}
                 </div>
-                {tab.badge !== undefined && tab.badge > 0 ? (
+                {isSidebarOpen && tab.badge !== undefined && tab.badge > 0 ? (
                   <span className="px-2 py-0.5 text-[9px] font-black bg-red-500 text-white rounded-full animate-pulse">
                     {tab.badge}
                   </span>
@@ -698,29 +722,16 @@ export const UserDashboard: React.FC = () => {
             ))}
           </nav>
         </div>
-
-        {/* Logged in User Profile Footer */}
-        <div className="mt-8 pt-4 border-t border-slate-800 text-left space-y-3">
-          <div>
-            <span className="block text-[9px] font-black text-slate-500 uppercase tracking-widest">Client Session</span>
-            <span className="block text-xs font-extrabold text-slate-300 truncate mt-0.5">{user?.email}</span>
-            <span className="inline-block mt-1 px-2.5 py-0.5 rounded-full text-[8px] font-black bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-widest">
-              🥇 Gold Tier Member
-            </span>
-          </div>
-          <button
-            onClick={logout}
-            className="w-full py-2.5 bg-red-950/20 hover:bg-red-900/30 border border-red-900/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-bold tracking-wider transition-all duration-300 cursor-pointer text-center"
-          >
-            🚪 Logout Securely
-          </button>
-        </div>
       </aside>
 
       {/* ============================================================================
           MAIN BODY VIEWPORTS
           ============================================================================ */}
-      <main className="flex-1 p-6 lg:p-10 text-left overflow-y-auto max-h-screen">
+      <main className={`flex-1 text-left ${
+        activeTab === 'assistant'
+          ? 'overflow-hidden flex flex-col p-0'
+          : 'p-6 lg:p-10 overflow-y-auto'
+      }`}>
         
         {/* Toast Alerts Banner */}
         {toastMessage && (
@@ -739,7 +750,7 @@ export const UserDashboard: React.FC = () => {
         {isLoading ? (
           <DashboardSkeleton label="Syncing your account…" />
         ) : (
-          <div className="space-y-8 animate-fade-in">
+          <div className={`animate-fade-in ${activeTab === 'assistant' ? 'flex flex-col flex-1 h-full overflow-hidden' : 'space-y-8'}`}>
 
             {/* ============================================================================
                 VIEW 1: DASHBOARD HOME
@@ -1355,69 +1366,6 @@ export const UserDashboard: React.FC = () => {
                 )}
 
                 {/* ============================================================================
-                    MODAL: SUBMIT RATING & REVIEW FOR COMPLETED SESSION
-                    ============================================================================ */}
-                {reviewingAppt && (
-                  <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
-                    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
-                      <button 
-                        onClick={() => setReviewingAppt(null)}
-                        className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
-                      >
-                        ✕
-                      </button>
-                      
-                      <div className="text-center space-y-1">
-                        <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Share experience</span>
-                        <h4 className="text-lg font-black text-white">Rate Your Styling Treatment</h4>
-                        <p className="text-xs text-slate-450 mt-1">Reviewing **{reviewingAppt.service.name}** with **{reviewingAppt.staff?.first_name}**</p>
-                      </div>
-
-                      {/* Interactive Stars Selection */}
-                      <div className="flex items-center justify-center space-x-2.5 py-2">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            onClick={() => setRatingValue(star)}
-                            className={`text-2xl cursor-pointer hover:scale-115 transition-transform ${
-                              star <= ratingValue ? 'text-amber-400' : 'text-slate-600'
-                            }`}
-                          >
-                            {star <= ratingValue ? '★' : '☆'}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex flex-col gap-1.5 text-left">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Styling Comments</label>
-                        <textarea
-                          value={reviewComment}
-                          onChange={e => setReviewComment(e.target.value)}
-                          placeholder="Tell us about the stylist's precision, salon atmosphere, or premium products..."
-                          className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none h-24 resize-none"
-                        />
-                      </div>
-
-                      <div className="flex justify-between items-center pt-2">
-                        <button
-                          onClick={() => setReviewingAppt(null)}
-                          className="px-4 py-2.5 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={handleReviewSubmit}
-                          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white cursor-pointer shadow-lg shadow-blue-500/10"
-                        >
-                          Commit Review
-                        </button>
-                      </div>
-
-                    </div>
-                  </div>
-                )}
-
-                {/* ============================================================================
                     MODAL: RESCHEDULE SCHEDULING TIME
                     ============================================================================ */}
                 {reschedulingAppt && (
@@ -1551,26 +1499,9 @@ export const UserDashboard: React.FC = () => {
                 VIEW 5: CONVERSATIONAL AI ASSISTANT (CLARA FULLSCREEN VIEWPORT)
                 ============================================================================ */}
             {activeTab === 'assistant' && (
-              <div className="space-y-6">
-                <div className="text-left border-b border-slate-800 pb-4">
-                  <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Conversational Assistant</span>
-                  <h3 className="text-xl font-black text-white">🤖 Clara - Automated Salon Receptionist</h3>
-                  <p className="text-xs text-slate-500 mt-1">Book schedules, cancel bookings, check slot times using plain natural language.</p>
-                </div>
-                
-                {/* Full screen render wrapper for Clara chat */}
-                <div className="bg-slate-900/30 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative custom-fullscreen-agentchat-container">
-                  <AgentChat onRefreshAppointments={() => fetchData(true)} />
-                </div>
-
-                <style>{`
-                  .custom-fullscreen-agentchat-container .w-full.max-w-7xl {
-                    max-width: 100% !important;
-                    height: 65vh !important;
-                    border: none !important;
-                    box-shadow: none !important;
-                  }
-                `}</style>
+              <div className="flex flex-col" style={{ height: 'calc(100vh - 180px)', minHeight: '500px' }}>
+                {/* Clara Viewport - fills all remaining height */}
+                <AgentChat onRefreshAppointments={() => fetchData(true)} />
               </div>
             )}
 
@@ -2004,6 +1935,69 @@ export const UserDashboard: React.FC = () => {
                       className="px-6 py-2.5 bg-slate-850 hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-300 hover:text-white cursor-pointer"
                     >
                       No thanks, view my dashboard
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            )}
+
+            {/* ============================================================================
+                MODAL: SUBMIT RATING & REVIEW FOR COMPLETED SESSION
+                ============================================================================ */}
+            {reviewingAppt && (
+              <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
+                  <button 
+                    onClick={() => setReviewingAppt(null)}
+                    className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                  
+                  <div className="text-center space-y-1">
+                    <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Share experience</span>
+                    <h4 className="text-lg font-black text-white">Rate Your Styling Treatment</h4>
+                    <p className="text-xs text-slate-450 mt-1">Reviewing **{reviewingAppt.service.name}** with **{reviewingAppt.staff?.first_name}**</p>
+                  </div>
+
+                  {/* Interactive Stars Selection */}
+                  <div className="flex items-center justify-center space-x-2.5 py-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        onClick={() => setRatingValue(star)}
+                        className={`text-2xl cursor-pointer hover:scale-115 transition-transform ${
+                          star <= ratingValue ? 'text-amber-400' : 'text-slate-600'
+                        }`}
+                      >
+                        {star <= ratingValue ? '★' : '☆'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 text-left">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Styling Comments</label>
+                    <textarea
+                      value={reviewComment}
+                      onChange={e => setReviewComment(e.target.value)}
+                      placeholder="Tell us about the stylist's precision, salon atmosphere, or premium products..."
+                      className="px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white focus:outline-none h-24 resize-none"
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2">
+                    <button
+                      onClick={() => setReviewingAppt(null)}
+                      className="px-4 py-2.5 border border-slate-800 rounded-xl text-xs font-bold text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleReviewSubmit}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-black rounded-xl text-white cursor-pointer shadow-lg shadow-blue-500/10"
+                    >
+                      Commit Review
                     </button>
                   </div>
 

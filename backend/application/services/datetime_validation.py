@@ -135,7 +135,7 @@ def validate_appointment_datetime(
     # Case B: Requested Date is TODAY, but requested time has passed
     if req_date == curr_date:
         if time_was_specified and req_time is not None:
-            if req_dt < current_server_datetime:
+            if req_dt <= current_server_datetime:
                 h12 = req_time.hour % 12
                 if h12 == 0:
                     h12 = 12

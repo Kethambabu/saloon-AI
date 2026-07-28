@@ -37,10 +37,11 @@ interface StaffDashboardProps {
 }
 
 export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   
   // Navigation state
   const [activeTab, setActiveTab] = useState<'dashboard' | 'appointments' | 'customers' | 'schedule' | 'assistant' | 'profile' | 'leads' | 'upsells' | 'reviews' | 'performance'>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // Roster lists
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
@@ -316,21 +317,46 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
   };
 
   return (
-    <div className="flex flex-col md:flex-row min-h-[85vh] bg-slate-950 text-white rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl font-sans">
+    <div className="flex flex-col md:flex-row h-full bg-slate-950 text-white overflow-hidden border border-slate-800/80 shadow-2xl font-sans relative">
       
       {/* Sidebar Navigation */}
-      <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800/80 p-6 flex flex-col justify-between">
-        <div className="space-y-6">
-          <div className="text-left border-b border-slate-800 pb-4">
-            <h2 className="text-xl font-black bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
-              Stylist Hub
-            </h2>
-            <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest">
-              Stylist Staff
-            </span>
+      <aside className={`bg-slate-900 border-r border-slate-800/80 flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
+        isSidebarOpen ? 'w-full md:w-64 p-6' : 'w-full md:w-20 p-4'
+      }`}>
+        <div className="flex flex-col flex-1 min-h-0 gap-6">
+          {/* Header & Toggle Button */}
+          <div className="flex items-center justify-between border-b border-slate-800 pb-4 gap-2 shrink-0">
+            {isSidebarOpen ? (
+              <div>
+                <h2 className="text-xl font-black bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                  Stylist Hub
+                </h2>
+                <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest">
+                  Stylist Staff
+                </span>
+              </div>
+            ) : (
+              <span className="text-xl">💈</span>
+            )}
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer shrink-0"
+              title={isSidebarOpen ? 'Collapse Sidebar' : 'Expand Sidebar'}
+            >
+              {isSidebarOpen ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              )}
+            </button>
           </div>
 
-          <nav className="flex flex-col gap-2">
+          {/* Navigation Links */}
+          <nav className={`flex flex-col gap-2 flex-1 overflow-y-auto ${isSidebarOpen ? 'custom-scrollbar' : 'scrollbar-none'}`}>
             {[
               { id: 'dashboard', label: 'My Dashboard', icon: '🏠' },
               { id: 'appointments', label: 'Agenda Book', icon: '📅' },
@@ -340,46 +366,58 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
               { id: 'reviews', label: 'My Reviews', icon: '⭐' },
               { id: 'performance', label: 'My Performance', icon: '📈' },
               { id: 'schedule', label: 'My Calendar', icon: '🗓️' },
-              { id: 'assistant', label: 'AI Co-Stylist', icon: '🤖' },
-              { id: 'profile', label: 'Stylist Profile', icon: '👤' }
+              { id: 'assistant', label: 'AI Co-Stylist', icon: '🤖' }
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-xl text-xs font-bold text-left transition-all cursor-pointer ${
+                className={`flex items-center space-x-3 px-4 py-2.5 rounded-xl text-xs font-bold text-left transition-all cursor-pointer ${
                   activeTab === tab.id
                     ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
+                } ${!isSidebarOpen ? 'justify-center space-x-0 px-2' : ''}`}
+                title={tab.label}
               >
                 <span className="text-lg">{tab.icon}</span>
-                <span>{tab.label}</span>
+                {isSidebarOpen && <span>{tab.label}</span>}
               </button>
             ))}
           </nav>
         </div>
-
-        <div className="mt-8 text-left border-t border-slate-800 pt-4 flex items-center justify-between">
-          <div className="overflow-hidden">
-            <span className="block text-[9px] font-black text-slate-500 uppercase tracking-widest">Stylist Account</span>
-            <span className="block text-xs font-bold text-slate-350 truncate">{user?.email}</span>
-          </div>
-          <button
-            onClick={logout}
-            className="p-2 bg-red-650/15 border border-red-500/25 hover:bg-red-650/25 text-red-400 rounded-lg transition-all cursor-pointer text-xs"
-            title="Log Out"
-          >
-            🚪
-          </button>
-        </div>
       </aside>
 
       {/* Main Stylist Operations Panel */}
-      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
+      <main className={`flex-1 text-left ${
+        activeTab === 'assistant'
+          ? 'overflow-hidden flex flex-col p-0'
+          : 'p-6 md:p-8 overflow-y-auto'
+      }`}>
         {isLoading ? (
           <DashboardSkeleton label="Establishing creative session…" />
         ) : (
-          <div className="animate-fade-in space-y-6">
+          <div className={`animate-fade-in ${activeTab === 'assistant' ? 'flex flex-col flex-1 h-full overflow-hidden' : 'space-y-6'}`}>
+            
+            {/* Top Navigation / Status Bar */}
+            <div className="flex justify-between items-center pb-4 border-b border-slate-850 mb-6 gap-4">
+              <div>
+                <h1 className="text-xl font-black text-white capitalize tracking-wide">
+                  {activeTab === 'dashboard' ? 'Overview' : activeTab.replace('_', ' ')}
+                </h1>
+              </div>
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setActiveTab('profile')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border ${
+                    activeTab === 'profile'
+                      ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                      : 'bg-slate-900 border-slate-800 text-slate-350 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <span>👤</span>
+                  <span>Stylist Profile</span>
+                </button>
+              </div>
+            </div>
             
             {/* 1. Dashboard Tab */}
             {activeTab === 'dashboard' && (
@@ -651,11 +689,8 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
 
             {/* 5. AI Co-Stylist Assistant Tab */}
             {activeTab === 'assistant' && (
-              <div className="space-y-6">
-                <div className="border-b border-slate-800 pb-3">
-                  <h2 className="text-xl font-black">🤖 AI Co-Stylist Panel</h2>
-                  <p className="text-xs text-slate-500">Authorized: Atlas Co-Stylist AI. Ask questions about schedule, metrics, and customer formula cards.</p>
-                </div>
+              <div className="flex flex-col" style={{ height: 'calc(100vh - 180px)', minHeight: '500px' }}>
+                {/* Atlas Co-Stylist Viewport - fills all remaining height */}
                 <StaffChat />
               </div>
             )}

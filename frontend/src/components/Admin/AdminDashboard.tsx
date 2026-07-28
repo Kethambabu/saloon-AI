@@ -68,7 +68,7 @@ interface ReviewRecord {
 }
 
 export const AdminDashboard: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const adminName = user?.email
     ? user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1)
     : 'Admin';
@@ -87,6 +87,7 @@ export const AdminDashboard: React.FC = () => {
     | 'ai-configuration'
     | 'settings'
   >('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Interactive Review moderation state
   const [replyingReviewId, setReplyingReviewId] = useState<string | null>(null);
@@ -730,21 +731,46 @@ export const AdminDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col md:flex-row min-h-[85vh] bg-slate-950 text-white rounded-3xl overflow-hidden border border-slate-800/80 shadow-2xl font-sans">
+    <div className="flex flex-col md:flex-row h-full bg-slate-950 text-white overflow-hidden border border-slate-800/80 shadow-2xl font-sans relative">
       
       {/* Sidebar Navigation */}
-      <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800/80 p-6 flex flex-col justify-between">
-        <div className="space-y-6">
-          <div className="text-left border-b border-slate-800 pb-4">
-            <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-              SalonAI Control
-            </h2>
-            <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded text-[9px] font-black bg-purple-500/10 text-purple-400 border border-purple-500/20 uppercase tracking-widest">
-              Root Administrator
-            </span>
+      <aside className={`bg-slate-900 border-r border-slate-800/80 flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
+        isSidebarOpen ? 'w-full md:w-64 p-6' : 'w-full md:w-20 p-4'
+      }`}>
+        <div className="flex flex-col flex-1 min-h-0 gap-6">
+          {/* Header & Toggle Button */}
+          <div className="flex items-center justify-between border-b border-slate-800 pb-4 gap-2 shrink-0">
+            {isSidebarOpen ? (
+              <div>
+                <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                  SalonAI Control
+                </h2>
+                <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded text-[9px] font-black bg-purple-500/10 text-purple-400 border border-purple-500/20 uppercase tracking-widest">
+                  Root Administrator
+                </span>
+              </div>
+            ) : (
+              <span className="text-xl">🎛️</span>
+            )}
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer shrink-0"
+              title={isSidebarOpen ? 'Collapse Sidebar' : 'Expand Sidebar'}
+            >
+              {isSidebarOpen ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              )}
+            </button>
           </div>
 
-          <nav className="flex flex-col gap-1.5">
+          {/* Navigation Links */}
+          <nav className={`flex flex-col gap-1.5 flex-1 overflow-y-auto ${isSidebarOpen ? 'custom-scrollbar' : 'scrollbar-none'}`}>
             {[
               { id: 'dashboard', label: 'Executive Overview', icon: '🏠' },
               { id: 'revenue', label: 'Revenue Intelligence', icon: '💰' },
@@ -765,36 +791,27 @@ export const AdminDashboard: React.FC = () => {
                   activeTab === tab.id
                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
+                } ${!isSidebarOpen ? 'justify-center space-x-0 px-2' : ''}`}
+                title={tab.label}
               >
                 <span className="text-lg">{tab.icon}</span>
-                <span>{tab.label}</span>
+                {isSidebarOpen && <span>{tab.label}</span>}
               </button>
             ))}
           </nav>
         </div>
-
-        <div className="mt-8 text-left border-t border-slate-800 pt-4 flex items-center justify-between">
-          <div className="overflow-hidden">
-            <span className="block text-[9px] font-black text-slate-500 uppercase tracking-widest">Global Admin</span>
-            <span className="block text-xs font-bold text-slate-350 truncate">{user?.email}</span>
-          </div>
-          <button
-            onClick={logout}
-            className="p-2 bg-red-650/15 border border-red-500/25 hover:bg-red-650/25 text-red-400 rounded-lg transition-all cursor-pointer text-xs"
-            title="Log Out"
-          >
-            🚪
-          </button>
-        </div>
       </aside>
 
       {/* Main Operations Container */}
-      <main className="flex-1 p-6 md:p-8 text-left overflow-y-auto">
+      <main className={`flex-1 text-left ${
+        activeTab === 'business-assistant'
+          ? 'overflow-hidden flex flex-col p-0'
+          : 'p-6 md:p-8 overflow-y-auto'
+      }`}>
         {isLoading ? (
           <DashboardSkeleton label="Establishing secure admin session and loading BI telemetry…" />
         ) : (
-          <div className="animate-fade-in space-y-6">
+          <div className={`animate-fade-in ${activeTab === 'business-assistant' ? 'flex flex-col flex-1 h-full overflow-hidden' : 'space-y-6'}`}>
             
             {/* ── 1. Executive Overview Subpage ── */}
             {activeTab === 'dashboard' && (
@@ -1711,16 +1728,9 @@ export const AdminDashboard: React.FC = () => {
 
             {/* ── 9. AI Business Assistant Subpage ── */}
             {activeTab === 'business-assistant' && (
-              <div className="space-y-6">
-                <div className="border-b border-slate-850 pb-3">
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AutoGen Multi-Agent Workspace</span>
-                  <h2 className="text-xl font-black mt-0.5">🤖 AI Business Assistant</h2>
-                  <p className="text-xs text-slate-500">Converse directly with Atlas the Business Intelligence Analyst Co-pilot.</p>
-                </div>
-
-                <div className="bg-slate-900/60 border border-slate-850 p-5 rounded-3xl">
-                  <AgentChat intentOverride="business_intelligence" />
-                </div>
+              <div className="flex flex-col" style={{ height: 'calc(100vh - 180px)', minHeight: '500px' }}>
+                {/* Atlas BI Analyst Viewport - fills all remaining height */}
+                <AgentChat intentOverride="business_intelligence" />
               </div>
             )}
 

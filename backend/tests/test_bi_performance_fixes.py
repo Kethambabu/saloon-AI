@@ -118,3 +118,46 @@ def test_agent_timeout_constant_is_consistent_with_wait_for():
     assert "30.0 seconds" not in source and "within 30 seconds" not in source, (
         "stale hardcoded '30 seconds' timeout message should reference AGENT_TIMEOUT_SECONDS instead"
     )
+
+
+@pytest.mark.asyncio
+async def test_openai_client_adapter_parses_custom_tool_tag():
+    """
+    Test that OpenAIChatCompletionClient correctly parses XML-like tags formatted as
+    <tool_name>arguments</function> and extracts them into FunctionCall objects.
+    """
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='<analytics_workflow_v2>{"action": "revenue", "params": {"period": "monthly"}}</function>',
+                tool_calls=None
+            ),
+            finish_reason="stop"
+        )
+    ]
+    mock_response.usage = MagicMock(prompt_tokens=10, completion_tokens=20)
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("core.openai_client_adapter.AsyncOpenAI", return_value=mock_client):
+        client = OpenAIChatCompletionClient(
+            model="test-model", api_key="sk-test", base_url="http://localhost:1", timeout=5.0, disable_fallback=True
+        )
+        res = await client.create(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[{"name": "analytics_workflow_v2", "description": "test tool"}]
+        )
+
+    assert res.finish_reason == "function_calls"
+    assert isinstance(res.content, list)
+    assert len(res.content) == 1
+    func_call = res.content[0]
+    assert func_call.name == "analytics_workflow_v2"
+    args = json.loads(func_call.arguments)
+    assert args["action"] == "revenue"
+    assert args["params"]["period"] == "monthly"
+

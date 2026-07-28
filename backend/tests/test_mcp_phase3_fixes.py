@@ -73,3 +73,50 @@ def test_mcp_execute_respects_live_non_admin_role_contextvar():
     finally:
         current_user_role.reset(token_role)
         current_user_id.reset(token_user)
+
+
+def test_staff_cannot_query_other_staff_record():
+    """A STAFF caller must not be allowed to query another staff member's record."""
+    own_staff_id = str(uuid.uuid4())
+    other_staff_id = str(uuid.uuid4())
+    
+    ctx = MCPContext(
+        user_id=str(uuid.uuid4()),
+        role=MCPRole.STAFF,
+        customer_id=None,
+        staff_id=own_staff_id,
+        branch_id=str(uuid.uuid4()),
+    )
+    
+    # Try querying other staff_id directly
+    with pytest.raises(GuardViolationError) as exc_info:
+        validate_and_sanitise(ctx, "staff", "select", {"id": other_staff_id})
+    assert "Access denied. You do not have permission" in str(exc_info.value)
+    
+    # Try querying without filter; should default/force-inject own id
+    safe_filters = validate_and_sanitise(ctx, "staff", "select", {})
+    assert safe_filters["id"] == own_staff_id
+
+
+def test_staff_cannot_query_other_staff_appointments():
+    """A STAFF caller must not be allowed to query another staff member's appointments."""
+    own_staff_id = str(uuid.uuid4())
+    other_staff_id = str(uuid.uuid4())
+    
+    ctx = MCPContext(
+        user_id=str(uuid.uuid4()),
+        role=MCPRole.STAFF,
+        customer_id=None,
+        staff_id=own_staff_id,
+        branch_id=str(uuid.uuid4()),
+    )
+    
+    # Try querying other staff's appointments
+    with pytest.raises(GuardViolationError) as exc_info:
+        validate_and_sanitise(ctx, "appointments", "select", {"staff_id": other_staff_id})
+    assert "Access denied. You do not have permission" in str(exc_info.value)
+    
+    # Try querying without staff filter; should force-inject own staff_id
+    safe_filters = validate_and_sanitise(ctx, "appointments", "select", {})
+    assert safe_filters["staff_id"] == own_staff_id
+
