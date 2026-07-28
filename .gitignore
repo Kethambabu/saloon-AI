@@ -6,6 +6,8 @@
 .env.*.local
 backend/.env
 frontend/.env
+*.env
+*.env.*
 
 # ============================================================
 # Python
@@ -34,7 +36,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Testing
+# Python Tools & Caches
 .pytest_cache/
 .coverage
 htmlcov/
@@ -43,12 +45,12 @@ htmlcov/
 .hypothesis/
 *.cover
 *.py,cover
-
-# Type checkers
 .mypy_cache/
 .dmypy.json
 dmypy.json
 .pyre/
+.ruff_cache/
+.ipynb_checkpoints/
 
 # ============================================================
 # Virtual Environments
@@ -58,11 +60,14 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
+.env/
 backend/venv/
 backend/venv312/
 backend/myvenv/
 **/env
 **/env (*
+**/.venv/
 
 # ============================================================
 # Node / Frontend
@@ -77,12 +82,16 @@ lerna-debug.log*
 .pnp.js
 *.local
 
-# Build outputs
+# Build outputs & caches
 dist/
 dist-ssr/
 out/
 build/
 node-dist/
+.eslintcache
+.prettiercache
+.parcel-cache
+.next/
 
 # Prisma generated
 /generated/prisma
@@ -115,6 +124,8 @@ backend/logs/
 *~
 .vscode/settings.json
 .vscode/extensions.json
+*.sublime-project
+*.sublime-workspace
 
 # ============================================================
 # OS files
@@ -123,6 +134,8 @@ backend/logs/
 .AppleDouble
 .LSOverride
 Thumbs.db
+ehthumbs.db
+Icon\r
 
 # ============================================================
 # Temporary / Cache
@@ -130,7 +143,6 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
-.pytest_cache/
 
 # ============================================================
 # Project-specific
