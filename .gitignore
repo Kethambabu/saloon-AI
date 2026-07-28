@@ -163,3 +163,21 @@ backend/scratch/
 
 # docx uploads / exports
 docx/
+
+# IDE files and workspace files
+CLAUDE.md
+
+# Tests & test files
+**/tests/
+tests/
+test_*.py
+*_test.py
+*.test.js
+*.test.jsx
+*.test.ts
+*.test.tsx
+*.spec.js
+*.spec.jsx
+*.spec.ts
+*.spec.tsx
+
