@@ -10,8 +10,7 @@ Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 
 # Hash for 'password123'
-# Created with: bcrypt.hashpw(b'password123', bcrypt.gensalt(rounds=12))
-hashed_password = '$2b$12$KpmDXGSTHXSVcyR9etDgPO1Jv7XMI6e6rpHseJPHaEgWv2dgp51ZW'
+hashed_password = '$2b$12$NcsIsFab4E6MsGPCTqlYVe8XWauJOi4Ls4z.XsRj7D0j31NuEq..S'
 
 try:
     # Get or create a default branch for staff
