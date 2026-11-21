@@ -9,7 +9,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Allow passing backend API URL during build time, defaulting to production backend
-ARG VITE_API_URL=https://salonai-backend.onrender.com/api/v1
+ARG VITE_API_URL=https://saloon-ai-6blp.onrender.com/api/v1
 ENV VITE_API_URL=$VITE_API_URL
 
 # Copy dependency specifications
