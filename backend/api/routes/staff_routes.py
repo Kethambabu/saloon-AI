@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from infrastructure.db import get_db, Staff, UserRole, Appointment, User, Customer
-from api.deps import get_current_user
+from api.deps import get_current_user, RoleChecker
 from application.services.appointment_service import auto_cancel_all_expired_appointments
 
 logger = logging.getLogger(__name__)
@@ -400,6 +400,24 @@ class LeaveResponse(BaseModel):
     id: str
     leave_date: str
     reason: Optional[str]
+    status: str
+
+class ConflictAppointment(BaseModel):
+    id: str
+    customer_name: str
+    service_name: str
+    start_time: str
+    status: str
+
+class AdminLeaveResponse(BaseModel):
+    id: str
+    staff_id: str
+    staff_name: str
+    leave_date: str
+    reason: Optional[str] = None
+    status: str
+    conflicts_count: int
+    appointments: List[ConflictAppointment]
 
 @router.post(
     "/leaves",
@@ -423,20 +441,22 @@ def create_staff_leave(
     # Check if leave already exists
     existing = db.query(StaffLeave).filter(
         StaffLeave.staff_id == staff.id,
-        StaffLeave.leave_date == ld
+        StaffLeave.leave_date == ld,
+        StaffLeave.status != "REJECTED"
     ).first()
     
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Leave already requested for this date."
+            detail="Leave already requested/active for this date."
         )
 
     # Create leave
     new_leave = StaffLeave(
         staff_id=staff.id,
         leave_date=ld,
-        reason=payload.reason
+        reason=payload.reason,
+        status="PENDING"
     )
     db.add(new_leave)
     db.commit()
@@ -445,7 +465,8 @@ def create_staff_leave(
     return LeaveResponse(
         id=str(new_leave.id),
         leave_date=new_leave.leave_date.strftime("%Y-%m-%d"),
-        reason=new_leave.reason
+        reason=new_leave.reason,
+        status=new_leave.status
     )
 
 @router.get(
@@ -466,7 +487,8 @@ def get_staff_leaves(
         LeaveResponse(
             id=str(l.id),
             leave_date=l.leave_date.strftime("%Y-%m-%d"),
-            reason=l.reason
+            reason=l.reason,
+            status=l.status
         )
         for l in leaves
     ]
@@ -504,6 +526,159 @@ def cancel_staff_leave(
     db.delete(leave)
     db.commit()
     return {"success": True, "message": "Leave cancelled successfully."}
+
+@router.get(
+    "/leaves/admin",
+    response_model=List[AdminLeaveResponse],
+    summary="Get all leaves with conflict info (for Admin)",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.MANAGER, UserRole.OWNER]))]
+)
+def get_all_leaves_for_admin(db: Session = Depends(get_db)):
+    leaves = db.query(StaffLeave).order_by(StaffLeave.leave_date.desc()).all()
+    
+    res = []
+    from infrastructure.db.models import AppointmentStatus, Appointment
+    for l in leaves:
+        ld = l.leave_date
+        start_day = datetime.combine(ld, datetime.min.time(), tzinfo=timezone.utc)
+        end_day = datetime.combine(ld, datetime.max.time(), tzinfo=timezone.utc)
+        
+        # Get active appointments on that day for that staff
+        appts = db.query(Appointment).filter(
+            Appointment.staff_id == l.staff_id,
+            Appointment.start_time >= start_day,
+            Appointment.start_time <= end_day,
+            Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN])
+        ).all()
+        
+        conflict_list = [
+            ConflictAppointment(
+                id=str(a.id),
+                customer_name=a.customer.full_name if a.customer else "Client",
+                service_name=a.service.name if a.service else "Service",
+                start_time=a.start_time.isoformat() if a.start_time.tzinfo else f"{a.start_time.isoformat()}Z",
+                status=a.status.value
+            )
+            for a in appts
+        ]
+        
+        res.append(
+            AdminLeaveResponse(
+                id=str(l.id),
+                staff_id=str(l.staff_id),
+                staff_name=l.staff.full_name if l.staff else "Stylist",
+                leave_date=l.leave_date.strftime("%Y-%m-%d"),
+                reason=l.reason,
+                status=l.status,
+                conflicts_count=len(conflict_list),
+                appointments=conflict_list
+            )
+        )
+    return res
+
+@router.post(
+    "/leaves/{leave_id}/approve",
+    summary="Approve Leave Request",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.MANAGER, UserRole.OWNER]))]
+)
+def approve_staff_leave(
+    leave_id: str,
+    db: Session = Depends(get_db)
+):
+    from uuid import UUID
+    try:
+        leave_uuid = UUID(leave_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid leave_id format."
+        )
+        
+    leave = db.query(StaffLeave).filter(StaffLeave.id == leave_uuid).first()
+    if not leave:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Leave request not found."
+        )
+        
+    if leave.status == "APPROVED":
+        return {"success": True, "message": "Leave is already approved."}
+        
+    leave.status = "APPROVED"
+    
+    # Cancel conflicting appointments and notify customers
+    ld = leave.leave_date
+    start_day = datetime.combine(ld, datetime.min.time(), tzinfo=timezone.utc)
+    end_day = datetime.combine(ld, datetime.max.time(), tzinfo=timezone.utc)
+    
+    from infrastructure.db.models import AppointmentStatus, Appointment, Notification, User
+    import uuid
+    
+    appts = db.query(Appointment).filter(
+        Appointment.staff_id == leave.staff_id,
+        Appointment.start_time >= start_day,
+        Appointment.start_time <= end_day,
+        Appointment.status.in_([AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.CHECKED_IN])
+    ).all()
+    
+    cancelled_count = 0
+    for a in appts:
+        a.status = AppointmentStatus.CANCELLED
+        cancelled_count += 1
+        
+        # Send Notification to customer
+        try:
+            user = db.query(User).filter(User.customer_id == a.customer_id).first()
+            if user:
+                notif = Notification(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    title="Appointment Cancelled",
+                    message=(
+                        f"Your appointment on {ld.strftime('%Y-%m-%d')} at "
+                        f"{a.start_time.strftime('%I:%M %p')} has been cancelled "
+                        f"because the stylist is on leave. Please book another slot."
+                    ),
+                    is_read=False
+                )
+                db.add(notif)
+        except Exception as e:
+            logger.error(f"Error creating cancellation notification: {e}")
+            
+    db.commit()
+    return {
+        "success": True, 
+        "message": f"Leave approved successfully. {cancelled_count} appointment(s) cancelled and customers notified."
+    }
+
+@router.post(
+    "/leaves/{leave_id}/reject",
+    summary="Reject Leave Request",
+    dependencies=[Depends(RoleChecker([UserRole.ADMIN, UserRole.MANAGER, UserRole.OWNER]))]
+)
+def reject_staff_leave(
+    leave_id: str,
+    db: Session = Depends(get_db)
+):
+    from uuid import UUID
+    try:
+        leave_uuid = UUID(leave_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid leave_id format."
+        )
+        
+    leave = db.query(StaffLeave).filter(StaffLeave.id == leave_uuid).first()
+    if not leave:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Leave request not found."
+        )
+        
+    leave.status = "REJECTED"
+    db.commit()
+    return {"success": True, "message": "Leave request rejected."}
 
 
 # --- Staff Chat Endpoint ---

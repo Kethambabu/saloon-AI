@@ -34,7 +34,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               </svg>
             </div>
             <h1 className="text-sm font-extrabold tracking-tight text-white m-0">
-              SalonHubAI Workforce
+              SalonAI Workforce
             </h1>
           </div>
 
@@ -71,7 +71,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {!isAuthenticated && (
         <footer className="shrink-0 bg-slate-900/80 border-t border-slate-800 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-semibold text-slate-500">
-            <span>© {new Date().getFullYear()} <span className="text-cyan-400 font-bold">SalonHubAI Workforce</span>. All rights reserved.</span>
+            <span>© {new Date().getFullYear()} <span className="text-cyan-400 font-bold">SalonAI Workforce</span>. All rights reserved.</span>
             <span className="flex items-center gap-3">
               <span className="text-slate-600">Powered by AI</span>
               <span className="w-1 h-1 rounded-full bg-slate-700 inline-block" />

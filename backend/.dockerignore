@@ -1,0 +1,44 @@
+# Virtual environments
+venv/
+.venv/
+env/
+**/env/
+**/venv/
+**/.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment files and credentials
+.env
+.env.*
+*.env
+
+# Local test databases
+*.db
+*.sqlite
+*.sqlite3
+salon_local.db
+test.db
+
+# Logs & temp files
+logs/*.log
+scratch/
+*.tmp
+*.temp
+
+# Git & IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+Dockerfile
+.dockerignore

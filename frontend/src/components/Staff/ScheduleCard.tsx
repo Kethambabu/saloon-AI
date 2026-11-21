@@ -15,6 +15,7 @@ interface LeaveItem {
   id: string;
   leave_date: string;
   reason: string | null;
+  status: string;
 }
 
 interface ScheduleCardProps {
@@ -81,8 +82,8 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 return a.raw_start_time.startsWith(dateStr) && a.status !== 'CANCELLED';
               });
               
-              const isOnLeave = leaves.some(l => l.leave_date === dateStr);
-              const leaveInfo = leaves.find(l => l.leave_date === dateStr);
+              const isOnLeave = leaves.some(l => l.leave_date === dateStr && l.status === 'APPROVED');
+              const leaveInfo = leaves.find(l => l.leave_date === dateStr && l.status === 'APPROVED');
 
               return (
                 <div 
@@ -166,7 +167,16 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 {leaves.map((l) => (
                   <div key={l.id} className="bg-slate-950/60 border border-slate-850 px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-2 text-xs">
                     <div>
-                      <span className="font-bold text-white block">{l.leave_date}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white">{l.leave_date}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
+                          l.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-400' :
+                          l.status === 'REJECTED' ? 'bg-rose-500/10 text-rose-400' :
+                          'bg-amber-500/10 text-amber-400'
+                        }`}>
+                          {l.status}
+                        </span>
+                      </div>
                       <span className="text-[10px] text-slate-500 font-semibold italic">{l.reason || 'No note provided'}</span>
                     </div>
                     <button

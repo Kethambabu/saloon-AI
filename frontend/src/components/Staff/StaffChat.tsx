@@ -177,6 +177,7 @@ const StaffChatMessageBubble = React.memo<{ msg: Message }>(({ msg }) => {
     </div>
   );
 });
+StaffChatMessageBubble.displayName = 'StaffChatMessageBubble';
 
 interface ChatSession {
   id: string;
@@ -219,7 +220,6 @@ export const StaffChat: React.FC = () => {
     } else {
       createNewSession();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {

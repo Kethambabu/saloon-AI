@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_MODEL = "gemini-2.0-flash"  # Fast, free tier available
+GEMINI_MODEL = "gemini-3.6-flash"  # Fast, free tier available (gemini-2.0-flash decommissioned)
 
 # ============================================================================
 # HUGGING FACE PROVIDER CONFIGURATION
@@ -58,25 +58,27 @@ def check_gemini_key_available() -> bool:
 class GroqModel(str, Enum):
     """Valid Groq models available in the API."""
     # Latest stable models (recommended)
-    LLAMA_3_3_70B_VERSATILE = "llama-3.3-70b-versatile"  # PRIMARY - Best balance
-    LLAMA_3_1_8B_INSTANT = "llama-3.1-8b-instant"  # FALLBACK - Fast, lightweight
-    LLAMA_3_1_70B = "llama-3.1-70b-versatile"  # Alternative - Good for complex tasks
-    
+    GPT_OSS_120B = "openai/gpt-oss-120b"  # PRIMARY - Best balance (replaces llama-3.3-70b-versatile, deprecated 2026-08-16)
+    GPT_OSS_20B = "openai/gpt-oss-20b"  # FALLBACK - Fast, lightweight (replaces llama-3.1-8b-instant, deprecated 2026-08-16)
+    QWEN3_6_27B = "qwen/qwen3.6-27b"  # Alternative - Good for complex tasks
+
     # DEPRECATED - DO NOT USE:
     # "mixtral-8x7b-32768" - DECOMMISSIONED as of May 2026
-    # Use llama-3.3-70b-versatile instead
-    
+    # "llama-3.3-70b-versatile" - DECOMMISSIONED 2026-08-16, use openai/gpt-oss-120b
+    # "llama-3.1-8b-instant" - DECOMMISSIONED 2026-08-16, use openai/gpt-oss-20b
+    # "qwen/qwen3-32b" - DECOMMISSIONED 2026-07-17, use openai/gpt-oss-120b
+
     @staticmethod
     def validate(model: str) -> bool:
         """Check if model is valid and currently supported."""
         valid_models = {m.value for m in GroqModel}
         return model in valid_models
-    
+
     @staticmethod
     def list_supported() -> list:
         """Return list of all supported models."""
         return [m.value for m in GroqModel]
-    
+
     @staticmethod
     def is_deprecated(model: str) -> bool:
         """Check if a model has been deprecated"""
@@ -84,6 +86,10 @@ class GroqModel(str, Enum):
             "mixtral-8x7b-32768",  # Groq decommissioned this
             "llama-3.1-405b",  # Also decommissioned
             "llama-3.1-405b-reasoning",  # Decommissioned
+            "llama-3.3-70b-versatile",  # Decommissioned 2026-08-16
+            "llama-3.1-8b-instant",  # Decommissioned 2026-08-16
+            "llama-3.1-70b-versatile",  # Decommissioned
+            "qwen/qwen3-32b",  # Decommissioned 2026-07-17
         }
         return model in deprecated_models
 
@@ -92,8 +98,8 @@ class GroqModel(str, Enum):
 # LLM CONFIGURATION CONSTANTS
 # ============================================================================
 
-DEFAULT_PRIMARY_MODEL = GroqModel.LLAMA_3_3_70B_VERSATILE.value
-DEFAULT_FALLBACK_MODEL = GroqModel.LLAMA_3_1_8B_INSTANT.value
+DEFAULT_PRIMARY_MODEL = GroqModel.GPT_OSS_120B.value
+DEFAULT_FALLBACK_MODEL = GroqModel.GPT_OSS_20B.value
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_TIMEOUT_SECONDS = 30
 
@@ -116,7 +122,7 @@ def get_model_info_dict(model: str) -> Dict[str, Any]:
         "vision": False,
         "function_calling": True,
         "json_output": True,
-        "family": "llama-3.3-70b" if "3.3" in model else "llama-3.1",
+        "family": "gpt-oss-120b" if "120b" in model else "gpt-oss-20b" if "20b" in model else "qwen",
         "structured_output": False,
     }
 
@@ -400,7 +406,7 @@ class LLMConfigManager:
                     "vision": False,
                     "function_calling": True,
                     "json_output": True,
-                    "family": "gemini-2.0",
+                    "family": "gemini-3.6",
                     "structured_output": False,
                 }
             }
@@ -472,7 +478,7 @@ class LLMConfigManager:
                     "vision": False,
                     "function_calling": True,
                     "json_output": True,
-                    "family": "gemini-2.0",
+                    "family": "gemini-3.6",
                     "structured_output": False,
                 },
             })
@@ -553,7 +559,7 @@ class LLMConfigManager:
                         "vision": False,
                         "function_calling": True,
                         "json_output": True,
-                        "family": "gemini-2.0",
+                        "family": "gemini-3.6",
                         "structured_output": False,
                     },
                     "provider": "gemini",
@@ -592,7 +598,7 @@ class LLMConfigManager:
                     "vision": False,
                     "function_calling": True,
                     "json_output": True,
-                    "family": "gemini-2.0",
+                    "family": "gemini-3.6",
                     "structured_output": False,
                 },
                 "provider": "gemini",

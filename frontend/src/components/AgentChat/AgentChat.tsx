@@ -234,6 +234,7 @@ const InlineChartRenderer: React.FC<InlineChartRendererProps> = React.memo(({ da
     </div>
   );
 });
+InlineChartRenderer.displayName = 'InlineChartRenderer';
 
 
 // Structured interface for chat messages
@@ -293,6 +294,7 @@ const ChatMessageBubble = React.memo<{ msg: Message; assistantInitial: string; a
     );
   }
 );
+ChatMessageBubble.displayName = 'ChatMessageBubble';
 
 // Session metadata interface
 interface ChatSession {
@@ -360,7 +362,6 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
     } else {
       createNewSession();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   // --- Auto-scroll to Bottom on New Messages ---

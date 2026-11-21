@@ -255,7 +255,7 @@ class StaffService:
             existing = session.query(StaffLeave).filter(
                 StaffLeave.staff_id == st_uuid,
                 StaffLeave.leave_date == target_date,
-                StaffLeave.is_active == True
+                StaffLeave.status != "REJECTED"
             ).first()
             
             if existing:
@@ -266,7 +266,7 @@ class StaffService:
                 staff_id=st_uuid,
                 leave_date=target_date,
                 reason=reason or "Time-off request",
-                is_active=True
+                status="PENDING"
             )
             session.add(leave)
             session.commit()
@@ -323,8 +323,7 @@ class StaffService:
         try:
             st_uuid = _parse_uuid(staff_id, "staff_id")
             leaves = session.query(StaffLeave).filter(
-                StaffLeave.staff_id == st_uuid,
-                StaffLeave.is_active == True
+                StaffLeave.staff_id == st_uuid
             ).order_by(StaffLeave.leave_date.desc()).all()
             
             res = []
@@ -333,6 +332,7 @@ class StaffService:
                     "leave_id": str(l.id),
                     "date": l.leave_date.isoformat(),
                     "reason": l.reason,
+                    "status": l.status,
                 })
             return res
         except Exception as e:
@@ -349,14 +349,13 @@ class StaffService:
             
             leave = session.query(StaffLeave).filter(
                 StaffLeave.staff_id == st_uuid,
-                StaffLeave.leave_date == target_date,
-                StaffLeave.is_active == True
+                StaffLeave.leave_date == target_date
             ).first()
             
             if not leave:
-                return {"success": False, "error": f"No active leave request found for {leave_date_str}."}
+                return {"success": False, "error": f"No leave request found for {leave_date_str}."}
                 
-            leave.is_active = False
+            session.delete(leave)
             session.commit()
             return {"success": True, "message": "Leave request cancelled successfully."}
         except Exception as e:
@@ -763,7 +762,8 @@ def create_leave_request(staff_id: str, leave_date: str, reason: Optional[str] =
 
         existing = session.query(StaffLeave).filter(
             StaffLeave.staff_id == staff_uuid,
-            StaffLeave.leave_date == ld
+            StaffLeave.leave_date == ld,
+            StaffLeave.status != "REJECTED"
         ).first()
 
         if existing:
@@ -773,7 +773,8 @@ def create_leave_request(staff_id: str, leave_date: str, reason: Optional[str] =
             id=uuid.uuid4(),
             staff_id=staff_uuid,
             leave_date=ld,
-            reason=reason
+            reason=reason,
+            status="PENDING"
         )
         session.add(new_leave)
         session.commit()
@@ -892,7 +893,7 @@ def get_leaves(staff_id: str, db: Optional[Session] = None) -> str:
             
         lines = ["Your Registered Leaves:"]
         for idx, leave in enumerate(leaves, 1):
-            lines.append(f"{idx}. {leave.leave_date.strftime('%Y-%m-%d')} - Reason: {leave.reason or 'None'}")
+            lines.append(f"{idx}. {leave.leave_date.strftime('%Y-%m-%d')} - Reason: {leave.reason or 'None'} (Status: {leave.status})")
             
         return "\n".join(lines)
     except Exception as e:

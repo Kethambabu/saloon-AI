@@ -1826,9 +1826,9 @@ class ReceptionistAgent(Agent):
                     "base_url": settings.huggingface_api_base_url
                 })
 
-        # Tier 2: Groq llama-3.3-70b-versatile (primary — best quality)
+        # Tier 2: Groq openai/gpt-oss-120b (primary — best quality)
         if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
-            model = "llama-3.3-70b-versatile"
+            model = "openai/gpt-oss-120b"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
                 logger.info(f"⏭️ Skipping Groq model '{model}' due to active cooldown.")
             else:
@@ -1839,9 +1839,9 @@ class ReceptionistAgent(Agent):
                     "base_url": "https://api.groq.com/openai/v1"
                 })
 
-        # Tier 3: Groq llama-3.1-8b-instant (fast, lightweight fallback)
+        # Tier 3: Groq openai/gpt-oss-20b (fast, lightweight fallback)
         if groq_key and groq_key.strip() and groq_key != "your-groq-key-here":
-            model = "llama-3.1-8b-instant"
+            model = "openai/gpt-oss-20b"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
                 logger.info(f"⏭️ Skipping Groq model '{model}' due to active cooldown.")
             else:
@@ -1852,9 +1852,9 @@ class ReceptionistAgent(Agent):
                     "base_url": "https://api.groq.com/openai/v1"
                 })
 
-        # Tier 4: Gemini Flash (gemini-2.0-flash)
+        # Tier 4: Gemini Flash (gemini-3.6-flash)
         if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
-            model = "gemini-2.0-flash"
+            model = "gemini-3.6-flash"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
                 logger.info(f"⏭️ Skipping Gemini model '{model}' due to active cooldown.")
             else:
@@ -1867,7 +1867,7 @@ class ReceptionistAgent(Agent):
 
         # Tier 5: Gemini Flash Lite (cheaper, higher quota limits)
         if gemini_key and gemini_key.strip() and gemini_key != "your-gemini-key-here":
-            model = "gemini-2.0-flash-lite"
+            model = "gemini-3.5-flash-lite"
             if model in ReceptionistAgent.MODEL_COOLDOWN and now < ReceptionistAgent.MODEL_COOLDOWN[model]:
                 logger.info(f"⏭️ Skipping Gemini model '{model}' due to active cooldown.")
             else:
@@ -2114,10 +2114,10 @@ class ReceptionistAgent(Agent):
 
             repaired_date = repair_date(date_input) if date_input else None
             repaired_time = repair_time(time_input) if time_input else None
-            repaired_branch = repair_branch(branch_input) if branch_input else None
-            repaired_staff = repair_staff(stylist_input, repaired_branch) if (stylist_input and repaired_branch) else None
 
-            # 1. Past date/time validation (Highest Priority)
+            # 1. Past date/time validation (Highest Priority) — checked before any
+            # DB-hitting branch/staff resolution so an obviously-invalid date/time
+            # short-circuits immediately instead of wasting lookups first.
             if date_input:
                 sys_dt = get_query_system_datetime() or datetime.now(timezone.utc)
                 from application.services.datetime_validation import validate_appointment_datetime
@@ -2132,9 +2132,12 @@ class ReceptionistAgent(Agent):
                     return {
                         "success": True,
                         "agent_name": self.name,
-                        "response": "Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.",
+                        "response": "Appointments cannot be booked for past dates or times. Please choose today or a future date.",
                         "provider": "booking_engine"
                     }
+
+            repaired_branch = repair_branch(branch_input) if branch_input else None
+            repaired_staff = repair_staff(stylist_input, repaired_branch) if (stylist_input and repaired_branch) else None
 
             # 2. Staff leave validation
             if repaired_staff and repaired_date:
@@ -2142,7 +2145,10 @@ class ReceptionistAgent(Agent):
                 try:
                     import uuid as _uuid
                     from infrastructure.db.models import StaffLeave, Staff
-                    st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    try:
+                        st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    except ValueError:
+                        st_uuid = None
                     ld = datetime.strptime(repaired_date, "%Y-%m-%d").date()
                     db_leave = db_leave_check.query(StaffLeave).filter(
                         StaffLeave.staff_id == st_uuid,
@@ -2151,12 +2157,16 @@ class ReceptionistAgent(Agent):
                     if db_leave:
                         st_obj = db_leave_check.query(Staff).filter(Staff.id == st_uuid).first()
                         staff_name = st_obj.full_name if st_obj else "Marcus Johnson"
-                        
+
+                        try:
+                            branch_uuid = _uuid.UUID(str(repaired_branch)) if isinstance(repaired_branch, str) else repaired_branch
+                        except ValueError:
+                            branch_uuid = None
                         other_staff_list = db_leave_check.query(Staff).filter(
-                            Staff.branch_id == repaired_branch,
+                            Staff.branch_id == branch_uuid,
                             Staff.is_active == True,
                             Staff.id != st_uuid
-                        ).all()
+                        ).all() if branch_uuid else []
                         
                         available_others = []
                         for ost in other_staff_list:
@@ -2285,7 +2295,7 @@ class ReceptionistAgent(Agent):
                 return {
                     "success": True,
                     "agent_name": self.name,
-                    "response": f"Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.{suggestion_msg}",
+                    "response": f"Appointments cannot be booked for past dates or times. Please choose today or a future date.{suggestion_msg}",
                     "provider": "booking_engine_validation"
                 }
 
@@ -2774,7 +2784,7 @@ class ReceptionistAgent(Agent):
                     return {
                         "success": True,
                         "agent_name": self.name,
-                        "response": "Appointments must be scheduled for a future date and time. Please choose a future slot. Please select a valid future time. The requested time has already passed today.",
+                        "response": "Appointments cannot be booked for past dates or times. Please choose today or a future date.",
                         "provider": "booking_engine_validation"
                     }
 
@@ -2784,7 +2794,10 @@ class ReceptionistAgent(Agent):
                 try:
                     import uuid as _uuid
                     from infrastructure.db.models import StaffLeave, Staff
-                    st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    try:
+                        st_uuid = _uuid.UUID(str(repaired_staff)) if isinstance(repaired_staff, str) else repaired_staff
+                    except ValueError:
+                        st_uuid = None
                     ld = datetime.strptime(repaired_date, "%Y-%m-%d").date()
                     db_leave = db_leave_check.query(StaffLeave).filter(
                         StaffLeave.staff_id == st_uuid,
@@ -2793,12 +2806,16 @@ class ReceptionistAgent(Agent):
                     if db_leave:
                         st_obj = db_leave_check.query(Staff).filter(Staff.id == st_uuid).first()
                         staff_name = st_obj.full_name if st_obj else "Marcus Johnson"
-                        
+
+                        try:
+                            branch_uuid = _uuid.UUID(str(repaired_branch)) if isinstance(repaired_branch, str) else repaired_branch
+                        except ValueError:
+                            branch_uuid = None
                         other_staff_list = db_leave_check.query(Staff).filter(
-                            Staff.branch_id == repaired_branch,
+                            Staff.branch_id == branch_uuid,
                             Staff.is_active == True,
                             Staff.id != st_uuid
-                        ).all()
+                        ).all() if branch_uuid else []
                         
                         available_others = []
                         for ost in other_staff_list:

@@ -86,6 +86,7 @@ export const AdminDashboard: React.FC = () => {
     | 'business-assistant'
     | 'ai-configuration'
     | 'settings'
+    | 'leave-requests'
   >('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
@@ -116,6 +117,11 @@ export const AdminDashboard: React.FC = () => {
   const [topRecoverableLeads, setTopRecoverableLeads] = useState<any[]>([]);
   const [reviews, setReviews] = useState<ReviewRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Leave requests states
+  const [adminLeaves, setAdminLeaves] = useState<any[]>([]);
+  const [isAdminLeavesLoading, setIsAdminLeavesLoading] = useState<boolean>(false);
+  const [expandedLeaveId, setExpandedLeaveId] = useState<string | null>(null);
 
   // --- BI Agent State Trackers with Premium Fallback Defaults ---
   const [dashboardPeriod, setDashboardPeriod] = useState<'today' | 'weekly' | 'monthly' | 'yearly'>('today');
@@ -356,6 +362,55 @@ export const AdminDashboard: React.FC = () => {
       console.error('Failed to fetch sync status', err);
     } finally {
       setIsSyncStatusLoading(false);
+    }
+  };
+
+  const fetchAdminLeaves = async () => {
+    try {
+      setIsAdminLeavesLoading(true);
+      const res = await apiClient.get<any[]>('/staff/leaves/admin');
+      setAdminLeaves(res.data);
+    } catch (err) {
+      console.error('Failed to fetch admin leaves', err);
+    } finally {
+      setIsAdminLeavesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'leave-requests') {
+      fetchAdminLeaves();
+    }
+  }, [activeTab]);
+
+  const handleApproveLeave = async (leaveId: string) => {
+    try {
+      const res = await apiClient.post(`/staff/leaves/${leaveId}/approve`);
+      if (res.data?.success) {
+        window.alert(`🎉 Success! ${res.data.message || 'Leave approved.'}`);
+        fetchAdminLeaves();
+      } else {
+        window.alert(res.data?.error || 'Failed to approve leave.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      window.alert(err.response?.data?.detail || 'Failed to approve leave.');
+    }
+  };
+
+  const handleRejectLeave = async (leaveId: string) => {
+    if (!window.confirm('Are you sure you want to reject this leave request?')) return;
+    try {
+      const res = await apiClient.post(`/staff/leaves/${leaveId}/reject`);
+      if (res.data?.success) {
+        window.alert('🎉 Success! Leave request rejected.');
+        fetchAdminLeaves();
+      } else {
+        window.alert(res.data?.error || 'Failed to reject leave.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      window.alert(err.response?.data?.detail || 'Failed to reject leave.');
     }
   };
 
@@ -782,7 +837,8 @@ export const AdminDashboard: React.FC = () => {
               { id: 'forecast', label: 'Forecast Intelligence', icon: '🔮' },
               { id: 'business-assistant', label: 'AI Business Assistant', icon: '🤖' },
               { id: 'ai-configuration', label: 'AI Configuration', icon: '🧠' },
-              { id: 'settings', label: 'Settings Panel', icon: '⚙️' }
+              { id: 'settings', label: 'Settings Panel', icon: '⚙️' },
+              { id: 'leave-requests', label: 'Leave Requests', icon: '📅' }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -2392,6 +2448,134 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── 11. Leave Requests Subpage ── */}
+            {activeTab === 'leave-requests' && (
+              <div className="space-y-6">
+                <div className="border-b border-slate-800 pb-3">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">HR Management</span>
+                  <h2 className="text-xl font-black mt-0.5 text-white">📅 Staff Leave Requests</h2>
+                  <p className="text-xs text-slate-500">Approve leaves, view conflicts, and automatically manage client cancellations.</p>
+                </div>
+
+                {isAdminLeavesLoading ? (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center text-slate-400 text-xs font-bold animate-pulse">
+                    ⏳ Fetching leave ledger...
+                  </div>
+                ) : adminLeaves.length === 0 ? (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-xs font-bold">
+                    🎉 No leave requests found in the ledger.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    {adminLeaves.map((leave) => {
+                      const hasConflicts = leave.conflicts_count > 0;
+                      const isPending = leave.status === 'PENDING';
+                      const isApproved = leave.status === 'APPROVED';
+                      const isRejected = leave.status === 'REJECTED';
+                      const isExpanded = expandedLeaveId === leave.id;
+
+                      return (
+                        <div
+                          key={leave.id}
+                          className={`bg-slate-900/60 border rounded-2xl p-5 transition-all ${
+                            hasConflicts && isPending ? 'border-amber-500/30 bg-amber-500/5' : 'border-slate-800/80 hover:border-slate-750'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black text-white">{leave.staff_name}</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-lg text-[9px] font-extrabold uppercase tracking-wide ${
+                                    isApproved
+                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                      : isRejected
+                                      ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  }`}
+                                >
+                                  {leave.status}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 text-[11px] text-slate-400 font-bold">
+                                <span>📅 Date: <strong className="text-slate-200">{leave.leave_date}</strong></span>
+                                <span>•</span>
+                                <span>Reason: <span className="text-slate-300 italic">"{leave.reason || 'None provided'}"</span></span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              {/* Conflicts Indicator */}
+                              <button
+                                onClick={() => leave.appointments.length > 0 && setExpandedLeaveId(isExpanded ? null : leave.id)}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-[11px] font-extrabold transition-all ${
+                                  hasConflicts
+                                    ? 'bg-amber-500/10 border-amber-500/35 text-amber-400 hover:bg-amber-500/20 cursor-pointer'
+                                    : 'bg-slate-950 border-slate-850 text-slate-400 cursor-default'
+                                }`}
+                              >
+                                ⚠️ {leave.conflicts_count} {leave.conflicts_count === 1 ? 'Appointment Conflict' : 'Appointment Conflicts'}
+                                {leave.appointments.length > 0 && (
+                                  <span className="text-[9px]">{isExpanded ? '▲' : '▼'}</span>
+                                )}
+                              </button>
+
+                              {isPending && (
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleApproveLeave(leave.id)}
+                                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-md shadow-emerald-600/10 border border-emerald-500/20"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectLeave(leave.id)}
+                                    className="px-3.5 py-1.5 bg-rose-600/85 hover:bg-rose-600 text-white rounded-xl text-xs font-black transition-all cursor-pointer border border-rose-500/20"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expanded Conflicts List */}
+                          {isExpanded && leave.appointments.length > 0 && (
+                            <div className="mt-4 pt-4 border-t border-slate-850 space-y-2">
+                              <h4 className="text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                                Conflicting Bookings on {leave.leave_date} (Will be auto-cancelled upon approval)
+                              </h4>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {leave.appointments.map((appt: any) => (
+                                  <div
+                                    key={appt.id}
+                                    className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center"
+                                  >
+                                    <div>
+                                      <p className="text-xs font-bold text-white">{appt.customer_name}</p>
+                                      <p className="text-[10px] text-slate-450 font-bold mt-0.5">{appt.service_name}</p>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-xs font-bold text-blue-400">
+                                        {new Date(appt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </p>
+                                      <span className="text-[9px] px-1.5 py-0.5 bg-slate-900 border border-slate-800 rounded font-black text-slate-500 uppercase tracking-wide mt-1 inline-block">
+                                        {appt.status}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

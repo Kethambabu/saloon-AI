@@ -119,7 +119,9 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
                 info["json_output"] = True
             if "family" not in info:
                 model_lower = str(info.get("model_id", self.model)).lower()
-                if "gemini-2.0" in model_lower:
+                if "gemini-3" in model_lower:
+                    info["family"] = "gemini-3.6-flash"
+                elif "gemini-2.0" in model_lower:
                     info["family"] = "gemini-2.0-flash"
                 elif "gemini-1.5-flash" in model_lower:
                     info["family"] = "gemini-1.5-flash"
@@ -137,7 +139,9 @@ class OpenAIChatCompletionClient(ChatCompletionClient):
 
         family_str = "unknown"
         model_lower = self.model.lower()
-        if "gemini-2.0" in model_lower:
+        if "gemini-3" in model_lower:
+            family_str = "gemini-3.6-flash"
+        elif "gemini-2.0" in model_lower:
             family_str = "gemini-2.0-flash"
         elif "gemini-1.5-flash" in model_lower:
             family_str = "gemini-1.5-flash"

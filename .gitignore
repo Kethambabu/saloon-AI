@@ -150,6 +150,13 @@ Icon\r
 # ============================================================
 # Archive folder (legacy code)
 archive/
+**/archive/
+
+# docx uploads / exports / documentation
+docx/
+**/docx/
+impdocx/
+**/impdocx/
 
 # RAG / AI data
 backend/data/last_rag_run.json
@@ -157,12 +164,7 @@ backend/data/faiss_indices/
 
 # Scratch / dev notes
 backend/scratch/
-
-# Alembic (keep ini, ignore env.py outputs if any)
-# alembic/versions/*.py  # uncomment if you want to ignore migration files
-
-# docx uploads / exports
-docx/
+**/scratch/
 
 # IDE files and workspace files
 CLAUDE.md

@@ -47,7 +47,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateToLogin }) =
 
   const testimonials = [
     { text: "The booking experience with Clara was seamless. I asked for a haircut next Tuesday and it was booked instantly with Marcus!", author: "Sarah Jenkins", role: "Frequent Guest" },
-    { text: "SalonHubAI matches Zenoti's luxury standards. Beautiful design, real-time availability, and outstanding service catalogs.", author: "Rajesh Kumar", role: "Gold Member" }
+    { text: "SalonAI matches Zenoti's luxury standards. Beautiful design, real-time availability, and outstanding service catalogs.", author: "Rajesh Kumar", role: "Gold Member" }
   ];
 
   return (
@@ -85,7 +85,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateToLogin }) =
               <span className={`text-xl font-black ${
                 isDarkMode ? 'bg-gradient-to-r from-white to-slate-350 bg-clip-text text-transparent' : 'text-slate-900'
               }`}>
-                SalonHubAI
+                SalonAI
               </span>
               <span className="block text-[8px] tracking-widest text-cyan-500 font-black uppercase -mt-1">Luxury Booking</span>
             </div>
@@ -184,7 +184,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateToLogin }) =
         <div className="max-w-7xl mx-auto px-6 space-y-12">
           <div className="text-center space-y-2">
             <span className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">Seamless Operations</span>
-            <h2 className="text-3xl font-black md:text-4xl">Why Choose SalonHubAI?</h2>
+            <h2 className="text-3xl font-black md:text-4xl">Why Choose SalonAI?</h2>
             <div className="h-1.5 w-16 bg-gradient-to-r from-cyan-400 to-amber-500 mx-auto rounded-full mt-2" />
           </div>
 
@@ -371,7 +371,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateToLogin }) =
       }`}>
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-slate-500">
           <div>
-            <span>&copy; {new Date().getFullYear()} SalonHubAI Platform. All rights reserved.</span>
+            <span>&copy; {new Date().getFullYear()} SalonAI Platform. All rights reserved.</span>
           </div>
           <div className="flex space-x-6">
             <a href="#services" className="hover:text-cyan-500 transition-all">Privacy Policy</a>

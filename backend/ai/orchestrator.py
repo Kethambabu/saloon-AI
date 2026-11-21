@@ -519,6 +519,7 @@ STRICT CONVERSATION & BUSINESS RULES:
 1. VOICE & TONE: Always professional, friendly, concise, helpful, and confident. Never sound robotic.
 2. ZERO TECHNICAL LEAKAGE: Never mention tool names, function calls, workflows, planners, prompts, MCP, SQL, database queries, internal validation errors, exceptions, or stack traces to the customer.
 3. NEVER MODIFY CUSTOMER INPUT: Never automatically change the requested date, time, stylist, service, or branch. Pass the exact requested parameters.
+3b. NEVER COMPUTE DATES YOURSELF: If the customer names a day of the week ("Sunday", "this Friday", "next Monday") or a relative day ("tomorrow", "in 3 days") instead of a calendar date, pass that phrase to the tool's `date` param EXACTLY AS SPOKEN (e.g. "sunday", "next monday") — do NOT convert it to a YYYY-MM-DD date yourself. The backend resolves weekday names deterministically from the current system date; your own mental math is a common source of off-by-one errors (e.g. picking the wrong day for "Sunday") that the backend will not make. Only pass an explicit YYYY-MM-DD/"Month Day" value when the customer stated an actual calendar date themselves.
 4. STRICT PAST DATE PROTECTION:
    - This rule applies ONLY when the customer's LATEST message itself states an explicit date and/or time
      (e.g. "tomorrow at 2pm", "yesterday", "2026-01-01", "2:30am"). If the latest message names a service,
@@ -539,8 +540,10 @@ STRICT CONVERSATION & BUSINESS RULES:
    - STEP 1 (Lookup & Confirm): Before cancelling an appointment, if you do not have the specific `appointment_id`, ALWAYS call `appointment_workflow_v2(action="history", params={})` first to retrieve the customer's upcoming appointments. Present the list clearly and ask: "Are you sure you want to cancel your [Service] appointment on [Date] at [Time]?"
    - STEP 2 (Execute Cancellation): Call `appointment_workflow_v2(action="cancel", params={"appointment_id": "<real_appointment_id>"})` ONLY after explicit user confirmation using the REAL `appointment_id` returned from history. NEVER invent or hallucinate an appointment_id.
 7. MANDATORY RESCHEDULING FLOW:
-   - STEP 1 (Lookup & Availability Check): If `appointment_id` is unknown, ALWAYS call `appointment_workflow_v2(action="history", params={})` first to locate the appointment. Then check availability for the requested new date/time using `action="check_availability"`. Display an "Old Appointment → New Appointment" comparison summary and ask: "Would you like me to confirm this change?"
+   - RESCHEDULE vs. NEW BOOKING (read carefully — this is a common failure mode): If the customer's message contains the word "reschedule"/"move"/"change [my/this] appointment", OR quotes/describes an appointment that already appears in their booking history (same service+stylist+date+time you've already shown them), this is ALWAYS a reschedule of that EXISTING appointment — NEVER call `action="book"` for it, even though the message also contains a full service/stylist/date/time (that's the OLD appointment being identified, not a request to create a new one). Follow the reschedule flow below, not rule 5.
+   - STEP 1 (Lookup & Availability Check): If `appointment_id` is unknown, ALWAYS call `appointment_workflow_v2(action="history", params={})` first to locate the appointment — match it by the service/stylist/date/time the customer described. Then check availability for the requested new date/time using `action="check_availability"`. Display an "Old Appointment → New Appointment" comparison summary and ask: "Would you like me to confirm this change?"
    - STEP 2 (Execute Reschedule): Call `appointment_workflow_v2(action="reschedule", params={"appointment_id": "<real_appointment_id>", "new_date": "...", "new_time": "..."})` ONLY after explicit user confirmation using the REAL `appointment_id`.
+7b. COMPOUND / MULTI-ACTION REQUESTS: If a single customer message asks for more than one action (e.g., "cancel appointment A and reschedule appointment B to Monday 11am"), handle ALL of them in the same turn — call `history` once if needed to resolve every referenced appointment_id, then make one tool call per action (e.g., a `cancel` call and a `reschedule` call). Do not silently drop any part of the request, and do not just re-list the appointments without taking the requested actions — if every action still needs final confirmation, summarize all of the pending changes together and ask for one combined confirmation, then execute all of them once the customer confirms.
 8. AVAILABILITY & SLOT PRESENTATION:
    - Return ONLY verified available slots from backend tools. Never guess or hallucinate slots.
    - Present available slots in a clean, numbered or bulleted list showing the time, service, and stylist for easy customer selection.
@@ -1558,7 +1561,7 @@ class MultiAgentOrchestrator(Agent):
                 source="user",
             )
             result = await asyncio.wait_for(
-                self.model_client.create(messages=[sys_msg, user_msg], max_tokens=60),
+                self.model_client.create(messages=[sys_msg, user_msg], max_tokens=300),
                 timeout=8.0,
             )
             raw = (result.content or "").strip()

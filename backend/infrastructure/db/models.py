@@ -774,6 +774,7 @@ class StaffLeave(BaseModel):
     )
     leave_date = Column(Date, nullable=False, index=True)
     reason = Column(String(200), nullable=True)
+    status = Column(String(20), default="PENDING", nullable=False)
 
     # Relationships
     staff = relationship("Staff", backref="leaves")

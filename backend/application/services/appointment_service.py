@@ -1256,7 +1256,8 @@ def is_staff_on_leave(staff_id: Any, date_str: str, session: Session) -> Tuple[b
         ld = datetime.strptime(date_str, "%Y-%m-%d").date()
         db_leave = session.query(StaffLeave).filter(
             StaffLeave.staff_id == staff.id,
-            StaffLeave.leave_date == ld
+            StaffLeave.leave_date == ld,
+            StaffLeave.status == "APPROVED"
         ).first()
         if db_leave:
             return True, staff.full_name

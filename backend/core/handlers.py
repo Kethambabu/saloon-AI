@@ -171,6 +171,10 @@ _MONTH_WORD_PATTERN = re.compile(
 _TIME_ONLY_PATTERN = re.compile(r"^\s*\d{1,2}(?::\d{2})?(?::\d{2})?\s*(am|pm)?\s*$", re.IGNORECASE)
 _ISO_DATE_PATTERN = re.compile(r"\b\d{4}-\d{1,2}-\d{1,2}\b")
 _DMY_PATTERN = re.compile(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b")
+_WEEKDAY_PATTERN = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    re.IGNORECASE,
+)
 
 
 def _is_time_only(value: Any) -> bool:
@@ -190,6 +194,8 @@ def _contains_explicit_date(value: Any) -> bool:
     if _ISO_DATE_PATTERN.search(text) or _DMY_PATTERN.search(text):
         return True
     if _MONTH_WORD_PATTERN.search(text):
+        return True
+    if _WEEKDAY_PATTERN.search(text):
         return True
     lowered = text.lower()
     if lowered in {"today", "tomorrow", "day after tomorrow", "yesterday"}:

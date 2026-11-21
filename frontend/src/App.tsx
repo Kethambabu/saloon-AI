@@ -34,9 +34,7 @@ const UserDashboard = lazy(() =>
 );
 
 const RouteLoadingFallback: React.FC = () => (
-  <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-    <Loading />
-  </div>
+  <Loading fullScreen size="lg" message="Loading page…" />
 );
 
 // Protected Route Guard wrapper
@@ -54,14 +52,7 @@ const ProtectedRouteWrapper: React.FC<{ allowedRoles: ('Admin' | 'Staff' | 'User
 
   if (loading) {
     console.log('[DEBUG] [ProtectedRouteWrapper] Authentication state is loading. Rendering spinner...');
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-        <Loading />
-        <span className="mt-4 text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">
-          Verifying security privileges...
-        </span>
-      </div>
-    );
+    return <Loading fullScreen size="lg" message="Verifying security privileges…" />;
   }
 
   if (!isAuthenticated || !user) {
@@ -174,14 +165,7 @@ function AppContent() {
 
   if (loading) {
     console.log('[DEBUG] [AppContent] Main session state is loading. Rendering startup loading page...');
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-        <Loading />
-        <span className="mt-4 text-xs font-bold text-slate-500 uppercase tracking-widest animate-pulse">
-          Establishing Secure Session...
-        </span>
-      </div>
-    );
+    return <Loading fullScreen size="xl" message="Establishing secure session…" />;
   }
 
   return (
