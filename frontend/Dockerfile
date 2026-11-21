@@ -8,17 +8,17 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Allow passing backend API URL during build time
-ARG VITE_API_URL
+# Allow passing backend API URL during build time, defaulting to production backend
+ARG VITE_API_URL=https://salonai-backend.onrender.com/api/v1
 ENV VITE_API_URL=$VITE_API_URL
 
 # Copy dependency specifications
 COPY package*.json ./
 
-# Install npm dependencies cleanly
-RUN npm ci
+# Install npm dependencies cleanly (falls back to npm install if lockfile needs sync)
+RUN npm ci || npm install
 
-# Copy frontend source code
+# Copy frontend source code and configuration files
 COPY . .
 
 # Build production assets
@@ -36,11 +36,11 @@ RUN rm -rf /etc/nginx/conf.d/* /usr/share/nginx/html/*
 # Copy built static files from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy Nginx template for dynamic $PORT injection by official docker-entrypoint
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# Copy Nginx server configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose default HTTP port
 EXPOSE 80
 
-# Run Nginx in foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Dynamically substitute ${PORT} using sed (safe: will not strip Nginx $uri variables) and launch Nginx
+CMD ["sh", "-c", "sed -i \"s/\\${PORT}/${PORT:-80}/g\" /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]

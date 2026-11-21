@@ -7,8 +7,21 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
 
-// Get API base URL from environment or use default
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+// Get API base URL from environment or use default, with automatic path normalization
+const getNormalizedBaseUrl = (): string => {
+  let url = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1').trim();
+  url = url.replace(/\/+$/, '');
+  if (!url.endsWith('/api/v1')) {
+    if (url.endsWith('/api')) {
+      url = `${url}/v1`;
+    } else {
+      url = `${url}/api/v1`;
+    }
+  }
+  return url;
+};
+
+const API_BASE_URL = getNormalizedBaseUrl();
 
 // Request queueing state for handling concurrent 401s during refreshing
 let isRefreshing = false;

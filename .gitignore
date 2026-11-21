@@ -1,13 +1,17 @@
 # ============================================================
-# Environment Variables (NEVER commit secrets)
+# Environment Variables (NEVER commit backend secrets)
 # ============================================================
 .env
 .env.local
 .env.*.local
 backend/.env
-frontend/.env
 *.env
 *.env.*
+
+# Allow frontend env files (public client-side variables for Render)
+!frontend/.env
+!frontend/.env.*
+!*.example
 
 # ============================================================
 # Python
