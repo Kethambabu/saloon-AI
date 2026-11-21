@@ -25,7 +25,14 @@ class CuratedFAISSStore:
 
     def __init__(self, index_dir: Optional[str] = None):
         self.index_dir = index_dir or _DEFAULT_FAISS_DIR
-        self.embedding_model = get_embedding_model()
+        self._embedding_model = None
+
+    @property
+    def embedding_model(self):
+        """Lazy-load embedding model on first use to prevent blocking server boot."""
+        if self._embedding_model is None:
+            self._embedding_model = get_embedding_model()
+        return self._embedding_model
 
     def get_index_path(self, tenant_id: str, domain: str) -> str:
         """Get directory path for the tenant's domain index."""

@@ -10,8 +10,9 @@ Fallback database: Local SQLite (when Supabase is unreachable)
 import logging
 import time
 import os
+import re
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 
 from sqlalchemy import create_engine, text
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -31,6 +32,26 @@ _SQLITE_FALLBACK_PATH = os.path.join(settings.data_dir, "salon_local.db")
 _SQLITE_FALLBACK_URL = f"sqlite:///{os.path.abspath(_SQLITE_FALLBACK_PATH)}"
 
 
+def _normalize_pg_url(url: str, force_driver: Optional[str] = None) -> str:
+    """Normalize postgres URLs to work seamlessly with SQLAlchemy 2.0 and available drivers."""
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    if force_driver == "psycopg2":
+        if "postgresql+psycopg2://" not in url:
+            url = re.sub(r"^postgresql(\+[a-zA-Z0-9_]+)?://", "postgresql+psycopg2://", url)
+    elif force_driver == "psycopg":
+        if "postgresql+psycopg://" not in url:
+            url = re.sub(r"^postgresql(\+[a-zA-Z0-9_]+)?://", "postgresql+psycopg://", url)
+
+    # Supabase transaction-mode pooler (port 6543) does NOT support prepared statements when using asyncpg
+    if ("pooler.supabase.com" in url or ":6543" in url) and "asyncpg" in url and "prepared_statement_cache_size" not in url:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}prepared_statement_cache_size=0"
+
+    return url
+
+
 def _build_engine(url: str):
     """
     Build a SQLAlchemy engine with the appropriate options for the DB type.
@@ -40,32 +61,29 @@ def _build_engine(url: str):
 
     if is_sqlite:
         # SQLite does not support connection pool kwargs
-        engine = create_engine(
+        return create_engine(
             url,
             echo=settings.database_echo,
             connect_args={"check_same_thread": False},
         )
-    else:
-        # Supabase transaction-mode pooler (port 6543) does NOT support prepared
-        # statements when using asyncpg. For psycopg2, this param is not needed.
-        if "asyncpg" in url and "pooler.supabase.com" in url and "prepared_statement_cache_size" not in url:
-            separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}prepared_statement_cache_size=0"
 
-        # PostgreSQL enterprise-grade connection pool tuning for Supabase
-        pool_kwargs = {
-            "pool_size": 5,        # Reduced for Supabase free tier connection limits
-            "max_overflow": 3,     # Reduced to avoid exceeding Supabase connection limits
-            "pool_recycle": 1800,  # Recycle connections after 30 minutes
-            "pool_pre_ping": True,  # Enable health check ping on connection checkout
-        }
-        engine = create_engine(
-            url,
-            echo=settings.database_echo,
-            **pool_kwargs,
-        )
+    norm_url = _normalize_pg_url(url)
+    pool_kwargs = {
+        "pool_size": 5,        # Reduced for Supabase free tier connection limits
+        "max_overflow": 3,     # Reduced to avoid exceeding Supabase connection limits
+        "pool_recycle": 1800,  # Recycle connections after 30 minutes
+        "pool_pre_ping": True,  # Enable health check ping on connection checkout
+    }
 
-    return engine
+    try:
+        return create_engine(norm_url, echo=settings.database_echo, **pool_kwargs)
+    except Exception as e:
+        err_str = str(e).lower()
+        if "psycopg" in err_str:
+            alt_url = _normalize_pg_url(url, force_driver="psycopg2")
+            logger.info("[DB] Driver fallback: attempting engine creation with psycopg2 driver...")
+            return create_engine(alt_url, echo=settings.database_echo, **pool_kwargs)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -83,18 +101,34 @@ if db_url:
             conn.execute(text("SELECT 1"))
         logger.info("[DB] ✅ SQLAlchemy engine connected to Supabase successfully.")
     except Exception as e:
-        if settings.is_production:
-            logger.critical(
-                f"[DB] ❌ Supabase connection failed: {e}. "
-                "Production environment requires Supabase database. SQLite fallback is disabled."
-            )
-            raise RuntimeError("Database connection failure. SQLite fallback disabled in production.") from e
-        else:
-            logger.warning(
-                f"[DB] ⚠️  Supabase connection failed: {e}. "
-                f"Falling back to local SQLite database at: {_SQLITE_FALLBACK_URL}"
-            )
-            engine = None
+        err_msg = str(e)
+        connected_via_fallback_driver = False
+        if ("psycopg" in err_msg.lower() or "driver" in err_msg.lower() or "no module" in err_msg.lower()) and not db_url.startswith("sqlite"):
+            try:
+                alt_url = _normalize_pg_url(db_url, force_driver="psycopg2")
+                logger.info("[DB] Initial driver failed. Retrying probe with postgresql+psycopg2 driver...")
+                alt_engine = _build_engine(alt_url)
+                with alt_engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                engine = alt_engine
+                connected_via_fallback_driver = True
+                logger.info("[DB] ✅ Connected to Supabase using psycopg2 driver successfully.")
+            except Exception as e2:
+                logger.warning(f"[DB] Driver retry with psycopg2 also failed: {e2}")
+
+        if not connected_via_fallback_driver:
+            if settings.is_production:
+                logger.critical(
+                    f"[DB] ❌ Supabase connection failed: {e}. "
+                    "Production environment requires Supabase database. SQLite fallback is disabled."
+                )
+                raise RuntimeError("Database connection failure. SQLite fallback disabled in production.") from e
+            else:
+                logger.warning(
+                    f"[DB] ⚠️  Supabase connection failed: {e}. "
+                    f"Falling back to local SQLite database at: {_SQLITE_FALLBACK_URL}"
+                )
+                engine = None
 
 if engine is None:
     if settings.is_production:

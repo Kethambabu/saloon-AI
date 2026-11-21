@@ -18,6 +18,8 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      - key: LOW_MEMORY_MODE
+        value: "true"
       - key: LOG_LEVEL
         value: INFO
       - key: SECRET_KEY

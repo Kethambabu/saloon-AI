@@ -81,18 +81,70 @@ class GeminiAPIEmbeddings(Embeddings):
 
 
 # ---------------------------------------------------------------------------
+# Lightweight / Zero-Memory Fallback Embeddings
+# ---------------------------------------------------------------------------
+import hashlib
+import math
+
+
+class LightweightEmbeddings(Embeddings):
+    """
+    Zero-memory, zero-dependency embedding model for memory-constrained environments (e.g. Render 512MB RAM).
+    Generates deterministic 384-dimensional dense vectors using subword & word n-gram feature hashing with L2 normalization.
+    Fully compatible with LangChain Embeddings & FAISS, consuming < 1MB RAM and 0 PyTorch overhead.
+    """
+    def __init__(self, dimension: int = 384):
+        self.dimension = dimension
+
+    def _embed(self, text: str) -> List[float]:
+        vec = [0.0] * self.dimension
+        if not text or not text.strip():
+            return vec
+
+        words = text.lower().split()
+        for word in words:
+            # Word-level hash
+            h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+            idx = h % self.dimension
+            sign = 1.0 if ((h >> 8) & 1) else -1.0
+            vec[idx] += sign
+
+            # Character tri-gram hashes for semantic subword overlap
+            if len(word) >= 3:
+                for i in range(len(word) - 2):
+                    tri = word[i:i+3]
+                    th = int(hashlib.md5(tri.encode("utf-8")).hexdigest(), 16)
+                    tidx = th % self.dimension
+                    tsign = 0.5 if ((th >> 8) & 1) else -0.5
+                    vec[tidx] += tsign
+
+        # L2 Normalize vector so cosine similarity works accurately
+        norm = math.sqrt(sum(x * x for x in vec))
+        if norm > 0:
+            vec = [x / norm for x in vec]
+        return vec
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed(text)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [self._embed(t) for t in texts]
+
+
+# ---------------------------------------------------------------------------
 # Provider Configuration
 # ---------------------------------------------------------------------------
 class EmbeddingProvider(str, Enum):
     """Supported embedding model providers."""
     HUGGINGFACE = "huggingface"
     GEMINI = "gemini"
+    LIGHTWEIGHT = "lightweight"
 
 
 @dataclass
 class EmbeddingConfig:
     """Configuration for the embedding pipeline."""
-    provider: EmbeddingProvider = EmbeddingProvider.HUGGINGFACE
+    provider: EmbeddingProvider = EmbeddingProvider.LIGHTWEIGHT
 
     # HuggingFace settings (open-source)
     hf_model_name: str = "all-MiniLM-L6-v2"
@@ -140,8 +192,8 @@ _EMBEDDING_MODEL_CACHE: Optional[Embeddings] = None
 def get_embedding_model(config: Optional[EmbeddingConfig] = None) -> Embeddings:
     """
     Factory function that returns a configured LangChain Embeddings instance.
-    Uses local HuggingFace sentence-transformers (free, offline, open-source)
-    with a graceful API-based Gemini fallback if PyTorch is missing or broken.
+    Uses zero-memory LightweightEmbeddings in cloud/low-memory environments (Render 512MB RAM),
+    or Gemini API if GEMINI_API_KEY is available, or HuggingFace when explicitly requested.
 
     Args:
         config: Optional EmbeddingConfig. If None, auto-detects from environment.
@@ -157,18 +209,33 @@ def get_embedding_model(config: Optional[EmbeddingConfig] = None) -> Embeddings:
     if config is None:
         config = _auto_detect_config()
 
+    if config.provider == EmbeddingProvider.LIGHTWEIGHT:
+        logger.info("[Embeddings] Using zero-memory LightweightEmbeddings (Render-optimized, 0 MB PyTorch).")
+        model = LightweightEmbeddings()
+        _EMBEDDING_MODEL_CACHE = model
+        return model
+
     if config.provider == EmbeddingProvider.GEMINI:
         logger.info("[Embeddings] Initializing Gemini API embedding model...")
-        return _build_gemini_embeddings(config)
+        try:
+            model = _build_gemini_embeddings(config)
+            _EMBEDDING_MODEL_CACHE = model
+            return model
+        except Exception as e:
+            logger.warning(f"[Embeddings] Gemini API failed: {e}. Falling back to LightweightEmbeddings.")
+            model = LightweightEmbeddings()
+            _EMBEDDING_MODEL_CACHE = model
+            return model
 
     # Pre-flight: check if PyTorch is available before trying HuggingFace
     if not _check_torch_available():
         logger.warning(
             "[Embeddings] PyTorch unavailable — skipping HuggingFace embeddings. "
-            "Falling back to Gemini API embeddings."
+            "Falling back to zero-memory LightweightEmbeddings."
         )
-        fallback_config = EmbeddingConfig(provider=EmbeddingProvider.GEMINI)
-        return _build_gemini_embeddings(fallback_config)
+        model = LightweightEmbeddings()
+        _EMBEDDING_MODEL_CACHE = model
+        return model
 
     logger.info(f"[Embeddings] Initializing local HuggingFace embedding model ({config.hf_model_name})...")
     try:
@@ -177,27 +244,44 @@ def get_embedding_model(config: Optional[EmbeddingConfig] = None) -> Embeddings:
         return model
     except Exception as e:
         error_msg = str(e)
-        if "torch" in error_msg.lower() or "DLL" in error_msg:
-            reason = "PyTorch DLL/import error"
-        elif "No module named" in error_msg:
-            reason = f"Missing dependency: {error_msg}"
-        else:
-            reason = f"Initialization error: {error_msg}"
         logger.warning(
-            f"[Embeddings] Failed to initialize local HuggingFace embeddings ({reason}). "
-            f"Falling back to Gemini API embeddings."
+            f"[Embeddings] Failed to initialize local HuggingFace embeddings: {error_msg}. "
+            "Falling back to zero-memory LightweightEmbeddings to prevent OOM."
         )
-        # Force fallback to Gemini
-        fallback_config = EmbeddingConfig(provider=EmbeddingProvider.GEMINI)
-        return _build_gemini_embeddings(fallback_config)
+        model = LightweightEmbeddings()
+        _EMBEDDING_MODEL_CACHE = model
+        return model
 
 
 def _auto_detect_config() -> EmbeddingConfig:
-    """Auto-detect the best embedding provider from environment variables."""
-    provider_env = os.getenv("EMBEDDING_PROVIDER", "huggingface").lower()
-    if provider_env == "gemini":
+    """Auto-detect the best embedding provider from environment variables and available resources."""
+    provider_env = os.getenv("EMBEDDING_PROVIDER", "").lower().strip()
+    if provider_env == "huggingface":
+        return EmbeddingConfig(provider=EmbeddingProvider.HUGGINGFACE)
+    elif provider_env == "gemini":
         return EmbeddingConfig(provider=EmbeddingProvider.GEMINI)
-    return EmbeddingConfig(provider=EmbeddingProvider.HUGGINGFACE)
+    elif provider_env == "lightweight":
+        return EmbeddingConfig(provider=EmbeddingProvider.LIGHTWEIGHT)
+
+    # Detect Render or memory-constrained container environment
+    is_render = os.getenv("RENDER", "").lower() in ("true", "1", "yes")
+    low_mem = os.getenv("LOW_MEMORY_MODE", "true" if is_render else "false").lower() in ("true", "1", "yes")
+
+    # If Gemini API key is configured, prefer Gemini API (zero local memory)
+    gemini_key = os.getenv("GEMINI_API_KEY") or get_settings().gemini_api_key
+    if gemini_key:
+        return EmbeddingConfig(provider=EmbeddingProvider.GEMINI)
+
+    # In Render or low-memory mode, default to LightweightEmbeddings to stay well below 512MB RAM
+    if is_render or low_mem:
+        logger.info("[Embeddings] Render / low-memory environment detected. Defaulting to LightweightEmbeddings.")
+        return EmbeddingConfig(provider=EmbeddingProvider.LIGHTWEIGHT)
+
+    # Otherwise default to lightweight if torch is missing, or HuggingFace if torch is present
+    if _check_torch_available():
+        return EmbeddingConfig(provider=EmbeddingProvider.HUGGINGFACE)
+
+    return EmbeddingConfig(provider=EmbeddingProvider.LIGHTWEIGHT)
 
 
 def _build_huggingface_embeddings(config: EmbeddingConfig) -> Embeddings:

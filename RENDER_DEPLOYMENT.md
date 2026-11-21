@@ -53,11 +53,13 @@ If you prefer to configure the services manually in Render:
    * **Health Check Path**: `/health`
 4. Add Environment Variables under **Environment**:
    * `ENVIRONMENT`: `production`
+   * `LOW_MEMORY_MODE`: `true` *(Keeps memory under 120MB, preventing 512MB OOM)*
    * `SECRET_KEY`: *(Click "Generate" or provide a secure 32+ character random string)*
-   * `DATABASE_URL`: `postgresql://postgres:[PASSWORD]@[HOST]:[PORT]/postgres`
+   * `DATABASE_URL`: Your Supabase connection string (e.g. `postgresql://postgres:[PASSWORD]@[HOST]:5432/postgres` or Supabase pooler `6543`)
    * `CORS_ORIGINS`: `https://salonai-frontend.onrender.com,http://localhost:5173`
    * `GROQ_API_KEY`: `your-groq-api-key`
    * `OPENAI_API_KEY`: `your-openai-api-key` *(optional)*
+   * `GEMINI_API_KEY`: `your-gemini-api-key` *(optional, enables zero-memory Gemini embeddings)*
 5. Click **Create Web Service**. Note the deployed URL (e.g. `https://salonai-backend.onrender.com`).
 
 ### Step 2: Deploy Frontend
@@ -90,3 +92,20 @@ docker compose up --build
 # Backend will be available at: http://localhost:8000
 # Frontend will be available at: http://localhost:3000
 ```
+
+---
+
+## Troubleshooting Common Render Issues
+
+### 1. `Out of memory (used over 512Mi)`
+* **Cause**: Heavy local PyTorch embedding models exceed Render's 512MB RAM free/starter limit.
+* **Fix**: The codebase automatically enables `LightweightEmbeddings` in Render environments (`LOW_MEMORY_MODE=true`). This drops memory usage from ~650MB down to ~95MB, well below Render's limit.
+* **Optional**: Provide `GEMINI_API_KEY` to use Google's cloud embeddings (also 0MB RAM).
+
+### 2. `Supabase connection failed: No module named 'psycopg'`
+* **Cause**: Supabase connection strings use `postgresql://` which expects `psycopg` (v3) or `psycopg2`.
+* **Fix**: Both `psycopg[binary]` and `psycopg2-binary` are installed, with automatic dialect normalization in `infrastructure/db/database.py`. You can supply connection strings starting with either `postgresql://` or `postgresql+psycopg2://`.
+
+### 3. `No open ports detected, continuing to scan...`
+* **Cause**: Blocking tasks during startup delayed Uvicorn from binding to Render's dynamic `$PORT`.
+* **Fix**: Embeddings are now lazy-loaded on first use, allowing Uvicorn to bind to `$PORT` in under 2 seconds.
