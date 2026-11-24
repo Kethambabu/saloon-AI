@@ -69,7 +69,7 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-8 sm:py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
       {/* Background artwork */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl -ml-20 -mt-20 pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-3xl -mr-32 -mb-32 pointer-events-none" />
@@ -80,31 +80,31 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m-5 4a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1a3 3 0 01-3 3H12" />
           </svg>
         </div>
-        <h2 className="text-3xl font-extrabold tracking-tight text-white">
+        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
           {step === 1 ? 'Password Recovery' : 'Reset Password'}
         </h2>
-        <p className="mt-2 text-sm font-semibold text-slate-400">
+        <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-400">
           {step === 1 ? 'Retrieve access credentials securely' : 'Enter the recovery token and a new password'}
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 px-4 sm:px-0">
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-8 px-6 shadow-2xl rounded-3xl sm:px-10">
+      <div className="mt-6 sm:mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 w-full">
+        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-6 px-5 sm:py-8 sm:px-10 shadow-2xl rounded-2xl sm:rounded-3xl">
           
           {error && (
-            <div className="mb-4 rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-left animate-fade-in">
+            <div className="mb-4 rounded-xl bg-red-500/10 border border-red-500/20 p-3 sm:p-4 text-left animate-fade-in">
               <p className="text-xs font-bold text-red-300">{error}</p>
             </div>
           )}
 
           {success && (
-            <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-left animate-fade-in">
+            <div className="mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 sm:p-4 text-left animate-fade-in">
               <p className="text-xs font-bold text-emerald-300">{success}</p>
             </div>
           )}
 
           {step === 1 ? (
-            <form className="space-y-6" onSubmit={handleRequestToken}>
+            <form className="space-y-5 sm:space-y-6" onSubmit={handleRequestToken}>
               <div>
                 <label htmlFor="email" className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
                   Email address
@@ -117,7 +117,7 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     placeholder="name@example.com"
-                    className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                    className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
                   />
                 </div>
               </div>
@@ -133,7 +133,7 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
               </div>
             </form>
           ) : (
-            <form className="space-y-5" onSubmit={handleResetPassword}>
+            <form className="space-y-4 sm:space-y-5" onSubmit={handleResetPassword}>
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
                   Recovery Token
@@ -144,7 +144,7 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
                   onChange={(e) => setToken(e.target.value)}
                   required
                   placeholder="reset-token-xxxx"
-                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm font-mono text-center"
+                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm font-mono text-center"
                 />
               </div>
 
@@ -158,7 +158,7 @@ export const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onBackToLogin })
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
                   placeholder="••••••••"
-                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
                 />
               </div>
 

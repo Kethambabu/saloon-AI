@@ -42,6 +42,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
   // Navigation state
   const [activeTab, setActiveTab] = useState<'dashboard' | 'appointments' | 'customers' | 'schedule' | 'assistant' | 'profile' | 'leads' | 'upsells' | 'reviews' | 'performance'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // Roster lists
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
@@ -316,12 +317,115 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
     }
   };
 
+  const staffNavTabs = [
+    { id: 'dashboard', label: 'My Dashboard', icon: '🏠' },
+    { id: 'appointments', label: 'Agenda Book', icon: '📅' },
+    { id: 'customers', label: 'Client History', icon: '👥' },
+    { id: 'leads', label: 'My Leads', icon: '🎯' },
+    { id: 'upsells', label: 'Upsell Opportunities', icon: '⚡' },
+    { id: 'reviews', label: 'My Reviews', icon: '⭐' },
+    { id: 'performance', label: 'My Performance', icon: '📈' },
+    { id: 'schedule', label: 'My Calendar', icon: '🗓️' },
+    { id: 'assistant', label: 'AI Co-Stylist', icon: '🤖' }
+  ];
+
+  const currentTabInfo = staffNavTabs.find(t => t.id === activeTab) || staffNavTabs[0];
+
   return (
     <div className="flex flex-col md:flex-row h-full bg-slate-950 text-white overflow-hidden border border-slate-800/80 shadow-2xl font-sans relative">
       
-      {/* Sidebar Navigation */}
-      <aside className={`bg-slate-900 border-r border-slate-800/80 flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
-        isSidebarOpen ? 'w-full md:w-64 p-6' : 'w-full md:w-20 p-4'
+      {/* ============================================================================
+          MOBILE TOP ACTION BAR
+          ============================================================================ */}
+      <div className="md:hidden flex items-center justify-between px-3 sm:px-4 py-2.5 bg-slate-900 border-b border-slate-800 shrink-0 z-30">
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer relative shrink-0"
+            aria-label="Open Navigation Menu"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <div className="min-w-0">
+            <h2 className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-1.5 truncate m-0">
+              <span>{currentTabInfo.icon}</span>
+              <span className="truncate">{currentTabInfo.label}</span>
+            </h2>
+            <span className="text-[9px] text-emerald-400 font-bold block uppercase tracking-wider">Stylist Staff</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setActiveTab('appointments')}
+          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer uppercase tracking-wider shrink-0"
+        >
+          Agenda
+        </button>
+      </div>
+
+      {/* ============================================================================
+          MOBILE DRAWER BACKDROP & DRAWER
+          ============================================================================ */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 md:hidden"
+        />
+      )}
+
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 flex flex-col justify-between p-5 shadow-2xl transition-transform duration-300 ease-in-out md:hidden ${
+        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="flex flex-col flex-1 min-h-0 gap-5">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-black bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                Stylist Hub
+              </h2>
+              <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest">
+                Stylist Staff
+              </span>
+            </div>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer"
+              aria-label="Close navigation"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <nav className="flex flex-col gap-1.5 flex-1 overflow-y-auto custom-scrollbar">
+            {staffNavTabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-bold text-left transition-all duration-200 cursor-pointer ${
+                  activeTab === tab.id
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20'
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                }`}
+              >
+                <span className="text-base">{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      </aside>
+
+      {/* ============================================================================
+          DESKTOP SIDEBAR NAVIGATION BAR
+          ============================================================================ */}
+      <aside className={`hidden md:flex bg-slate-900 border-r border-slate-800/80 flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
+        isSidebarOpen ? 'w-64 p-6' : 'w-20 p-4'
       }`}>
         <div className="flex flex-col flex-1 min-h-0 gap-6">
           {/* Header & Toggle Button */}
@@ -357,17 +461,7 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
 
           {/* Navigation Links */}
           <nav className={`flex flex-col gap-2 flex-1 overflow-y-auto ${isSidebarOpen ? 'custom-scrollbar' : 'scrollbar-none'}`}>
-            {[
-              { id: 'dashboard', label: 'My Dashboard', icon: '🏠' },
-              { id: 'appointments', label: 'Agenda Book', icon: '📅' },
-              { id: 'customers', label: 'Client History', icon: '👥' },
-              { id: 'leads', label: 'My Leads', icon: '🎯' },
-              { id: 'upsells', label: 'Upsell Opportunities', icon: '⚡' },
-              { id: 'reviews', label: 'My Reviews', icon: '⭐' },
-              { id: 'performance', label: 'My Performance', icon: '📈' },
-              { id: 'schedule', label: 'My Calendar', icon: '🗓️' },
-              { id: 'assistant', label: 'AI Co-Stylist', icon: '🤖' }
-            ].map(tab => (
+            {staffNavTabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
@@ -387,10 +481,10 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({ onToggleChat }) 
       </aside>
 
       {/* Main Stylist Operations Panel */}
-      <main className={`flex-1 text-left ${
+      <main className={`flex-1 text-left min-w-0 ${
         activeTab === 'assistant'
           ? 'overflow-hidden flex flex-col p-0'
-          : 'p-6 md:p-8 overflow-y-auto'
+          : 'p-4 sm:p-6 md:p-8 overflow-y-auto touch-scroll'
       }`}>
         {isLoading ? (
           <DashboardSkeleton label="Establishing creative session…" />

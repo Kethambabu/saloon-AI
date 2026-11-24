@@ -326,7 +326,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(true); // Open by default
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? window.innerWidth >= 768 : false;
+  });
 
   // References for scrolling / textarea auto-grow
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -411,6 +413,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
     setActiveSessionId(newSessionId);
     setMessages(newSession.messages);
     setError(null);
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsHistoryOpen(false);
+    }
   };
 
   // --- Action: Switch Session ---
@@ -420,6 +425,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
       setActiveSessionId(sessionId);
       setMessages(target.messages);
       setError(null);
+      if (typeof window !== 'undefined' && window.innerWidth < 768) {
+        setIsHistoryOpen(false);
+      }
     }
   };
 
@@ -579,11 +587,22 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
   const isEmptyState = messages.length <= 1 && !isLoading;
 
   return (
-    <div className="w-full max-w-7xl mx-auto flex bg-neutral-950 rounded-2xl border border-neutral-800 overflow-hidden h-full">
+    <div className="w-full max-w-7xl mx-auto flex bg-neutral-950 rounded-2xl border border-neutral-800 overflow-hidden h-full relative">
+
+      {/* --- Mobile Backdrop for Chat History --- */}
+      {isHistoryOpen && (
+        <div
+          onClick={() => setIsHistoryOpen(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+        />
+      )}
 
       {/* --- Sidebar Section (Chat Session History) --- */}
-      <aside className={`bg-neutral-950 flex flex-col border-r border-neutral-800 transition-all duration-200 ease-in-out ${isHistoryOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden border-none'
-        }`}>
+      <aside className={`bg-neutral-950 flex flex-col border-r border-neutral-800 transition-all duration-200 ease-in-out ${
+        isHistoryOpen 
+          ? 'fixed md:static inset-y-0 left-0 z-50 w-72 md:w-64 opacity-100 shadow-2xl md:shadow-none' 
+          : '-translate-x-full md:translate-x-0 w-0 md:w-0 opacity-0 overflow-hidden border-none'
+      }`}>
         <div className="px-4 py-3.5 border-b border-neutral-800 flex items-center justify-between shrink-0">
           <span className="text-xs font-black uppercase tracking-wider text-neutral-500">Chat History</span>
           <button
@@ -592,7 +611,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
             title="Collapse Sidebar"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -640,19 +659,17 @@ export const AgentChat: React.FC<AgentChatProps> = ({ onRefreshAppointments, int
         {/* Chat Area Header */}
         <header className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            {!isHistoryOpen && (
-              <button
-                onClick={() => setIsHistoryOpen(true)}
-                className="p-1.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
-                title="Show History"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-            )}
-            <span className="text-sm font-medium text-neutral-200">{assistantName}</span>
-            <span className="text-xs text-neutral-500">{assistantSubtitle}</span>
+            <button
+              onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+              className="p-1.5 rounded-md hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+              title={isHistoryOpen ? "Hide History" : "Show History"}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <span className="text-sm font-medium text-neutral-200 truncate">{assistantName}</span>
+            <span className="text-xs text-neutral-500 hidden sm:inline">{assistantSubtitle}</span>
           </div>
           <button
             onClick={createNewSession}

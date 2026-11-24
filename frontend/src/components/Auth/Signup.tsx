@@ -126,7 +126,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-8 sm:py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
       {/* Background artwork */}
       <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
       <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none" />
@@ -137,31 +137,31 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
           </svg>
         </div>
-        <h2 className="text-3xl font-extrabold tracking-tight text-white">
+        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
           Create Account
         </h2>
-        <p className="mt-2 text-sm font-semibold text-slate-400">
+        <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-400">
           Join the SalonAI autonomous ecosystem
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 px-4 sm:px-0">
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-8 px-6 shadow-2xl rounded-3xl sm:px-10">
-          <form className="space-y-5" onSubmit={handleSubmit}>
+      <div className="mt-6 sm:mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 w-full">
+        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-6 px-5 sm:py-8 sm:px-10 shadow-2xl rounded-2xl sm:rounded-3xl">
+          <form className="space-y-4 sm:space-y-5" onSubmit={handleSubmit}>
             
             {error && (
-              <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-4 text-left animate-fade-in">
+              <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-3 sm:p-4 text-left animate-fade-in">
                 <p className="text-xs font-bold text-red-300">{error}</p>
               </div>
             )}
 
             {success && (
-              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-left animate-fade-in">
+              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 sm:p-4 text-left animate-fade-in">
                 <p className="text-xs font-bold text-emerald-300">{success}</p>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
                   First Name *
@@ -175,7 +175,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                   }}
                   required
                   placeholder="Jane"
-                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
                 />
               </div>
               <div>
@@ -191,7 +191,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                   }}
                   required
                   placeholder="Doe"
-                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
                 />
               </div>
             </div>
@@ -209,7 +209,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 }}
                 required
                 placeholder="name@example.com"
-                className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
               />
             </div>
 
@@ -226,11 +226,11 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                 }}
                 required
                 placeholder="••••••••"
-                className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 sm:gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider text-left">
                   Phone Number
@@ -243,7 +243,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                     if (error) setError(null);
                   }}
                   placeholder="+1 (555) 0100"
-                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-sm"
+                  className="mt-1 appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all text-base sm:text-sm"
                 />
               </div>
               <div>
@@ -256,7 +256,7 @@ export const Signup: React.FC<SignupProps> = ({ onBackToLogin }) => {
                     setRole(e.target.value);
                     if (error) setError(null);
                   }}
-                  className="mt-1 block w-full px-3 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm cursor-pointer"
+                  className="mt-1 block w-full px-3 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base sm:text-sm cursor-pointer"
                 >
                   <option value="User" className="bg-slate-950 text-white">👤 Salon Customer (User)</option>
                   <option value="Staff" className="bg-slate-950 text-white">💇 Stylist (Staff)</option>

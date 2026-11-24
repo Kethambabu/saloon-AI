@@ -118,7 +118,7 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-8 sm:py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden font-sans">
       {/* Background visual art elements */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl -ml-20 -mt-20 pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-3xl -mr-32 -mb-32 pointer-events-none" />
@@ -131,22 +131,22 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
             <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
         </div>
-        <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
           SalonAI Workforce
         </h2>
-        <p className="mt-2 text-sm font-semibold text-slate-400">
+        <p className="mt-1.5 sm:mt-2 text-xs sm:text-sm font-semibold text-slate-400">
           Autonomous multi-agent enterprise hub
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 px-4 sm:px-0">
+      <div className="mt-6 sm:mt-8 sm:mx-auto sm:w-full sm:max-w-md z-10 w-full">
         {/* Glassmorphic Panel Container */}
-        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-8 px-6 shadow-2xl rounded-3xl sm:px-10">
-          <form className="space-y-5" onSubmit={handleSubmit}>
+        <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800/80 py-6 px-5 sm:py-8 sm:px-10 shadow-2xl rounded-2xl sm:rounded-3xl">
+          <form className="space-y-4 sm:space-y-5" onSubmit={handleSubmit}>
             <div className="text-left space-y-1">
-              <h3 className="text-sm font-bold text-slate-300">Or Sign in with Email</h3>
+              <h3 className="text-xs sm:text-sm font-bold text-slate-300">Or Sign in with Email</h3>
               {error && (
-                <p className="text-sm font-bold text-red-500 animate-fade-in">
+                <p className="text-xs sm:text-sm font-bold text-red-500 animate-fade-in">
                   {error}
                 </p>
               )}
@@ -169,7 +169,7 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                   }}
                   required
                   placeholder="name@salonai.com"
-                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
+                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-base sm:text-sm"
                 />
               </div>
             </div>
@@ -191,7 +191,7 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                   }}
                   required
                   placeholder="••••••••"
-                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
+                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 placeholder-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-base sm:text-sm"
                 />
               </div>
             </div>
@@ -209,7 +209,7 @@ export const Login: React.FC<LoginProps> = ({ onNavigateToSignup, onNavigateToFo
                     setSelectedRole(e.target.value as 'Staff' | 'User');
                     if (error) setError(null);
                   }}
-                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm cursor-pointer"
+                  className="appearance-none block w-full px-4 py-3 border border-slate-800 rounded-xl bg-slate-950/60 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-base sm:text-sm cursor-pointer"
                 >
                   <option value="User" className="bg-slate-900 text-white">👤 Customer / User Account</option>
                   <option value="Staff" className="bg-slate-900 text-white">💇 Staff / Stylist Account</option>

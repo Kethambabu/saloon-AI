@@ -152,6 +152,7 @@ export const UserDashboard: React.FC = () => {
   // Navigation & active views
   const [activeTab, setActiveTab] = useState<'dashboard' | 'book' | 'my-appointments' | 'history' | 'assistant' | 'services' | 'notifications' | 'profile' | 'recommendations' | 'reviews'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // Data loading states
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
@@ -643,14 +644,128 @@ export const UserDashboard: React.FC = () => {
       return status === 'CANCELLED' || status === 'CANCELED';
     });
   };
+  const navTabs = [
+    { id: 'dashboard', label: 'Dashboard Home', icon: '🏠' },
+    { id: 'recommendations', label: 'Recommended For You', icon: '💡' },
+    { id: 'book', label: 'Book Appointment', icon: '📅' },
+    { id: 'my-appointments', label: 'My Appointments', icon: '⏰' },
+    { id: 'reviews', label: 'My Feedback Reviews', icon: '⭐' },
+    { id: 'history', label: 'Booking History', icon: '📜' },
+    { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
+    { id: 'services', label: 'Services Catalog', icon: '💇' },
+    { id: 'notifications', label: 'Notifications Center', icon: '🔔', badge: notifications.filter(n => n.type === 'warning').length },
+    { id: 'profile', label: 'Profile Settings', icon: '👤' }
+  ];
+
+  const currentTabInfo = navTabs.find(t => t.id === activeTab) || navTabs[0];
+
   return (
     <div className="flex flex-col lg:flex-row h-full overflow-hidden bg-slate-950 text-white font-sans relative">
       
       {/* ============================================================================
-          SIDEBAR NAVIGATION BAR
+          MOBILE TOP ACTION BAR (Mobile & Tablet screens)
           ============================================================================ */}
-      <aside className={`bg-slate-900 border-r border-slate-800/80 flex flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
-        isSidebarOpen ? 'w-full lg:w-72 p-6' : 'w-full lg:w-20 p-4'
+      <div className="lg:hidden flex items-center justify-between px-3 sm:px-4 py-2.5 bg-slate-900 border-b border-slate-800 shrink-0 z-30">
+        <div className="flex items-center space-x-2.5 min-w-0">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer relative shrink-0"
+            aria-label="Open Navigation Menu"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            {notifications.some(n => n.type === 'warning') && (
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+            )}
+          </button>
+          <div className="min-w-0">
+            <h2 className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-1.5 truncate m-0">
+              <span>{currentTabInfo.icon}</span>
+              <span className="truncate">{currentTabInfo.label}</span>
+            </h2>
+            <span className="text-[9px] text-cyan-400 font-bold block uppercase tracking-wider">Customer Portal</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            setActiveTab('book');
+            setBookingStep(1);
+          }}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-black rounded-lg transition-all shadow cursor-pointer uppercase tracking-wider shrink-0"
+        >
+          + Book
+        </button>
+      </div>
+
+      {/* ============================================================================
+          MOBILE DRAWER BACKDROP & DRAWER
+          ============================================================================ */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 lg:hidden"
+        />
+      )}
+
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 flex flex-col justify-between p-5 shadow-2xl transition-transform duration-300 ease-in-out lg:hidden ${
+        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        <div className="flex flex-col flex-1 min-h-0 gap-5">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-black bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                SalonAI Elite
+              </h2>
+              <span className="block text-[8px] tracking-widest text-slate-500 uppercase font-black -mt-0.5">Customer Experience</span>
+            </div>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer"
+              aria-label="Close navigation"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <nav className="flex flex-col gap-1.5 flex-1 overflow-y-auto custom-scrollbar">
+            {navTabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                  setBookingStep(1);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold text-left transition-all duration-200 cursor-pointer ${
+                  activeTab === tab.id
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <span className="text-base">{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </div>
+                {tab.badge !== undefined && tab.badge > 0 ? (
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-red-500 text-white rounded-full animate-pulse">
+                    {tab.badge}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </aside>
+
+      {/* ============================================================================
+          DESKTOP SIDEBAR NAVIGATION BAR
+          ============================================================================ */}
+      <aside className={`hidden lg:flex bg-slate-900 border-r border-slate-800/80 flex-col justify-between transition-all duration-300 ease-in-out shrink-0 min-h-0 ${
+        isSidebarOpen ? 'w-72 p-6' : 'w-20 p-4'
       }`}>
         <div className="flex flex-col flex-1 min-h-0 gap-6">
           {/* Custom Salon Brand Header & Toggle Button */}
@@ -684,18 +799,7 @@ export const UserDashboard: React.FC = () => {
 
           {/* Navigation Links */}
           <nav className={`flex flex-col gap-1.5 flex-1 overflow-y-auto ${isSidebarOpen ? 'custom-scrollbar' : 'scrollbar-none'}`}>
-            {[
-              { id: 'dashboard', label: 'Dashboard Home', icon: '🏠' },
-              { id: 'recommendations', label: 'Recommended For You', icon: '💡' },
-              { id: 'book', label: 'Book Appointment', icon: '📅' },
-              { id: 'my-appointments', label: 'My Appointments', icon: '⏰' },
-              { id: 'reviews', label: 'My Feedback Reviews', icon: '⭐' },
-              { id: 'history', label: 'Booking History', icon: '📜' },
-              { id: 'assistant', label: 'AI Receptionist', icon: '🤖' },
-              { id: 'services', label: 'Services Catalog', icon: '💇' },
-              { id: 'notifications', label: 'Notifications Center', icon: '🔔', badge: notifications.filter(n => n.type === 'warning').length },
-              { id: 'profile', label: 'Profile Settings', icon: '👤' }
-            ].map(tab => (
+            {navTabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => {
@@ -727,10 +831,10 @@ export const UserDashboard: React.FC = () => {
       {/* ============================================================================
           MAIN BODY VIEWPORTS
           ============================================================================ */}
-      <main className={`flex-1 text-left ${
+      <main className={`flex-1 text-left min-w-0 ${
         activeTab === 'assistant'
           ? 'overflow-hidden flex flex-col p-0'
-          : 'p-6 lg:p-10 overflow-y-auto'
+          : 'p-4 sm:p-6 lg:p-10 overflow-y-auto touch-scroll'
       }`}>
         
         {/* Toast Alerts Banner */}
@@ -1369,8 +1473,8 @@ export const UserDashboard: React.FC = () => {
                     MODAL: RESCHEDULE SCHEDULING TIME
                     ============================================================================ */}
                 {reschedulingAppt && (
-                  <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
-                    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
+                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 z-50 overflow-y-auto transition-opacity">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-6 lg:p-8 w-full max-w-md space-y-5 sm:space-y-6 shadow-2xl relative max-h-[90vh] overflow-y-auto my-auto">
                       <button 
                         onClick={() => setReschedulingAppt(null)}
                         className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
@@ -1856,8 +1960,8 @@ export const UserDashboard: React.FC = () => {
                 MODAL: NEW APPOINTMENT CONFIRMED - DYNAMIC UPSELL OPPORTUNITIES
                 ============================================================================ */}
             {justBookedAppt && (
-              <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-lg space-y-6 shadow-2xl relative">
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 z-50 overflow-y-auto transition-opacity">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-6 lg:p-8 w-full max-w-lg space-y-5 sm:space-y-6 shadow-2xl relative max-h-[90vh] overflow-y-auto my-auto">
                   <button 
                     onClick={() => setJustBookedAppt(null)}
                     className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
@@ -1946,8 +2050,8 @@ export const UserDashboard: React.FC = () => {
                 MODAL: SUBMIT RATING & REVIEW FOR COMPLETED SESSION
                 ============================================================================ */}
             {reviewingAppt && (
-              <div className="fixed inset-0 bg-slate-950/75 flex items-center justify-center p-6 z-50 transition-opacity">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 lg:p-8 w-full max-w-md space-y-6 shadow-2xl relative">
+              <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 z-50 overflow-y-auto transition-opacity">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl p-5 sm:p-6 lg:p-8 w-full max-w-md space-y-5 sm:space-y-6 shadow-2xl relative max-h-[90vh] overflow-y-auto my-auto">
                   <button 
                     onClick={() => setReviewingAppt(null)}
                     className="absolute top-4 right-4 text-slate-400 hover:text-white text-base cursor-pointer"
